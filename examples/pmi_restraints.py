@@ -8,6 +8,8 @@ import IMP.atom
 import IMP.pmi
 import IMP.pmi.tools
 import IMP.pmi.restraints
+from operator import itemgetter
+import math
 
 class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
     """
@@ -16,32 +18,13 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
     add connectivity restraints between them.
     """
     def __init__(self,objects,scale = 1.0,disorderedlength=False,upperharmonic=True,resolution=0,label=None):
-                """
-        @param objects - a list of hierarchies, PMI TempResidues OR a
-               single Molecule
-        @param scale Scale the maximal distance between the beads by this
-               factor when disorderedlength is False. The maximal distance
-               is calculated as ((float(residuegap) + 1.0) * 3.6) * scale.
-        @param disorderedlength - This flag uses either disordered length
-               calculated for random coil peptides (True) or zero
-               surface-to-surface distance between beads (False)
-               as optimal distance for the sequence connectivity restraint.
-        @param upperharmonic - This flag uses either harmonic (False)
-               or upperharmonic (True) in the intra-pair
-               connectivity restraint.
-        @param resolution - The resolution to connect things at - only used
-               if you pass PMI objects
-        @param label - A string to identify this restraint in the
-               output/stat file
-        """
-
         hiers = IMP.pmi.tools.input_adaptor(objects, resolution)
         if len(hiers) > 1:
             raise Exception("ConnectivityRestraint: only pass stuff from "
                             "one Molecule, please")
         hiers = hiers[0]
         m = list(hiers)[0].get_model()
-        super(ConnectivityAtomsRestraint, self).__init__(m, label=label)
+        super(ConnectAtomsRestraint, self).__init__(m, label=label)
 
         self.kappa = 10  # spring constant used for the harmonic restraints
         SortedSegments = []
@@ -131,7 +114,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
     def get_particle_pairs(self):
         """ Returns the list of connected particles pairs """
         return self.particle_pairs
-
+ 
 # Restraint the dihedrals to form a helix
 class DihedralHelixRestraint(object):
     """ Restrain a protein using the ideal helix dihedrals 
