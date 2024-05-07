@@ -15,13 +15,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
     keep the protein structure intact. For pairs of atoms in the backbone representation
     add connectivity restraints between them.
     """
-    def __init__(self, 
-                 objects,
-                 scale = 1.0,
-                 disorderedlength=False,
-                 upperharmonic=True,
-                 resolution=0,
-                 label=None):
+    def __init__(self,objects,scale = 1.0,disorderedlength=False,upperharmonic=True,resolution=0,label=None):
                 """
         @param objects - a list of hierarchies, PMI TempResidues OR a
                single Molecule
@@ -47,7 +41,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                             "one Molecule, please")
         hiers = hiers[0]
         m = list(hiers)[0].get_model()
-        super(ConnectivityRestraint, self).__init__(m, label=label)
+        super(ConnectivityAtomsRestraint, self).__init__(m, label=label)
 
         self.kappa = 10  # spring constant used for the harmonic restraints
         SortedSegments = []

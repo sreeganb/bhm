@@ -21,7 +21,7 @@ import IMP.pmi.macros
 import IMP.atom
 import sys
 import IMP.rmf
-import numpy as np
+from pmi_restraints import ConnectAtomsRestraint, DihedralHelixRestraint
 
 if len(sys.argv) > 1:
     out_dir = sys.argv[1]
@@ -80,15 +80,19 @@ rb1 = dof.create_rigid_body(lys_rb, max_trans=1.0, max_rot=0.5, nonrigid_parts =
 output_objects = []
 
 # -----------------------------
-# %%%%% CONNECTIVITY RESTRAINT
+# %%%%% CONNECTIVITY RESTRAINT (modified as connectivity atoms restraint)
 #
 # Restrains residues/particles that are collected in sequence
 # This should be used for any system without an atomic force field
 # (e.g. CHARMM)
 # Here, we pass root_hier to apply this restraint to the entire system
-cr = IMP.pmi.restraints.stereochemistry.ConnectivityRestraint(alalys)
-cr.add_to_model()           # add restraint to the model
-output_objects.append(cr)   # add restraint to the output
+#cr = IMP.pmi.restraints.stereochemistry.ConnectivityRestraint(alalys)
+#cr.add_to_model()           # add restraint to the model
+#output_objects.append(cr)   # add restraint to the output
+cr = ConnectAtomsRestraint(alalys)
+cr.add_to_model()
+output_objects.append(cr)
+
 # -----------------------------
 # %%%%% EXCLUDED VOLUME RESTRAINT
 #
