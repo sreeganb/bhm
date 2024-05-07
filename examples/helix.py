@@ -55,6 +55,7 @@ IMP.atom.show_with_representations(hier)
 # as the mean of the distribution obtained from MD simulations. SAXS profile
 # is obtained from the FOXS webserver. Adding contraints on the phi, psi angles
 # would result in formation of a helix, but how do we contrain dihedrals in IMP?
+# 
 #------------------------------------------------------------------------------
 # Use a ideal helix restraint class and check what happens
 # hrest = IMP.pmi.restraints.stereochemistry.HelixRestraint(hier, (0,20,alalys)) this didnt work, of course
