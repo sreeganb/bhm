@@ -26,11 +26,11 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                  O 
     This set of atoms is useful for the definition of a dihedral restraint as well
     """
-    def get_bond_length(self,first):
+    def get_bond_length(self,first, last):
         """
         Function to pass the bond distances to be used as constraints based on the atom pair
         """
-        print(IMP.atom.Hierarchy(first))
+        print(IMP.atom.Hierarchy(first), IMP.atom.Hierarchy(last))
         #atom2 = last.get_particle_pairs
         #print(atom1)
         #if (atom1 == 'CA'):
@@ -124,8 +124,8 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                         dps = IMP.core.DistancePairScore(hu)
                     else:  # default
                         optdist = (0.0 + (float(residuegap) + 1.0) * 3.6) * scale
-                        print("first,last: ", first, last)
-                        self.get_bond_length(first)
+                        #print("first,last: ", first, last)
+                        self.get_bond_length(first, last)
                         if upperharmonic:  # default
                             hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
                         else:
