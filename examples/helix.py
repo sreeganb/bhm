@@ -59,10 +59,11 @@ IMP.atom.show_with_representations(hier)
 # Define the degrees of freedom and create movers 
 #------------------------------------------------------------------------------
 dof = IMP.pmi.dof.DegreesOfFreedom(mdl)
-lys_rb = alalys[:2]
+lys_rb = alalys[:3]
+fx_bead = alalys[3:]
 rb1 = dof.create_rigid_body(lys_rb, max_trans=1.0, max_rot=0.5, nonrigid_parts = lys_rb & alalys.get_non_atomic_residues())
 
-#ala1 = dof.create_flexible_beads(alalys.get_non_atomic_residues(), max_trans=1.0)
+ala1 = dof.create_flexible_beads(fx_bead, max_trans=1.0)
 #------------------------------------------------------------------------------
 # Add restraints: in this case the data corresponds to some end to end distances
 # as well as some SAXS profiles presumably. The distance restraint is added 
@@ -161,7 +162,7 @@ sr = IMP.pmi.restraints.saxs.SAXSRestraint(
     #   0.4 for HEAVY_ATOMS
     #   0.5 for ALL_ATOMS (up to 1.0)
     maxq=0.15)
-output_objects.append(sr)
+#output_objects.append(sr)
 
 #####################################################
 #                      SAMPLING                     #
@@ -172,38 +173,38 @@ output_objects.append(sr)
 # First shuffle all particles to randomize the starting point of the
 # system. For larger systems, you may want to increase max_translation
 IMP.pmi.tools.shuffle_configuration(hier,
-                                    max_translation=50)
+                                    max_translation=25)
 
 # Shuffling randomizes the bead positions. It's good to
 # allow these to optimize first to relax large connectivity
 # restraint scores.  100-500 steps is generally sufficient.
-dof.optimize_flexible_beads(500)
+dof.optimize_flexible_beads(900)
 
 evr.add_to_model()
 #emr.add_to_model()
-# slx.add_to_model()
-sr.add_to_model()
+#slx.add_to_model()
+#sr.add_to_model()
 
 # Run replica exchange Monte Carlo sampling
-#rex = IMP.pmi.macros.ReplicaExchange(
-#    mdl,
-#    # pass the root hierarchy
-#    root_hier=hier,
-#    # pass all objects to be moved ( almost always dof.get_movers() )
-#    monte_carlo_sample_objects=dof.get_movers(),
-#    # The output directory for this sampling run.
-#    global_output_directory='run_manual1/output/',
-#    # Items in output_objects write information to the stat file.
-#    output_objects=output_objects,
-#    # Number of MC steps between writing frames
-#    monte_carlo_steps=10,
-#    # set >0 to store best PDB files (but this is slow)
-#    number_of_best_scoring_models=0,
-#    # Total number of frames to run / write to the RMF file.
-#    number_of_frames=200)
-#
-## Ok, now we finally do the sampling!
-#rex.execute_macro()
+rex = IMP.pmi.macros.ReplicaExchange(
+    mdl,
+    # pass the root hierarchy
+    root_hier=hier,
+    # pass all objects to be moved ( almost always dof.get_movers() )
+    monte_carlo_sample_objects=dof.get_movers(),
+    # The output directory for this sampling run.
+    global_output_directory='run_manual1/output/',
+    # Items in output_objects write information to the stat file.
+    output_objects=output_objects,
+    # Number of MC steps between writing frames
+    monte_carlo_steps=10,
+    # set >0 to store best PDB files (but this is slow)
+    number_of_best_scoring_models=2,
+    # Total number of frames to run / write to the RMF file.
+    number_of_frames=500)
+
+# Ok, now we finally do the sampling!
+rex.execute_macro()
 
 # Outputs are then analyzed using a separate analysis script.
 

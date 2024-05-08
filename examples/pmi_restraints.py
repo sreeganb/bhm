@@ -30,13 +30,24 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         """
         Function to pass the bond distances to be used as constraints based on the atom pair
         """
-        print(IMP.atom.Atom(first).get_atom_type(), IMP.atom.Hierarchy(last))
-        #atom2 = last.get_particle_pairs
-        #print(atom1)
-        #if (atom1 == 'CA'):
-        #    dis = 1.32
-        #    print("bond")
-        #return dis
+        #print(IMP.atom.Atom(first).get_atom_type(), IMP.atom.Atom(last).get_atom_type())
+        atom1 = IMP.atom.Atom(first).get_atom_type()
+        atom2 = IMP.atom.Atom(last).get_atom_type()
+        ca_at = IMP.atom.AtomType("CA")
+        c_at = IMP.atom.AtomType("C")
+        o_at = IMP.atom.AtomType("O")
+        n_at = IMP.atom.AtomType("N") 
+        if (atom1 == n_at or atom1 == ca_at) and (atom2 == n_at or atom2 ==ca_at):
+            dist = 1.46
+        elif (atom1 == c_at or atom1 == ca_at) and (atom2 == c_at or atom2 ==ca_at):
+            dist = 1.53
+        elif (atom1 == c_at or atom1 == o_at) and (atom2 == c_at or atom2 ==o_at):
+            dist = 1.43
+        elif (atom1 == c_at or atom1 == n_at) and (atom2 == n_at or atom2 ==c_at):
+            dist = 1.48
+        else:
+            print("wrong combination of atoms, check the input")
+        return dist
 
     def __init__(self,objects,scale = 1.0,disorderedlength=False,upperharmonic=True,resolution=0,label=None):
         hiers = IMP.pmi.tools.input_adaptor(objects, resolution)
@@ -47,10 +58,9 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         m = list(hiers)[0].get_model()
         super(ConnectAtomsRestraint, self).__init__(m, label=label)
 
-        self.kappa = 10  # spring constant used for the harmonic restraints
+        self.kappa = 10  # spring constant used for the harmonic restraints changed from 10 to 20 since we have atoms now
         SortedSegments = []
         for h in hiers:
-            #print("this is h: ",h)
             try:
                 start = IMP.atom.Hierarchy(h).get_children()[0]
             except:  # noqa: E722
@@ -123,21 +133,23 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                             hu = IMP.core.Harmonic(optdist, self.kappa)
                         dps = IMP.core.DistancePairScore(hu)
                     else:  # default
-                        optdist = (0.0 + (float(residuegap) + 1.0) * 3.6) * scale
+                        #optdist = (0.0 + (float(residuegap) + 1.0) * 3.6) * scale
                         #print("first,last: ", first, last)
-                        self.get_bond_length(first, last)
+                        optdist = self.get_bond_length(first, last)
+                        #print("optdist value: ", optdist)
                         if upperharmonic:  # default
                             hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
                         else:
                             hu = IMP.core.Harmonic(optdist, self.kappa)
                         dps = IMP.core.SphereDistancePairScore(hu)
-
+                        
                     pt0 = last.get_particle()
                     pt1 = first.get_particle()
                     self.particle_pairs.append((pt0, pt1))
+                    #print("particles list: ", pt0,pt1)
                     r = IMP.core.PairRestraint(
                         self.model, dps, (pt0.get_index(), pt1.get_index()))
-
+                    
                     print("Adding sequence connectivity restraint between",
                         pt0.get_name(), " and ", pt1.get_name(), 'of distance',
                         optdist)
