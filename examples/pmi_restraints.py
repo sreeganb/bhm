@@ -10,6 +10,7 @@ import IMP.pmi.tools
 import IMP.pmi.restraints
 from operator import itemgetter
 import math
+import regex
 
 class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
     """
@@ -25,6 +26,18 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                  O 
     This set of atoms is useful for the definition of a dihedral restraint as well
     """
+    def get_bond_length(self,first):
+        """
+        Function to pass the bond distances to be used as constraints based on the atom pair
+        """
+        print(IMP.atom.Hierarchy(first))
+        #atom2 = last.get_particle_pairs
+        #print(atom1)
+        #if (atom1 == 'CA'):
+        #    dis = 1.32
+        #    print("bond")
+        #return dis
+
     def __init__(self,objects,scale = 1.0,disorderedlength=False,upperharmonic=True,resolution=0,label=None):
         hiers = IMP.pmi.tools.input_adaptor(objects, resolution)
         if len(hiers) > 1:
@@ -37,6 +50,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         self.kappa = 10  # spring constant used for the harmonic restraints
         SortedSegments = []
         for h in hiers:
+            #print("this is h: ",h)
             try:
                 start = IMP.atom.Hierarchy(h).get_children()[0]
             except:  # noqa: E722
@@ -51,74 +65,83 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
             SortedSegments.append((start, end, startres))
         SortedSegments = sorted(SortedSegments, key=itemgetter(2))
         #print("length of the sorted segments is: ", len(SortedSegments))
-        print("these are the sorted segments: ", SortedSegments[0])
+        #print("these are the sorted segments: ", SortedSegments[2])
         # connect the particles
         self.particle_pairs = []
-        for x in range(len(SortedSegments) - 1):
-            if (x == 0):
-                last = SortedSegments[0][1]
-                first = SortedSegments[1][0]
-                print("first last: ", first, last)
-            else:
-                last = SortedSegments[x][1]
-            first = SortedSegments[x + 1][0]
-            #print("first and last of the segments: ", last,first)
-            apply_restraint = True
+        nres = max(IMP.pmi.tools.get_residue_indexes(end))
+        j = 0 # counter for the number of particles to be connected
+        #--------------------------------------------------------------------
+        # Loop over residues and atoms within residues and add connectivities
+        #--------------------------------------------------------------------
+        for x in range(nres): # this should loop over the number of residues
+            for y in range(4): # hardcoded 4 here, but need to be properly changed based on the number of atoms in the coarse grained representation
+                if (j!=nres*4-2):
+                    first = SortedSegments[j+1][0]
+                else:
+                    break
+                last = SortedSegments[j][1]
+                if (y==3):
+                    last = SortedSegments[j - 1][1]
+                    first = SortedSegments[j + 1][0]
+                    if (x == nres-1):
+                        break
+                apply_restraint = True
+                j=j+1
+                # Apply connectivity runless ALL of the following are true:
+                #   - first and last both have RigidBodyMember decorators
+                #   - first and last are both RigidMembers
+                #   - first and last are part of the same RigidBody object
 
-            # Apply connectivity runless ALL of the following are true:
-            #   - first and last both have RigidBodyMember decorators
-            #   - first and last are both RigidMembers
-            #   - first and last are part of the same RigidBody object
+                # Check for both in a rigid body
+                if IMP.core.RigidBodyMember.get_is_setup(first) and \
+                        IMP.core.RigidBodyMember.get_is_setup(last) and \
+                        IMP.core.RigidMember.get_is_setup(first) and \
+                        IMP.core.RigidMember.get_is_setup(last):
+                    # Check if the rigid body objects for each particle are
+                    # the same object.
+                    #  if so, skip connectivity restraint
+                    if IMP.core.RigidBodyMember(first).get_rigid_body() \
+                            == IMP.core.RigidBodyMember(last).get_rigid_body():
+                        apply_restraint = False
 
-            # Check for both in a rigid body
-            if IMP.core.RigidBodyMember.get_is_setup(first) and \
-                    IMP.core.RigidBodyMember.get_is_setup(last) and \
-                    IMP.core.RigidMember.get_is_setup(first) and \
-                    IMP.core.RigidMember.get_is_setup(last):
-                # Check if the rigid body objects for each particle are
-                # the same object.
-                #  if so, skip connectivity restraint
-                if IMP.core.RigidBodyMember(first).get_rigid_body() \
-                        == IMP.core.RigidBodyMember(last).get_rigid_body():
-                    apply_restraint = False
+                if apply_restraint:
 
-            if apply_restraint:
+                    nreslast = len(IMP.pmi.tools.get_residue_indexes(last))
+                    lastresn = IMP.pmi.tools.get_residue_indexes(last)[-1]
+                    nresfirst = len(IMP.pmi.tools.get_residue_indexes(first))
+                    firstresn = IMP.pmi.tools.get_residue_indexes(first)[0]
+                    residuegap = firstresn - lastresn - 1
+                    if disorderedlength and (nreslast / 2 + nresfirst / 2
+                                             + residuegap) > 20.0:
+                        # calculate the distance between the sphere centers
+                        # using Kohn PNAS 2004
+                        optdist = math.sqrt(5 / 3) * 1.93 * \
+                            (nreslast / 2 + nresfirst / 2 + residuegap) ** 0.6
+                        if upperharmonic:
+                            hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
+                        else:
+                            hu = IMP.core.Harmonic(optdist, self.kappa)
+                        dps = IMP.core.DistancePairScore(hu)
+                    else:  # default
+                        optdist = (0.0 + (float(residuegap) + 1.0) * 3.6) * scale
+                        print("first,last: ", first, last)
+                        self.get_bond_length(first)
+                        if upperharmonic:  # default
+                            hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
+                        else:
+                            hu = IMP.core.Harmonic(optdist, self.kappa)
+                        dps = IMP.core.SphereDistancePairScore(hu)
 
-                nreslast = len(IMP.pmi.tools.get_residue_indexes(last))
-                lastresn = IMP.pmi.tools.get_residue_indexes(last)[-1]
-                nresfirst = len(IMP.pmi.tools.get_residue_indexes(first))
-                firstresn = IMP.pmi.tools.get_residue_indexes(first)[0]
+                    pt0 = last.get_particle()
+                    pt1 = first.get_particle()
+                    self.particle_pairs.append((pt0, pt1))
+                    r = IMP.core.PairRestraint(
+                        self.model, dps, (pt0.get_index(), pt1.get_index()))
 
-                residuegap = firstresn - lastresn - 1
-                if disorderedlength and (nreslast / 2 + nresfirst / 2
-                                         + residuegap) > 20.0:
-                    # calculate the distance between the sphere centers
-                    # using Kohn PNAS 2004
-                    optdist = math.sqrt(5 / 3) * 1.93 * \
-                        (nreslast / 2 + nresfirst / 2 + residuegap) ** 0.6
-                    if upperharmonic:
-                        hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
-                    else:
-                        hu = IMP.core.Harmonic(optdist, self.kappa)
-                    dps = IMP.core.DistancePairScore(hu)
-                else:  # default
-                    optdist = (0.0 + (float(residuegap) + 1.0) * 3.6) * scale
-                    if upperharmonic:  # default
-                        hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
-                    else:
-                        hu = IMP.core.Harmonic(optdist, self.kappa)
-                    dps = IMP.core.SphereDistancePairScore(hu)
-
-                pt0 = last.get_particle()
-                pt1 = first.get_particle()
-                self.particle_pairs.append((pt0, pt1))
-                r = IMP.core.PairRestraint(
-                    self.model, dps, (pt0.get_index(), pt1.get_index()))
-
-                print("Adding sequence connectivity restraint between",
-                      pt0.get_name(), " and ", pt1.get_name(), 'of distance',
-                      optdist)
-                self.rs.add_restraint(r)
+                    print("Adding sequence connectivity restraint between",
+                        pt0.get_name(), " and ", pt1.get_name(), 'of distance',
+                        optdist)
+                    self.rs.add_restraint(r)
 
     def get_num_restraints(self):
         """ Returns number of connectivity restraints """

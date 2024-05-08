@@ -59,7 +59,7 @@ IMP.atom.show_with_representations(hier)
 # Define the degrees of freedom and create movers 
 #------------------------------------------------------------------------------
 dof = IMP.pmi.dof.DegreesOfFreedom(mdl)
-lys_rb = alalys[:-2]
+lys_rb = alalys[:2]
 rb1 = dof.create_rigid_body(lys_rb, max_trans=1.0, max_rot=0.5, nonrigid_parts = lys_rb & alalys.get_non_atomic_residues())
 
 #ala1 = dof.create_flexible_beads(alalys.get_non_atomic_residues(), max_trans=1.0)
@@ -115,11 +115,11 @@ output_objects.append(evr)
 #for r in alalys.residues:
 #    print(r.get_residue_type())
 res = IMP.atom.get_by_type(hier, IMP.atom.RESIDUE_TYPE)
-print("residues: ", res)
+#print("residues: ", res)
 for h in res[1:-2]:
     r = IMP.atom.Residue(h)
     phi = IMP.atom.get_phi_dihedral_atoms(r)
-    print("atoms: ", phi[0])
+    #print("atoms: ", phi[0])
     d = IMP.core.get_dihedral(*[IMP.core.XYZ(x) for x in phi]) 
     #print(d)
     pos = []
