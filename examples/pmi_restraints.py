@@ -15,7 +15,15 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
     """
     Restraint to keep the sequence of atoms connected because this is necessary to
     keep the protein structure intact. For pairs of atoms in the backbone representation
-    add connectivity restraints between them.
+    add connectivity restraints between them. Not all pairs are connected, so only the 
+    neighboring atoms in the list needs to be attached, except for the first and last 
+    residues. IN this case, 
+          O     
+         //     
+    N-CA-C-N-CA-C-N-CA-C
+                \\
+                 O 
+    This set of atoms is useful for the definition of a dihedral restraint as well
     """
     def __init__(self,objects,scale = 1.0,disorderedlength=False,upperharmonic=True,resolution=0,label=None):
         hiers = IMP.pmi.tools.input_adaptor(objects, resolution)
@@ -42,14 +50,19 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
             startres = IMP.pmi.tools.get_residue_indexes(start)[0]
             SortedSegments.append((start, end, startres))
         SortedSegments = sorted(SortedSegments, key=itemgetter(2))
-
+        #print("length of the sorted segments is: ", len(SortedSegments))
+        print("these are the sorted segments: ", SortedSegments[0])
         # connect the particles
         self.particle_pairs = []
         for x in range(len(SortedSegments) - 1):
-
-            last = SortedSegments[x][1]
+            if (x == 0):
+                last = SortedSegments[0][1]
+                first = SortedSegments[1][0]
+                print("first last: ", first, last)
+            else:
+                last = SortedSegments[x][1]
             first = SortedSegments[x + 1][0]
-
+            #print("first and last of the segments: ", last,first)
             apply_restraint = True
 
             # Apply connectivity runless ALL of the following are true:
