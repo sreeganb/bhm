@@ -30,7 +30,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         """
         Function to pass the bond distances to be used as constraints based on the atom pair
         """
-        print(IMP.atom.Hierarchy(first), IMP.atom.Hierarchy(last))
+        print(IMP.atom.Atom(first).get_atom_type(), IMP.atom.Hierarchy(last))
         #atom2 = last.get_particle_pairs
         #print(atom1)
         #if (atom1 == 'CA'):
