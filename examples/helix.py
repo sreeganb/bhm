@@ -12,7 +12,6 @@ import IMP.pmi.io.crosslink
 import IMP.pmi.restraints
 import IMP.pmi.restraints.saxs
 import IMP.pmi.restraints.crosslinking
-import ihm.cross_linkers
 import IMP.isd
 import IMP.pmi.dof
 import IMP.pmi.restraints.stereochemistry
@@ -54,13 +53,12 @@ hier = sys.build()
 beads = IMP.atom.Selection(hier).get_selected_particles()
 
 IMP.atom.show_with_representations(hier)
-
 #------------------------------------------------------------------------------
 # Define the degrees of freedom and create movers 
 #------------------------------------------------------------------------------
 dof = IMP.pmi.dof.DegreesOfFreedom(mdl)
-lys_rb = alalys[19:20]
-fx_bead = alalys[0:19]
+lys_rb = alalys[0:3]
+fx_bead = alalys[3:20]
 rb1 = dof.create_rigid_body(lys_rb, max_trans=1.0, max_rot=0.5, nonrigid_parts = lys_rb & alalys.get_non_atomic_residues())
 
 ala1 = dof.create_flexible_beads(fx_bead, max_trans=1.0)
@@ -173,12 +171,12 @@ sr = IMP.pmi.restraints.saxs.SAXSRestraint(
 # First shuffle all particles to randomize the starting point of the
 # system. For larger systems, you may want to increase max_translation
 IMP.pmi.tools.shuffle_configuration(hier,
-                                    max_translation=25)
+                                    max_translation=20)
 
 # Shuffling randomizes the bead positions. It's good to
 # allow these to optimize first to relax large connectivity
 # restraint scores.  100-500 steps is generally sufficient.
-dof.optimize_flexible_beads(1000)
+dof.optimize_flexible_beads(200)
 
 evr.add_to_model()
 #emr.add_to_model()
@@ -197,11 +195,11 @@ rex = IMP.pmi.macros.ReplicaExchange(
     # Items in output_objects write information to the stat file.
     output_objects=output_objects,
     # Number of MC steps between writing frames
-    monte_carlo_steps=10,
+    monte_carlo_steps=1,
     # set >0 to store best PDB files (but this is slow)
     number_of_best_scoring_models=2,
     # Total number of frames to run / write to the RMF file.
-    number_of_frames=1000)
+    number_of_frames=500)
 
 # Ok, now we finally do the sampling!
 rex.execute_macro()
@@ -213,6 +211,6 @@ rex.execute_macro()
 
 
 # Write a single frame of RMF file to view it
-# out = IMP.pmi.output.Output()
-# out.init_rmf("ala19lys1-helix.rmf3", hierarchies=[hier])
-# out.write_rmf("ala19lys1-helix.rmf3")
+#out = IMP.pmi.output.Output()
+#out.init_rmf("ala19lys1-helix.rmf3", hierarchies=[hier])
+#out.write_rmf("ala19lys1-helix.rmf3")

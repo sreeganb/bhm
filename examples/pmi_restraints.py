@@ -30,10 +30,9 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         """
         Function to pass the bond distances to be used as constraints based on the atom pair
         """
-        #print(IMP.atom.Atom(first).get_atom_type(), IMP.atom.Atom(last).get_atom_type())
         atom1 = IMP.atom.Atom(first).get_atom_type()
         atom2 = IMP.atom.Atom(last).get_atom_type()
-        ca_at = IMP.atom.AtomType("CA")
+        ca_at = IMP.atom.AtomType("CA") # define IMP objects with same atom types to compare 
         c_at = IMP.atom.AtomType("C")
         o_at = IMP.atom.AtomType("O")
         n_at = IMP.atom.AtomType("N") 
@@ -74,8 +73,6 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
             startres = IMP.pmi.tools.get_residue_indexes(start)[0]
             SortedSegments.append((start, end, startres))
         SortedSegments = sorted(SortedSegments, key=itemgetter(2))
-        #print("length of the sorted segments is: ", len(SortedSegments))
-        #print("these are the sorted segments: ", SortedSegments[2])
         # connect the particles
         self.particle_pairs = []
         nres = max(IMP.pmi.tools.get_residue_indexes(end))
@@ -90,7 +87,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                 else:
                     break
                 last = SortedSegments[j][1]
-                if (y==3):
+                if (y==3): # include the C-CA particle pair
                     last = SortedSegments[j - 1][1]
                     first = SortedSegments[j + 1][0]
                     if (x == nres-1):
@@ -135,21 +132,20 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                     else:  # default
                         #optdist = (0.0 + (float(residuegap) + 1.0) * 3.6) * scale
                         #print("first,last: ", first, last)
-                        optdist = self.get_bond_length(first, last)
+                        #optdist = self.get_bond_length(first, last)
+                        bl = self.get_bond_length(first, last)
+                        optdist = bl *0.75
                         #print("optdist value: ", optdist)
                         if upperharmonic:  # default
                             hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
                         else:
                             hu = IMP.core.Harmonic(optdist, self.kappa)
                         dps = IMP.core.SphereDistancePairScore(hu)
-                        
                     pt0 = last.get_particle()
                     pt1 = first.get_particle()
                     self.particle_pairs.append((pt0, pt1))
-                    #print("particles list: ", pt0,pt1)
                     r = IMP.core.PairRestraint(
                         self.model, dps, (pt0.get_index(), pt1.get_index()))
-                    
                     print("Adding sequence connectivity restraint between",
                         pt0.get_name(), " and ", pt1.get_name(), 'of distance',
                         optdist)
