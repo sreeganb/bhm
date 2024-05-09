@@ -171,12 +171,12 @@ sr = IMP.pmi.restraints.saxs.SAXSRestraint(
 # First shuffle all particles to randomize the starting point of the
 # system. For larger systems, you may want to increase max_translation
 IMP.pmi.tools.shuffle_configuration(hier,
-                                    max_translation=20)
+                                    max_translation=10)
 
 # Shuffling randomizes the bead positions. It's good to
 # allow these to optimize first to relax large connectivity
 # restraint scores.  100-500 steps is generally sufficient.
-dof.optimize_flexible_beads(200)
+dof.optimize_flexible_beads(500)
 
 evr.add_to_model()
 #emr.add_to_model()
@@ -199,7 +199,7 @@ rex = IMP.pmi.macros.ReplicaExchange(
     # set >0 to store best PDB files (but this is slow)
     number_of_best_scoring_models=2,
     # Total number of frames to run / write to the RMF file.
-    number_of_frames=500)
+    number_of_frames=200)
 
 # Ok, now we finally do the sampling!
 rex.execute_macro()

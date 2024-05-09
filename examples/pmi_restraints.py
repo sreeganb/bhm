@@ -57,7 +57,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         m = list(hiers)[0].get_model()
         super(ConnectAtomsRestraint, self).__init__(m, label=label)
 
-        self.kappa = 10  # spring constant used for the harmonic restraints changed from 10 to 20 since we have atoms now
+        self.kappa = 25  # spring constant used for the harmonic restraints changed from 10 to 20 since we have atoms now
         SortedSegments = []
         for h in hiers:
             try:
@@ -131,16 +131,15 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
                         dps = IMP.core.DistancePairScore(hu)
                     else:  # default
                         #optdist = (0.0 + (float(residuegap) + 1.0) * 3.6) * scale
-                        #print("first,last: ", first, last)
                         #optdist = self.get_bond_length(first, last)
                         bl = self.get_bond_length(first, last)
-                        optdist = bl *0.75
-                        #print("optdist value: ", optdist)
+                        optdist = bl *1.0
                         if upperharmonic:  # default
                             hu = IMP.core.HarmonicUpperBound(optdist, self.kappa)
                         else:
                             hu = IMP.core.Harmonic(optdist, self.kappa)
-                        dps = IMP.core.SphereDistancePairScore(hu)
+                        #dps = IMP.core.SphereDistancePairScore(hu)
+                        dps = IMP.core.DistancePairScore(hu)
                     pt0 = last.get_particle()
                     pt1 = first.get_particle()
                     self.particle_pairs.append((pt0, pt1))
