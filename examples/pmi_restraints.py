@@ -159,11 +159,36 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         return self.particle_pairs
  
 # Restraint the dihedrals to form a helix
-class DihedralHelixRestraint(object):
+class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
     """ Restrain a protein using the ideal helix dihedrals 
         from the Ramachandran plot. In this case the phi angle is 
     """
-    def __init__(self, tuple_selection_quads, dihedrals, root_hier):
+    def get_phi_psi_atom_tuple(self, hier, h):
+        res = IMP.atom.get_by_type(hier, IMP.atom.RESIDUE_TYPE)
+        phiall = []
+        j = 0
+        for h in res[1:-2]:
+            r = IMP.atom.Residue(h)
+            phi = IMP.atom.get_phi_dihedral_atoms(r)
+            phiall.append(phi)
+            print("phiall value",phiall)
+            j = j+1
+        #d = IMP.core.get_dihedral(*[IMP.core.XYZ(x) for x in phi]) 
+            #print(d)
+        #pos = []
+        #for i in range(4):
+        #    pos.append(IMP.core.XYZ(phi[i]))
+        return phi
+    #print(ParticleIndexAdaptor phi[0])
+#    dih_rest = IMP.core.DihedralRestraint(mdl, ParticleIndexAdaptor phi[0], phi[1], phi[2], phi[3])
+#    ouput_objects.append(dih_rest)
+    #print(IMP.atom.get_phi_dihedral_atoms(r))
+    #print(IMP.atom.Residue(r).get_residue_type())
+#print("residues: ", mdl.residues)
+#r = IMP.atom.Residue()
+#phi = IMP.atom.get_phi_dihedral_atoms()
+
+    def __init__(self, root_hier):
         self.m = root_hier.get_model()
         # create restraint sets to join restraints
         self.rs = IMP.RestraintSet(self.m, "likelihood")
@@ -172,37 +197,63 @@ class DihedralHelixRestraint(object):
         # create nuisance particles
         self.kappa = IMP.pmi.tools.SetupNuisance(
             self.m, 1., 1e-5, 1e5, isoptimized=True).get_particle()
-
+        res = IMP.atom.get_by_type(root_hier,IMP.atom.RESIDUE_TYPE)
+            # Takes 4 particles as input and constraints the 
+            # dihedrals based on a HarmonicWell scoring function
+        k = 0
+        for h in res[1:-3]:    
+            anglemin = -65.0
+            anglemax = -55.0
+            strength = 35.0
+            ts = IMP.core.HarmonicWell((math.pi * anglemin /180.0, math.pi * anglemax / 180.0), strength)
+            # add the restraint
+            ra = IMP.atom.Residue(h)
+            phi = IMP.atom.get_phi_dihedral_atoms(ra)
+            #phi = self.get_phi_psi_atom_tuple(root_hier, h)
+            dresphi = IMP.core.DihedralRestraint(self.m, ts, phi[0], phi[1], phi[2], phi[3]) 
+            self.rs.add_restraint(dresphi)
+            # Same procedure for the psi dihedral angle
+            anglemin = -55.0
+            anglemax = -45.0
+            strength = 35.0
+            ts = IMP.core.HarmonicWell((math.pi * anglemin /180.0, math.pi * anglemax / 180.0), strength)
+            # add the restraint
+            ra = IMP.atom.Residue(h)
+            psi = IMP.atom.get_psi_dihedral_atoms(ra)
+            #phi = self.get_phi_psi_atom_tuple(root_hier, h)
+            print("psi dihedral: ", psi)
+            drespsi = IMP.core.DihedralRestraint(self.m, ts, psi[0], psi[1], psi[2], psi[3]) 
+            self.rs.add_restraint(drespsi)
         # create NOE likelihood restraints
-        for (tuple1, tuple2, tuple3, tuple4), angle in zip(
-                tuple_selection_quads, dihedrals):
+        #for (tuple1, tuple2, tuple3, tuple4), angle in zip(
+        #        tuple_selection_quads, dihedrals):
             # get atom 1
-            p1 = self.get_atom_from_selection(root_hier, tuple1)
-            p2 = self.get_atom_from_selection(root_hier, tuple2)
-            p3 = self.get_atom_from_selection(root_hier, tuple3)
-            p4 = self.get_atom_from_selection(root_hier, tuple4)
+        #    p1 = self.get_atom_from_selection(root_hier, tuple1)
+        #    p2 = self.get_atom_from_selection(root_hier, tuple2)
+        #    p3 = self.get_atom_from_selection(root_hier, tuple3)
+        #    p4 = self.get_atom_from_selection(root_hier, tuple4)
 
             # create restraint and add to set
-            angle = angle * math.pi / 180.  # convert to radians
-            r = IMP.isd.TALOSRestraint(self.m, p1, p2, p3, p4, [angle],
-                                       self.kappa)
-            r.set_name(
-                "DihedralRestraint_{0}:{1}_{2}:{3}_{4}:{5}_{6}:{7}".format(
-                    tuple1[0], tuple1[1], tuple2[0], tuple2[1],
-                    tuple3[0], tuple3[1], tuple4[0], tuple4[1]))
-            self.rs.add_restraint(r)
+        #    angle = angle * math.pi / 180.  # convert to radians
+        #    r = IMP.isd.TALOSRestraint(self.m, p1, p2, p3, p4, [angle],
+        #                               self.kappa)
+        #    r.set_name(
+        #        "DihedralRestraint_{0}:{1}_{2}:{3}_{4}:{5}_{6}:{7}".format(
+        #            tuple1[0], tuple1[1], tuple2[0], tuple2[1],
+        #            tuple3[0], tuple3[1], tuple4[0], tuple4[1]))
+        #    self.rs.add_restraint(r)
 
         # create prior restraints
-        self.rs_priors.add_restraint(IMP.isd.vonMisesKappaJeffreysRestraint(
-            self.m, self.kappa))
+        #self.rs_priors.add_restraint(IMP.isd.vonMisesKappaJeffreysRestraint(
+        #    self.m, self.kappa))
 
-    def get_atom_from_selection(self, root_hier, sel_tuple):
-        res_id, atom_name = sel_tuple
-        sel = IMP.atom.Selection(root_hier,
-                                 resolution=0,
-                                 residue_index=res_id,
-                                 atom_type=IMP.atom.AtomType(atom_name))
-        return sel.get_selected_particles()[0]
+    #def get_atom_from_selection(self, root_hier, sel_tuple):
+    #    res_id, atom_name = sel_tuple
+    #    sel = IMP.atom.Selection(root_hier,
+    #                             resolution=0,
+    #                             residue_index=res_id,
+    #                             atom_type=IMP.atom.AtomType(atom_name))
+    #    return sel.get_selected_particles()[0]
 
     def add_to_model(self):
         """Add the restraints to the model."""

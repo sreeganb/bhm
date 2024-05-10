@@ -57,8 +57,8 @@ IMP.atom.show_with_representations(hier)
 # Define the degrees of freedom and create movers 
 #------------------------------------------------------------------------------
 dof = IMP.pmi.dof.DegreesOfFreedom(mdl)
-lys_rb = alalys[0:3]
-fx_bead = alalys[3:20]
+lys_rb = alalys[18:20]
+fx_bead = alalys[0:18]
 rb1 = dof.create_rigid_body(lys_rb, max_trans=1.0, max_rot=0.5, nonrigid_parts = lys_rb & alalys.get_non_atomic_residues())
 
 ala1 = dof.create_flexible_beads(fx_bead, max_trans=1.0)
@@ -113,17 +113,20 @@ output_objects.append(evr)
 # print("residues: ", IMP.atom.Residue(alalys, 1))
 #for r in alalys.residues:
 #    print(r.get_residue_type())
-res = IMP.atom.get_by_type(hier, IMP.atom.RESIDUE_TYPE)
+#res = IMP.atom.get_by_type(hier, IMP.atom.RESIDUE_TYPE)
 #print("residues: ", res)
-for h in res[1:-2]:
-    r = IMP.atom.Residue(h)
-    phi = IMP.atom.get_phi_dihedral_atoms(r)
-    #print("atoms: ", phi[0])
-    d = IMP.core.get_dihedral(*[IMP.core.XYZ(x) for x in phi]) 
-    #print(d)
-    pos = []
-    for i in range(4):
-        pos.append(IMP.core.XYZ(phi[i]))
+#for h in res[1:-2]:
+#    r = IMP.atom.Residue(h)
+#    phi = IMP.atom.get_phi_dihedral_atoms(r)
+#    #print("atoms: ", phi[0])
+#    d = IMP.core.get_dihedral(*[IMP.core.XYZ(x) for x in phi]) 
+#    #print(d)
+#    pos = []
+#    for i in range(4):
+#        pos.append(IMP.core.XYZ(phi[i]))
+dih_res = DihedralHelixRestraint(hier)
+dih_res.add_to_model()
+output_objects.append(dih_res)
     #print(ParticleIndexAdaptor phi[0])
 #    dih_rest = IMP.core.DihedralRestraint(mdl, ParticleIndexAdaptor phi[0], phi[1], phi[2], phi[3])
 #    ouput_objects.append(dih_rest)
@@ -171,12 +174,12 @@ sr = IMP.pmi.restraints.saxs.SAXSRestraint(
 # First shuffle all particles to randomize the starting point of the
 # system. For larger systems, you may want to increase max_translation
 IMP.pmi.tools.shuffle_configuration(hier,
-                                    max_translation=10)
+                                    max_translation=30)
 
 # Shuffling randomizes the bead positions. It's good to
 # allow these to optimize first to relax large connectivity
 # restraint scores.  100-500 steps is generally sufficient.
-dof.optimize_flexible_beads(500)
+dof.optimize_flexible_beads(1000)
 
 evr.add_to_model()
 #emr.add_to_model()
@@ -199,7 +202,7 @@ rex = IMP.pmi.macros.ReplicaExchange(
     # set >0 to store best PDB files (but this is slow)
     number_of_best_scoring_models=2,
     # Total number of frames to run / write to the RMF file.
-    number_of_frames=200)
+    number_of_frames=5000)
 
 # Ok, now we finally do the sampling!
 rex.execute_macro()
