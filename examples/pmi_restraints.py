@@ -57,7 +57,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         m = list(hiers)[0].get_model()
         super(ConnectAtomsRestraint, self).__init__(m, label=label)
 
-        self.kappa = 25  # spring constant used for the harmonic restraints changed from 10 to 20 since we have atoms now
+        self.kappa = 20  # spring constant used for the harmonic restraints changed from 10 to 20 since we have atoms now
         SortedSegments = []
         for h in hiers:
             try:
@@ -163,31 +163,6 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
     """ Restrain a protein using the ideal helix dihedrals 
         from the Ramachandran plot. In this case the phi angle is 
     """
-    def get_phi_psi_atom_tuple(self, hier, h):
-        res = IMP.atom.get_by_type(hier, IMP.atom.RESIDUE_TYPE)
-        phiall = []
-        j = 0
-        for h in res[1:-2]:
-            r = IMP.atom.Residue(h)
-            phi = IMP.atom.get_phi_dihedral_atoms(r)
-            phiall.append(phi)
-            print("phiall value",phiall)
-            j = j+1
-        #d = IMP.core.get_dihedral(*[IMP.core.XYZ(x) for x in phi]) 
-            #print(d)
-        #pos = []
-        #for i in range(4):
-        #    pos.append(IMP.core.XYZ(phi[i]))
-        return phi
-    #print(ParticleIndexAdaptor phi[0])
-#    dih_rest = IMP.core.DihedralRestraint(mdl, ParticleIndexAdaptor phi[0], phi[1], phi[2], phi[3])
-#    ouput_objects.append(dih_rest)
-    #print(IMP.atom.get_phi_dihedral_atoms(r))
-    #print(IMP.atom.Residue(r).get_residue_type())
-#print("residues: ", mdl.residues)
-#r = IMP.atom.Residue()
-#phi = IMP.atom.get_phi_dihedral_atoms()
-
     def __init__(self, root_hier):
         self.m = root_hier.get_model()
         # create restraint sets to join restraints
@@ -201,10 +176,10 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
             # Takes 4 particles as input and constraints the 
             # dihedrals based on a HarmonicWell scoring function
         k = 0
-        for h in res[1:-3]:    
-            anglemin = -65.0
-            anglemax = -55.0
-            strength = 35.0
+        for h in res[1:-2]:    
+            anglemin = -60.0
+            anglemax = -52.0
+            strength = 20.0
             ts = IMP.core.HarmonicWell((math.pi * anglemin /180.0, math.pi * anglemax / 180.0), strength)
             # add the restraint
             ra = IMP.atom.Residue(h)
@@ -213,9 +188,9 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
             dresphi = IMP.core.DihedralRestraint(self.m, ts, phi[0], phi[1], phi[2], phi[3]) 
             self.rs.add_restraint(dresphi)
             # Same procedure for the psi dihedral angle
-            anglemin = -55.0
-            anglemax = -45.0
-            strength = 35.0
+            anglemin = -53.0
+            anglemax = -41.0
+            strength = 20.0
             ts = IMP.core.HarmonicWell((math.pi * anglemin /180.0, math.pi * anglemax / 180.0), strength)
             # add the restraint
             ra = IMP.atom.Residue(h)
@@ -284,5 +259,72 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
         output["DihedralPrior_Score"] = prior_score
         output["Dihedral_Kappa"] = self.kappa.get_scale()
         return output
-        
+
+class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
+    """A simple distance restraint"""
+
+    def __init__(self, root_hier, tuple_selection1, tuple_selection2,
+                 distancemin=0, distancemax=100, resolution=1.0, kappa=1.0,
+                 label=None, weight=1.):
+        """Setup distance restraint.
+        @param root_hier The hierarchy to select from
+        @param tuple_selection1 (resnum, resnum, molecule name, copy
+               number (=0))
+        @param tuple_selection2 (resnum, resnum, molecule name, copy
+               number (=0))
+        @param distancemin The minimum dist
+        @param distancemax The maximum dist
+        @param resolution For selecting particles
+        @param kappa The harmonic parameter
+        @param label A unique label to be used in outputs and
+                     particle/restraint names
+        @param weight Weight of restraint
+        @note Pass the same resnum twice to each tuple_selection. Optionally
+              add a copy number.
+        By default this will take the CA (c-alpha) atoms between two chosen residues 
+        and adds a distance restraint between them.
+        """
+        ts1 = IMP.core.HarmonicUpperBound(distancemax, kappa)
+        ts2 = IMP.core.HarmonicLowerBound(distancemin, kappa)
+
+        model = root_hier.get_model()
+        copy_num1 = 0
+        if len(tuple_selection1) > 3:
+            copy_num1 = tuple_selection1[3]
+        copy_num2 = 0
+        if len(tuple_selection2) > 3:
+            copy_num2 = tuple_selection2[3]
+
+        sel1 = IMP.atom.Selection(root_hier,
+                                  resolution=resolution,
+                                  molecule=tuple_selection1[2],
+                                  residue_index=tuple_selection1[0],
+                                  copy_index=copy_num1)
+        particles1 = sel1.get_selected_particles()
+        sel2 = IMP.atom.Selection(root_hier,
+                                  resolution=resolution,
+                                  molecule=tuple_selection2[2],
+                                  residue_index=tuple_selection2[0],
+                                  copy_index=copy_num2)
+        particles2 = sel2.get_selected_particles()
+
+        super(DistanceHelixRestraint, self).__init__(model, label=label,
+                                                weight=weight)
+        print(self.name)
+
+        print("Created distance restraint between "
+              "%s and %s" % (particles1[1].get_name(),
+                             particles2[1].get_name()))
+
+        #if len(particles1) > 1 or len(particles2) > 1:
+        #    raise ValueError("more than one particle selected")
+
+        self.rs.add_restraint(
+            IMP.core.DistanceRestraint(self.model, ts1,
+                                       particles1[1],
+                                       particles2[1]))
+        self.rs.add_restraint(
+            IMP.core.DistanceRestraint(self.model, ts2,
+                                       particles1[1],
+                                       particles2[1]))    
 

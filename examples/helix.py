@@ -15,12 +15,13 @@ import IMP.pmi.restraints.crosslinking
 import IMP.isd
 import IMP.pmi.dof
 import IMP.pmi.restraints.stereochemistry
+import IMP.pmi.restraints.basic
 import IMP.pmi.tools
 import IMP.pmi.macros
 import IMP.atom
 import sys
 import IMP.rmf
-from pmi_restraints import ConnectAtomsRestraint, DihedralHelixRestraint
+from pmi_restraints import ConnectAtomsRestraint, DihedralHelixRestraint, DistanceHelixRestraint
 
 if len(sys.argv) > 1:
     out_dir = sys.argv[1]
@@ -57,8 +58,8 @@ IMP.atom.show_with_representations(hier)
 # Define the degrees of freedom and create movers 
 #------------------------------------------------------------------------------
 dof = IMP.pmi.dof.DegreesOfFreedom(mdl)
-lys_rb = alalys[18:20]
-fx_bead = alalys[0:18]
+lys_rb = alalys[19:20]
+fx_bead = alalys[0:19]
 rb1 = dof.create_rigid_body(lys_rb, max_trans=1.0, max_rot=0.5, nonrigid_parts = lys_rb & alalys.get_non_atomic_residues())
 
 ala1 = dof.create_flexible_beads(fx_bead, max_trans=1.0)
@@ -136,6 +137,15 @@ output_objects.append(dih_res)
 #r = IMP.atom.Residue()
 #phi = IMP.atom.get_phi_dihedral_atoms()
 
+#--------------------------------------------------------------
+# Simple end to end distance restraint on the helix
+#--------------------------------------------------------------
+#particles = (IMP.atom.Selection(hier, resolution=0.0, molecule = "A", residue_index = 1, copy_index = 0)).get_selected_particles()
+#print("name is: ", particles[1].get_name())
+
+dis_res = DistanceHelixRestraint(hier, (1, 1, "A"), (20, 20, "A"), distancemin = 18, distancemax = 28, resolution = 0.0, kappa = 15.0)
+dis_res.add_to_model()
+output_objects.append(dis_res)
 
 # -------------------------
 # %%%%% SAXS RESTRAINT
@@ -157,7 +167,7 @@ sr = IMP.pmi.restraints.saxs.SAXSRestraint(
     input_objects=[alalys],
     saxs_datafile=saxs_data,
     weight=saxs_weight,         # scaling factor for the SAXS score
-    ff_type=IMP.saxs.CA_ATOMS,
+    ff_type=IMP.saxs.HEAVY_ATOMS,
     # Maximum q at which to compare SAXS curves. Defaults are:
     #   ~0.15 for residue-level calculations
     #   0.4 for HEAVY_ATOMS
@@ -174,12 +184,12 @@ sr = IMP.pmi.restraints.saxs.SAXSRestraint(
 # First shuffle all particles to randomize the starting point of the
 # system. For larger systems, you may want to increase max_translation
 IMP.pmi.tools.shuffle_configuration(hier,
-                                    max_translation=30)
+                                    max_translation=20)
 
 # Shuffling randomizes the bead positions. It's good to
 # allow these to optimize first to relax large connectivity
 # restraint scores.  100-500 steps is generally sufficient.
-dof.optimize_flexible_beads(1000)
+dof.optimize_flexible_beads(500)
 
 evr.add_to_model()
 #emr.add_to_model()
@@ -200,9 +210,9 @@ rex = IMP.pmi.macros.ReplicaExchange(
     # Number of MC steps between writing frames
     monte_carlo_steps=1,
     # set >0 to store best PDB files (but this is slow)
-    number_of_best_scoring_models=2,
+    number_of_best_scoring_models=5,
     # Total number of frames to run / write to the RMF file.
-    number_of_frames=5000)
+    number_of_frames=500)
 
 # Ok, now we finally do the sampling!
 rex.execute_macro()
