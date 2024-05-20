@@ -312,9 +312,11 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
                                                 weight=weight)
         print(self.name)
 
-        print("Created distance restraint between "
-              "%s and %s" % (particles1[1].get_name(),
-                             particles2[1].get_name()))
+        print(f"Created distance restraint between "
+            f"{particles1[1].get_name()} and {particles2[1].get_name()}")
+        #print("Created distance restraint between "
+        #      "%s and %s" % (particles1[1].get_name(),
+        #                     particles2[1].get_name()))
 
         #if len(particles1) > 1 or len(particles2) > 1:
         #    raise ValueError("more than one particle selected")
