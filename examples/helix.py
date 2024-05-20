@@ -60,9 +60,9 @@ IMP.atom.show_with_representations(hier)
 dof = IMP.pmi.dof.DegreesOfFreedom(mdl)
 lys_rb = alalys[19:20]
 fx_bead = alalys[0:19]
-rb1 = dof.create_rigid_body(lys_rb, max_trans=1.0, max_rot=0.5, nonrigid_parts = lys_rb & alalys.get_non_atomic_residues())
+rb1 = dof.create_rigid_body(lys_rb, max_trans=2.0, max_rot=0.5, nonrigid_parts = lys_rb & alalys.get_non_atomic_residues())
 
-ala1 = dof.create_flexible_beads(fx_bead, max_trans=1.0)
+ala1 = dof.create_flexible_beads(fx_bead, max_trans=2.0)
 #------------------------------------------------------------------------------
 # Add restraints: in this case the data corresponds to some end to end distances
 # as well as some SAXS profiles presumably. The distance restraint is added 
@@ -143,7 +143,7 @@ output_objects.append(dih_res)
 #particles = (IMP.atom.Selection(hier, resolution=0.0, molecule = "A", residue_index = 1, copy_index = 0)).get_selected_particles()
 #print("name is: ", particles[1].get_name())
 
-dis_res = DistanceHelixRestraint(hier, (1, 1, "A"), (20, 20, "A"), distancemin = 18, distancemax = 28, resolution = 0.0, kappa = 15.0)
+dis_res = DistanceHelixRestraint(hier, (1, 1, "A"), (20, 20, "A"), distancemin = 15, distancemax = 30, resolution = 0.0, kappa = 20.0)
 dis_res.add_to_model()
 output_objects.append(dis_res)
 
@@ -184,7 +184,7 @@ sr = IMP.pmi.restraints.saxs.SAXSRestraint(
 # First shuffle all particles to randomize the starting point of the
 # system. For larger systems, you may want to increase max_translation
 IMP.pmi.tools.shuffle_configuration(hier,
-                                    max_translation=20)
+                                    max_translation=25)
 
 # Shuffling randomizes the bead positions. It's good to
 # allow these to optimize first to relax large connectivity
@@ -212,7 +212,7 @@ rex = IMP.pmi.macros.ReplicaExchange(
     # set >0 to store best PDB files (but this is slow)
     number_of_best_scoring_models=5,
     # Total number of frames to run / write to the RMF file.
-    number_of_frames=500)
+    number_of_frames=1000)
 
 # Ok, now we finally do the sampling!
 rex.execute_macro()

@@ -57,7 +57,7 @@ class ConnectAtomsRestraint(IMP.pmi.restraints.RestraintBase):
         m = list(hiers)[0].get_model()
         super(ConnectAtomsRestraint, self).__init__(m, label=label)
 
-        self.kappa = 20  # spring constant used for the harmonic restraints changed from 10 to 20 since we have atoms now
+        self.kappa = 25  # spring constant used for the harmonic restraints changed from 10 to 20 since we have atoms now
         SortedSegments = []
         for h in hiers:
             try:
@@ -179,7 +179,7 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
         for h in res[1:-2]:    
             anglemin = -60.0
             anglemax = -52.0
-            strength = 20.0
+            strength = 25.0
             ts = IMP.core.HarmonicWell((math.pi * anglemin /180.0, math.pi * anglemax / 180.0), strength)
             # add the restraint
             ra = IMP.atom.Residue(h)
@@ -190,7 +190,7 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
             # Same procedure for the psi dihedral angle
             anglemin = -53.0
             anglemax = -41.0
-            strength = 20.0
+            strength = 25.0
             ts = IMP.core.HarmonicWell((math.pi * anglemin /180.0, math.pi * anglemax / 180.0), strength)
             # add the restraint
             ra = IMP.atom.Residue(h)
