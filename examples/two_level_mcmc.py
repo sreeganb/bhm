@@ -1,8 +1,9 @@
 """MCMC protocol for the Bayesian hierarchical modeling
-   This involves two states of parameter estimation
-   In the first stage it is a simple MCMC step, whereas the 
+   This involves two stages of parameter estimation.
+   The first stage is a simple MCMC step, whereas the 
    second stage involves the joint posterior estimation of the 
-   local and global parameters"""
+   local and global parameters. Use the core IMP library for 
+   most of the MCMC steps."""
 
 from __future__ import print_function, division
 import IMP
@@ -29,64 +30,105 @@ import warnings
 import math
 
 import pickle
+class HierarchicalMCMC:
+    def __init__(self):
+        # Initialize parameters
+        self.global_params = self.initialize_global_params()
+        self.local_params = self.initialize_local_params()
 
-# Define the MCMC algorithm
-def hierarchical_mcmc():
-    # Initialize parameters
-    global_params = initialize_global_params()
-    local_params = initialize_local_params()
+    def run(self, num_iterations):
+        # Run MCMC iterations
+        for iteration in range(num_iterations):
+            # Update local parameters
+            self.local_params = self.update_local_params(self.local_params)
+            # Update global parameters
+            self.global_params = self.update_global_params(self.global_params, self.local_params)
+            # Calculate joint posterior
+            joint_posterior = self.calculate_joint_posterior(self.global_params, self.local_params)
+            # Accept or reject the new state
+            if self.accept_state(joint_posterior):
+                # Update the accepted state
+                self.update_accepted_state(self.global_params, self.local_params)
 
+    def initialize_global_params(self):
+        # Initialize global parameters
+        return global_params
+
+    def initialize_local_params(self):
+        # Initialize local parameters
+        return local_params
+
+    def update_local_params(self, local_params):
+        # Update local parameters using MCMC step
+        return updated_local_params
+
+    def update_global_params(self, global_params, local_params):
+        # Update global parameters using MCMC step
+        return updated_global_params
+
+    def calculate_joint_posterior(self, global_params, local_params):
+        # Calculate the joint posterior using the global and local parameters
+        return joint_posterior
+
+    def accept_state(self, joint_posterior):
+        # Determine whether to accept or reject the new state
+        return accept
+
+    def update_accepted_state(self, global_params, local_params):
+        # Update the accepted state with the new parameters
+        pass
+
+
+# Create an instance of the HierarchicalMCMC class
+mcmc = HierarchicalMCMC()
+# Run the hierarchical MCMC algorithm
+mcmc.run(num_iterations)
+# Access the final parameters
+global_params = mcmc.global_params
+local_params = mcmc.local_params
+
+# Define the target distribution
+def target_distribution(x):
+    # Define your target distribution here
+    # Example: Gaussian distribution with mean 0 and standard deviation 1
+    return np.exp(-0.5 * x**2) / np.sqrt(2 * np.pi)
+
+# Define the MCMC function
+def mcmc_sampling(initial_state, num_iterations):
+    # Initialize the current state
+    current_state = initial_state
+    # Initialize the accepted samples list
+    accepted_samples = []
+    
     # Run MCMC iterations
     for iteration in range(num_iterations):
-        # Update local parameters
-        local_params = update_local_params(local_params)
+        # Propose a new state
+        proposed_state = np.random.normal(current_state, 1)
+        
+        # Calculate the acceptance probability
+        acceptance_prob = min(1, target_distribution(proposed_state) / target_distribution(current_state))
+        
+        # Accept or reject the proposed state
+        if np.random.uniform() < acceptance_prob:
+            current_state = proposed_state
+            accepted_samples.append(current_state)
+    
+    return accepted_samples
 
-        # Update global parameters
-        global_params = update_global_params(global_params, local_params)
+# Set the initial state and number of iterations
+initial_state = 0
+num_iterations = 10000
 
-        # Calculate joint posterior
-        joint_posterior = calculate_joint_posterior(global_params, local_params)
+# Run the MCMC sampling
+samples = mcmc_sampling(initial_state, num_iterations)
 
-        # Accept or reject the new state
-        if accept_state(joint_posterior):
-            # Update the accepted state
-            update_accepted_state(global_params, local_params)
+# Print the final samples
+print("Final samples:", samples)
+import matplotlib.pyplot as plt
 
-    # Return the final parameters
-    return global_params, local_params
-
-# Define the initialization functions
-def initialize_global_params():
-    # Initialize global parameters
-    return global_params
-
-def initialize_local_params():
-    # Initialize local parameters
-    return local_params
-
-# Define the update functions
-def update_local_params(local_params):
-    # Update local parameters using MCMC step
-    return updated_local_params
-
-def update_global_params(global_params, local_params):
-    # Update global parameters using MCMC step
-    return updated_global_params
-
-# Define the posterior calculation function
-def calculate_joint_posterior(global_params, local_params):
-    # Calculate the joint posterior using the global and local parameters
-    return joint_posterior
-
-# Define the acceptance function
-def accept_state(joint_posterior):
-    # Determine whether to accept or reject the new state
-    return accept
-
-# Define the state update function
-def update_accepted_state(global_params, local_params):
-    # Update the accepted state with the new parameters
-    pass
-
-# Run the hierarchical MCMC algorithm
-global_params, local_params = hierarchical_mcmc()
+# Plot the final sampled distribution
+plt.hist(samples, bins=30, density=True, alpha=0.5)
+plt.xlabel('Samples')
+plt.ylabel('Probability Density')
+plt.title('Final Sampled Distribution')
+plt.show()
