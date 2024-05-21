@@ -35,7 +35,11 @@ class HierarchicalMCMC:
         # Initialize parameters
         self.global_params = self.initialize_global_params()
         self.local_params = self.initialize_local_params()
-
+    '''
+    Replica exchange MCMC algorithm for hierarchical modeling based on the IMP class 
+    ReplicaExchange. This class is used to perform MCMC sampling of the joint 
+    posterior distribution of the global and local parameters in a hierarchical model.
+    '''
     def run(self, num_iterations):
         # Run MCMC iterations
         for iteration in range(num_iterations):
