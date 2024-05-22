@@ -56,14 +56,20 @@ class HierarchicalMCMC:
 
     def initialize_global_params(self):
         # Initialize global parameters
+        # Example: Gaussian distribution with mean 0 and standard deviation 1
+        # global_params = {'mean': 0, 'std_dev': 1}
+        # Create a nuisance particle with this distribution becase in IMP distributions are represented by particles
+        
         return global_params
 
     def initialize_local_params(self):
         # Initialize local parameters
+        IMP.pmi.macros.ReplicaExchange().initialize_local_params()
         return local_params
 
     def update_local_params(self, local_params):
         # Update local parameters using MCMC step
+
         return updated_local_params
 
     def update_global_params(self, global_params, local_params):

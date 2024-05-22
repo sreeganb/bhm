@@ -32,3 +32,22 @@ if __name__ == "__main__":
     plt.ylabel('x2')
     plt.title('Sampled Distribution')
     plt.show()
+
+    class TwoLevelHMC(HMC):
+        def __init__(self):
+            super().__init__()
+            self.mean_mean = torch.tensor([0., 0.])
+            self.mean_cov = torch.tensor([[1., 0.5], [0.5, 1.]])
+        
+        def model(self):
+            mean = pyro.sample("mean", dist.MultivariateNormal(self.mean_mean, self.mean_cov))
+            x = pyro.sample("x", dist.MultivariateNormal(mean, self.cov))
+        
+    if __name__ == "__main__":
+        hmc = TwoLevelHMC()
+        samples = hmc.run()
+        plt.scatter(samples['x'][:, 0], samples['x'][:, 1])
+        plt.xlabel('x1')
+        plt.ylabel('x2')
+        plt.title('Sampled Distribution')
+        plt.show()
