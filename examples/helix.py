@@ -142,11 +142,14 @@ output_objects.append(dih_res)
 #--------------------------------------------------------------
 #particles = (IMP.atom.Selection(hier, resolution=0.0, molecule = "A", residue_index = 1, copy_index = 0)).get_selected_particles()
 #print("name is: ", particles[1].get_name())
-
-dis_res = DistanceHelixRestraint(hier, (1, 1, "A"), (20, 20, "A"), distancemin = 15, distancemax = 30, resolution = 0.0, kappa = 20.0)
+dis_res = DistanceHelixRestraint(hier, (1, 1, "A"), (20, 20, "A"), distancemin = 15, distancemax = 30, resolution = 0.0, kappa = 20.0, dof)
 dis_res.add_to_model()
 output_objects.append(dis_res)
-
+"""
+At this point, you need to add the nuisance particles that were defined inside the pmi_restraints.py file.
+The nuisance particles are the parameters of the distribution that you are trying to sample. 
+"""
+dof.get_nuisances_from_restraint(dis_res)
 # -------------------------
 # %%%%% SAXS RESTRAINT
 #

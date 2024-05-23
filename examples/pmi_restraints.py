@@ -199,36 +199,6 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
             print("psi dihedral: ", psi)
             drespsi = IMP.core.DihedralRestraint(self.m, ts, psi[0], psi[1], psi[2], psi[3]) 
             self.rs.add_restraint(drespsi)
-        # create NOE likelihood restraints
-        #for (tuple1, tuple2, tuple3, tuple4), angle in zip(
-        #        tuple_selection_quads, dihedrals):
-            # get atom 1
-        #    p1 = self.get_atom_from_selection(root_hier, tuple1)
-        #    p2 = self.get_atom_from_selection(root_hier, tuple2)
-        #    p3 = self.get_atom_from_selection(root_hier, tuple3)
-        #    p4 = self.get_atom_from_selection(root_hier, tuple4)
-
-            # create restraint and add to set
-        #    angle = angle * math.pi / 180.  # convert to radians
-        #    r = IMP.isd.TALOSRestraint(self.m, p1, p2, p3, p4, [angle],
-        #                               self.kappa)
-        #    r.set_name(
-        #        "DihedralRestraint_{0}:{1}_{2}:{3}_{4}:{5}_{6}:{7}".format(
-        #            tuple1[0], tuple1[1], tuple2[0], tuple2[1],
-        #            tuple3[0], tuple3[1], tuple4[0], tuple4[1]))
-        #    self.rs.add_restraint(r)
-
-        # create prior restraints
-        #self.rs_priors.add_restraint(IMP.isd.vonMisesKappaJeffreysRestraint(
-        #    self.m, self.kappa))
-
-    #def get_atom_from_selection(self, root_hier, sel_tuple):
-    #    res_id, atom_name = sel_tuple
-    #    sel = IMP.atom.Selection(root_hier,
-    #                             resolution=0,
-    #                             residue_index=res_id,
-    #                             atom_type=IMP.atom.AtomType(atom_name))
-    #    return sel.get_selected_particles()[0]
 
     def add_to_model(self):
         """Add the restraints to the model."""
@@ -262,20 +232,29 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
 
 class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
     """A simple distance restraint"""
-    def setup_nuisance_particle(self, initval, minval, maxval, isoptimized=True):
-        """Setup nuisance particles for Monte Carlo sampling."""
-        nuisance_particle = IMP.isd.Scale.setup_particle(IMP.Particle(self.model), initval) 
-        if minval:
-            nuisance_particle.set_lower(initval)
-        if maxval:
-            nuisance_particle.set_upper(maxval)
-        nuisance_particle.set_is_optimized(nuisance_particle.get_nuisance_key(), isoptimized)
-        
-        return nuisance_particle
+    def _create_sigma(self, name, sigmainit):
+        """ This is called internally. Creates a nuisance
+        on the structural uncertainty """
+        if name in self.sigma_dictionary:
+            return self.sigma_dictionary[name][0]
+
+        sigmaminnuis = 0.0000001
+        sigmamaxnuis = 1000.0
+        sigmamin = 0.01
+        sigmamax = 100.0
+        sigmatrans = 0.5
+        sigma = IMP.pmi.tools.SetupNuisance(
+            self.model, sigmainit, sigmaminnuis, sigmamaxnuis,
+            self.sigma_is_sampled).get_particle()
+        self.sigma_dictionary[name] = (
+            sigma, sigmatrans, self.sigma_is_sampled)
+        self.rs_sig.add_restraint(IMP.isd.UniformPrior(
+            self.model, sigma, 1000000000.0, sigmamax, sigmamin))
+        return sigma
     
     def __init__(self, root_hier, tuple_selection1, tuple_selection2,
                  distancemin=0, distancemax=100, resolution=1.0, kappa=1.0,
-                 label=None, weight=1.):
+                 label=None, weight=1.0, dof):
         """Setup distance restraint.
         @param root_hier The hierarchy to select from
         @param tuple_selection1 (resnum, resnum, molecule name, copy
@@ -291,12 +270,21 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
         @param weight Weight of restraint
         @note Pass the same resnum twice to each tuple_selection. Optionally
               add a copy number.
+        @dof the degrees of freedom object
         By default this will take the CA (c-alpha) atoms between two chosen residues 
         and adds a distance restraint between them.
         """
         ts1 = IMP.core.HarmonicUpperBound(distancemax, kappa)
         ts2 = IMP.core.HarmonicLowerBound(distancemin, kappa)
-
+        """
+        Perhaps the harmonic parameter kappa has to be a nuisance particle, 
+        or a parameter which is scale of the nuisance particle. 
+        This is the direction we will push for now.  
+        """
+        sigma1 = self.setup_nuisance_particle(midpt,distancemin,distancemax, False)
+        midpt = (distancemax + distancemin) / 2.0
+        self.rs.add_contributions(sigma1)
+        
         model = root_hier.get_model()
         copy_num1 = 0
         if len(tuple_selection1) > 3:
@@ -326,8 +314,8 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
             f"{particles1[1].get_name()} and {particles2[1].get_name()}")
         '''
                 Add the nuisance particle to the model        '''
-        midpt = (distancemax + distancemin) / 2.0
-        sigma1 = self.setup_nuisance_particle(midpt,distancemin,distancemax, False)
+        
+        
         self.rs.add_restraint(
             IMP.core.DistanceRestraint(self.model, ts1,
                                        particles1[1],
@@ -336,7 +324,7 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
             IMP.core.DistanceRestraint(self.model, ts2,
                                        particles1[1],
                                        particles2[1]))    
-        self.rs.add_contributions(sigma1)
+        
         
 
 
