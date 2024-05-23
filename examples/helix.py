@@ -212,7 +212,7 @@ rex = IMP.pmi.macros.ReplicaExchange(
     # set >0 to store best PDB files (but this is slow)
     number_of_best_scoring_models=5,
     # Total number of frames to run / write to the RMF file.
-    number_of_frames=1000)
+    number_of_frames=100)
 
 # Ok, now we finally do the sampling!
 rex.execute_macro()

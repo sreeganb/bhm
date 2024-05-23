@@ -262,7 +262,17 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
 
 class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
     """A simple distance restraint"""
-
+    def setup_nuisance_particle(self, initval, minval, maxval, isoptimized=True):
+        """Setup nuisance particles for Monte Carlo sampling."""
+        nuisance_particle = IMP.isd.Scale.setup_particle(IMP.Particle(self.model), initval) 
+        if minval:
+            nuisance_particle.set_lower(initval)
+        if maxval:
+            nuisance_particle.set_upper(maxval)
+        nuisance_particle.set_is_optimized(nuisance_particle.get_nuisance_key(), isoptimized)
+        
+        return nuisance_particle
+    
     def __init__(self, root_hier, tuple_selection1, tuple_selection2,
                  distancemin=0, distancemax=100, resolution=1.0, kappa=1.0,
                  label=None, weight=1.):
@@ -314,13 +324,10 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
 
         print(f"Created distance restraint between "
             f"{particles1[1].get_name()} and {particles2[1].get_name()}")
-        #print("Created distance restraint between "
-        #      "%s and %s" % (particles1[1].get_name(),
-        #                     particles2[1].get_name()))
-
-        #if len(particles1) > 1 or len(particles2) > 1:
-        #    raise ValueError("more than one particle selected")
-
+        '''
+                Add the nuisance particle to the model        '''
+        midpt = (distancemax + distancemin) / 2.0
+        sigma1 = self.setup_nuisance_particle(midpt,distancemin,distancemax, False)
         self.rs.add_restraint(
             IMP.core.DistanceRestraint(self.model, ts1,
                                        particles1[1],
@@ -329,4 +336,8 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
             IMP.core.DistanceRestraint(self.model, ts2,
                                        particles1[1],
                                        particles2[1]))    
+        self.rs.add_contributions(sigma1)
+        
+
+
 
