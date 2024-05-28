@@ -232,29 +232,28 @@ class DihedralHelixRestraint(IMP.pmi.restraints.RestraintBase):
 
 class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
     """A simple distance restraint"""
-    def _create_sigma(self, name, sigmainit):
-        """ This is called internally. Creates a nuisance
-        on the structural uncertainty """
+    
+    def create_sigma(self, name):
+        ''' a nuisance on the structural uncertainty '''
         if name in self.sigma_dictionary:
             return self.sigma_dictionary[name][0]
 
-        sigmaminnuis = 0.0000001
-        sigmamaxnuis = 1000.0
-        sigmamin = 0.01
-        sigmamax = 100.0
+        sigmainit = 10.0
+        sigmaminnuis = 5.0
+        sigmamaxnuis = 35.0
         sigmatrans = 0.5
         sigma = IMP.pmi.tools.SetupNuisance(
             self.model, sigmainit, sigmaminnuis, sigmamaxnuis,
             self.sigma_is_sampled).get_particle()
         self.sigma_dictionary[name] = (
-            sigma, sigmatrans, self.sigma_is_sampled)
-        self.rs_sig.add_restraint(IMP.isd.UniformPrior(
-            self.model, sigma, 1000000000.0, sigmamax, sigmamin))
+            sigma,
+            sigmatrans,
+            self.sigma_is_sampled)
         return sigma
     
     def __init__(self, root_hier, tuple_selection1, tuple_selection2,
                  distancemin=0, distancemax=100, resolution=1.0, kappa=1.0,
-                 label=None, weight=1.0, dof):
+                 label=None, weight=1.0):
         """Setup distance restraint.
         @param root_hier The hierarchy to select from
         @param tuple_selection1 (resnum, resnum, molecule name, copy
@@ -274,18 +273,12 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
         By default this will take the CA (c-alpha) atoms between two chosen residues 
         and adds a distance restraint between them.
         """
+        self.model = root_hier.get_model()
+        print("model: ", self.model)
+
         ts1 = IMP.core.HarmonicUpperBound(distancemax, kappa)
         ts2 = IMP.core.HarmonicLowerBound(distancemin, kappa)
-        """
-        Perhaps the harmonic parameter kappa has to be a nuisance particle, 
-        or a parameter which is scale of the nuisance particle. 
-        This is the direction we will push for now.  
-        """
-        sigma1 = self.setup_nuisance_particle(midpt,distancemin,distancemax, False)
-        midpt = (distancemax + distancemin) / 2.0
-        self.rs.add_contributions(sigma1)
         
-        model = root_hier.get_model()
         copy_num1 = 0
         if len(tuple_selection1) > 3:
             copy_num1 = tuple_selection1[3]
@@ -306,16 +299,12 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
                                   copy_index=copy_num2)
         particles2 = sel2.get_selected_particles()
 
-        super(DistanceHelixRestraint, self).__init__(model, label=label,
+        super(DistanceHelixRestraint, self).__init__(self.model, label=label,
                                                 weight=weight)
-        print(self.name)
-
         print(f"Created distance restraint between "
             f"{particles1[1].get_name()} and {particles2[1].get_name()}")
         '''
                 Add the nuisance particle to the model        '''
-        
-        
         self.rs.add_restraint(
             IMP.core.DistanceRestraint(self.model, ts1,
                                        particles1[1],
@@ -324,6 +313,19 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
             IMP.core.DistanceRestraint(self.model, ts2,
                                        particles1[1],
                                        particles2[1]))    
+        """
+        Perhaps the harmonic parameter kappa has to be a nuisance particle, 
+        or a parameter which is scale of the nuisance particle. 
+        This is the direction we will push for now.  
+        """
+        self.sigma_is_sampled = True
+        self.sigma_dictionary = {}
+        sigma = self.create_sigma("SIGMA_HELIX_LENGTH")
+        si = sigma.get_particle().get_index()
+        #self.rs.add_contribution((si, si))
+        #sigma1 = self.setup_nuisance_particle(midpt,distancemin,distancemax, False)
+        #midpt = (distancemax + distancemin) / 2.0
+        #self.rs.add_contribution(sigma)
         
         
 

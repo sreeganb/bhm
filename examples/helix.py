@@ -142,7 +142,7 @@ output_objects.append(dih_res)
 #--------------------------------------------------------------
 #particles = (IMP.atom.Selection(hier, resolution=0.0, molecule = "A", residue_index = 1, copy_index = 0)).get_selected_particles()
 #print("name is: ", particles[1].get_name())
-dis_res = DistanceHelixRestraint(hier, (1, 1, "A"), (20, 20, "A"), distancemin = 15, distancemax = 30, resolution = 0.0, kappa = 20.0, dof)
+dis_res = DistanceHelixRestraint(hier, (1, 1, "A"), (20, 20, "A"), distancemin = 15, distancemax = 30, resolution = 0.0, kappa = 20.0)
 dis_res.add_to_model()
 output_objects.append(dis_res)
 """
