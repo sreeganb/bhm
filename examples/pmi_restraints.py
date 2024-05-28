@@ -305,14 +305,20 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
             f"{particles1[1].get_name()} and {particles2[1].get_name()}")
         '''
                 Add the nuisance particle to the model        '''
-        self.rs.add_restraint(
-            IMP.core.DistanceRestraint(self.model, ts1,
+        #self.rs.add_restraint(
+        #    IMP.core.DistanceRestraint(self.model, ts1,
+        #                               particles1[1],
+        #                               particles2[1]))
+        r1 = IMP.core.DistanceRestraint(self.model, ts1,
                                        particles1[1],
-                                       particles2[1]))
-        self.rs.add_restraint(
-            IMP.core.DistanceRestraint(self.model, ts2,
+                                       particles2[1])
+        #self.rs.add_restraint(
+        #    IMP.core.DistanceRestraint(self.model, ts2,
+        #                               particles1[1],
+        #                               particles2[1]))    
+        r2 = IMP.core.DistanceRestraint(self.model, ts2,
                                        particles1[1],
-                                       particles2[1]))    
+                                       particles2[1])    
         """
         Perhaps the harmonic parameter kappa has to be a nuisance particle, 
         or a parameter which is scale of the nuisance particle. 
@@ -322,6 +328,8 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
         self.sigma_dictionary = {}
         sigma = self.create_sigma("SIGMA_HELIX_LENGTH")
         si = sigma.get_particle().get_index()
+        r2.add_contribution((si,si))
+        self.rs.add_restraint(r2) 
         #self.rs.add_contribution((si, si))
         #sigma1 = self.setup_nuisance_particle(midpt,distancemin,distancemax, False)
         #midpt = (distancemax + distancemin) / 2.0
