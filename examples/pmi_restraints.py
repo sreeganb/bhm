@@ -234,16 +234,16 @@ class DistanceHelixRestraint(IMP.pmi.restraints.RestraintBase):
     """A simple distance restraint with a nuisance particle to include structural uncertainty."""
     def create_sigma(self):
         """Create a nuisance on the length of the helix."""
-        lengthinit = 10.0
+        lengthinit = 20.0
         self.lengthissampled = True
-        lengthminnuis = 0.0000001
-        lengthmaxnuis = 1000.0
+        lengthminnuis = 4.0
+        lengthmaxnuis = 40.0
         length = IMP.pmi.tools.SetupNuisance(self.model, lengthinit,
                                              lengthminnuis, lengthmaxnuis,
                                              self.lengthissampled
                                              ).get_particle()
         self.rs.add_restraint(
-            IMP.isd.LognormalRestraint(length, 12.0, 8.0))
+            IMP.isd.LognormalRestraint(length, 15.0, 6.0))
         
     def __init__(self, root_hier, tuple_selection1, tuple_selection2,
                  distancemin=0, distancemax=100, resolution=1.0, kappa=1.0,
