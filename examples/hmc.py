@@ -2,8 +2,19 @@
 
 import torch
 import pyro
+import numpy as np
 import pyro.distributions as dist
 import matplotlib.pyplot as plt
+
+# Create a numpy array
+data = np.array([[1, 2], [3, 4], [5, 6]])
+print(data)
+# Convert numpy array to torch tensor
+tensor = torch.from_numpy(data)
+
+# Convert torch tensor to pyro-compatible tensor
+pyro_tensor = tensor.float()
+print(pyro_tensor)
 
 class HMC:
     def __init__(self):
