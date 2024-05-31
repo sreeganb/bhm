@@ -6,6 +6,7 @@
 *.orig
 *.gcno
 *.gcda
+*.rmf3
 test/CMakeLists.txt
 src/CMakeLists.txt
 ModuleBuild.cmake
