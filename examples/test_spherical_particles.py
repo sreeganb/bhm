@@ -51,12 +51,22 @@ class ParticleSystem:
         print("particles = : ", self.particles)
         return self.particles
 
-    def bayesian_restraints(self):
+    def create_bayesian_restraints(self):
         # create a Bayesian restraint for the particle system
         # create a Jeffreys prior for the distance parameter between two adjacent particles
-        
+        hubound = IMP.core.HarmonicUpperBound(4.8, 10.0)
+        hlbound = IMP.core.HarmonicLowerBound(1.8, 10.0)
+        for i in range(len(self.particles) -1):
+            r1 = IMP.core.DistanceRestraint(self.model, hubound, self.particles[i], self.particles[i+1])
+            r2 = IMP.core.DistanceRestraint(self.model, hlbound, self.particles[i], self.particles[i+1])
+            ambres = IMP.isd.AmbiguousRestraint(self.model, 10.0, r1, r2)
+            self.rs.add_restraint(ambres)
+            print("ambiguous restraint: ", ambres)
+        # adding excluded volume restraint so that the particles do not overlap
+        ev = IMP.core.ExcludedVolumeRestraint(self.particles, 10.0, 1, "EV")
+        self.rs.add_restraint(ev)
 
-        return 0
+        return self.rs
 
 
     def create_pairwise_restraints(self):
@@ -81,7 +91,9 @@ class ParticleSystem:
     def run_mcmc_sampler(self, num_steps, temperature):
         # run an MCMC sampler to optimize the positions of the particles 
         # Extend this to a two-level MCMC sampler with two conformationally distinct states
-        restraints = self.create_pairwise_restraints()
+        #restraints = self.create_pairwise_restraints()
+        restraints = self.create_bayesian_restraints()
+        #print("ambiguous restraint: ", ambres)
         mc = IMP.core.MonteCarlo(self.model)
         mc.set_log_level(IMP.SILENT)
         mc.set_scoring_function([restraints])
@@ -125,7 +137,7 @@ particle_system.create_particles(10)
 
 # Get the optimized coordinates of the particles
 optimized_coordinates = particle_system.get_optimized_coordinates()
-print("Initial optimized_coordinates = : ", optimized_coordinates)
+#print("Initial optimized_coordinates = : ", optimized_coordinates)
 
 # Print the optimized coordinates
 for i, coord in enumerate(optimized_coordinates):
@@ -136,8 +148,7 @@ sampler = particle_system.run_mcmc_sampler(200, 2.0)
 
 # Get the optimized coordinates of the particles
 optimized_coordinates = particle_system.get_optimized_coordinates()
-print("optimized_coordinates = : ", optimized_coordinates)
-
+#print("optimized_coordinates = : ", optimized_coordinates)
 # Print the optimized coordinates
 for i, coord in enumerate(optimized_coordinates):
     print(f"Particle {i+1}: {coord}")
