@@ -112,7 +112,7 @@ class ParticleSystem:
         bmvr = [IMP.core.BallMover(self.model, x, 0.5) for x in self.particles]
         #mv = IMP.core.SerialMover(bmvr)
         mc.add_movers(bmvr) # add the movers to the MonteCarlo object
-        f = RMF.create_rmf_file("balls-move.rmf3")
+        f = RMF.create_rmf_file("strings-dimeric-beads.rmf3")
         IMP.rmf.add_hierarchy(f, self.hier)
         IMP.rmf.add_restraints(f, [restraints])
         IMP.rmf.add_particles(f, self.particles)
