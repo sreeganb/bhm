@@ -20,6 +20,7 @@ import IMP.pmi.output
 import RMF
 import IMP.rmf
 import random
+#import two_level_mcmc as tlmcmc
 
 # Define a class for the particle system
 class ParticleSystem:
@@ -77,6 +78,17 @@ class ParticleSystem:
             self.rs.add_restraint(IMP.core.DistanceRestraint(self.model, hubound, self.particles[i], self.particles[len(self.particles) // 2 + i]))
             self.rs.add_restraint(IMP.core.DistanceRestraint(self.model, hlbound, self.particles[i], self.particles[len(self.particles) // 2 + i]))
             print("connection between particles: ", self.particles[i], self.particles[len(self.particles) // 2 + i])
+        # Create a nuisance particle to denote the end to end distance of the two strings
+        # Give it a non-informative prior (Jeffrey's prior maybe)
+        self.chi_is_sampled = True
+        chiminnuis = 1.0
+        chimaxnuis = 30.0
+        chiinit = 15.0
+        chimin = 0.01
+        chimax = 100.0
+        #chitrans = 0.5
+        chi = IMP.pmi.tools.SetupNuisance(self.model, chiinit, chiminnuis, chimaxnuis, self.chi_is_sampled).get_particle()
+        self.rs.add_restraint(IMP.isd.UniformPrior(self.model, chi, 10000.0, chimax, chimin))
 
         return self.rs
 
@@ -104,7 +116,6 @@ class ParticleSystem:
         # Extend this to a two-level MCMC sampler with two conformationally distinct states
         #restraints = self.create_pairwise_restraints()
         restraints = self.create_bayesian_restraints()
-        #print("ambiguous restraint: ", ambres)
         mc = IMP.core.MonteCarlo(self.model)
         mc.set_log_level(IMP.SILENT)
         mc.set_scoring_function([restraints])

@@ -16,59 +16,55 @@ import IMP.pmi.alphabets
 import IMP.rmf
 import IMP.isd
 import IMP.pmi.dof
-from operator import itemgetter
-from collections import defaultdict
 import numpy as np
-import random
 import numpyro
 from numpyro.infer import MCMC, NUTS
 import numpyro.distributions as dist
 import matplotlib.pyplot as plt
 import jax.random as random
+import pymc as pm
+
 class TwoLevelMCMC:
     def __init__(self, data):
         self.data = data
 
+    
+    def create_mu(self):
+        """Create a nuisance on the length of the helix."""
+        lengthinit = 20.0
+        self.lengthissampled = True
+        lengthminnuis = 4.0
+        lengthmaxnuis = 40.0
+        length = IMP.pmi.tools.SetupNuisance(self.model, lengthinit,
+                                             lengthminnuis, lengthmaxnuis,
+                                             self.lengthissampled
+                                             ).get_particle()
+        self.rs.add_restraint(
+            IMP.isd.LognormalRestraint(length, 15.0, 6.0))
+        
     def model(self):
-        # Define priors for global parameters
-        global_mean = numpyro.sample("global_mean", dist.Normal(0, 10))
-        global_variance = numpyro.sample("global_variance", dist.HalfNormal(10))
-
-        # Define priors for local parameters
-        local_mean = numpyro.sample("local_mean", dist.Normal(0, 10))
-        local_variance = numpyro.sample("local_variance", dist.HalfNormal(10))
-
-        # Define the global Gaussian process
-        kernel = numpyro.sample("kernel", dist.Exponential(1))
-        global_gp = numpyro.sample("global_gp", dist.GaussianProcess(kernel, self.data["x"], global_variance))
-
-        # Define the local Gaussian process
-        local_gp = numpyro.sample("local_gp", dist.GaussianProcess(kernel, self.data["x"], local_variance))
-
-        # Define the likelihood
-        numpyro.sample("obs", dist.Normal(global_mean + local_mean, global_gp + local_gp), obs=self.data["y"])
-
+        with pm.Model() as model:
+            # Define priors for global parameters
+            global_mean = pm.Normal("global_mean", mu=0, sd=10)
+            global_variance = pm.HalfNormal("global_variance", sd=10)
+            # Define priors for local parameters
+            local_mean = pm.Normal("local_mean", mu=0, sd=10)
+            local_variance = pm.HalfNormal("local_variance", sd=10)
+            # Define the global Gaussian process
+            kernel = pm.Exponential("kernel", lam=1)
+            global_gp = pm.GaussianProcess("global_gp", kernel=kernel, observed=self.data["x"], sigma=global_variance)
+            # Define the local Gaussian process
+            local_gp = pm.GaussianProcess("local_gp", kernel=kernel, observed=self.data["x"], sigma=local_variance)
+            # Define the likelihood
+            obs = pm.Normal("obs", mu=global_mean + local_mean, sd=global_gp + local_gp, observed=self.data["y"])
+        return model
+    
     def run_mcmc(self, num_warmup, num_samples, num_chains):
-        kernel = NUTS(self.model)
-        mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
-        mcmc.run(random.PRNGKey(0))
-        mcmc.print_summary()
-
-        # Get the posterior samples
-        samples = mcmc.get_samples()
-
-        # Plot the results
-        plt.figure()
-        plt.plot(self.data["x"], self.data["y"], "ro", label="Data")
-        plt.plot(self.data["x"], samples["global_mean"].mean(axis=0), label="Global Mean")
-        plt.plot(self.data["x"], samples["local_mean"].mean(axis=0), label="Local Mean")
-        plt.fill_between(self.data["x"], samples["global_mean"].mean(axis=0) - 2 * samples["global_mean"].std(axis=0),
-                         samples["global_mean"].mean(axis=0) + 2 * samples["global_mean"].std(axis=0), alpha=0.3)
-        plt.fill_between(self.data["x"], samples["local_mean"].mean(axis=0) - 2 * samples["local_mean"].std(axis=0),
-                         samples["local_mean"].mean(axis=0) + 2 * samples["local_mean"].std(axis=0), alpha=0.3)
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.legend()
+        model = self.model()
+        with model:
+            trace = pm.sample(num_samples, tune=num_warmup, chains=num_chains)
+        # Plot the resultsts
+        pm.plot_posterior(trace, var_names=["global_mean", "local_mean"])
         plt.show()
 
 # Define an instance of the class
