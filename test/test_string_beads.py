@@ -17,6 +17,9 @@ import IMP.pmi.restraints
 import IMP.pmi.restraints.stereochemistry
 import numpy as np
 import RMF
+import IMP.rmf
+import IMP.display
+import IMP.pmi.output
 
 class system_of_beads():
     # system representation:
@@ -24,68 +27,34 @@ class system_of_beads():
     def __init__(self):
         self.model = IMP.Model()
 #    
-    def _create_beads(self, num_beads):
-        ps = [IMP.core.XYZR.setup_particle(IMP.Particle(self.model))
-        for i in range(0, num_beads)]
-        root_hier = IMP.atom.Hierarchy.setup_particle(IMP.Particle(self.model, "root"))
-        i = 0
-        for p in ps:
-            p.set_radius(1)
-            p.set_coordinates_are_optimized(True)
-            IMP.atom.Mass.setup_particle(p, 30)
-            p.set_coordinates(IMP.algebra.get_random_vector_in(IMP.algebra.Sphere3D((0.0,0.0,0.0), 50.0)))
-            IMP.display.Colored.setup_particle(p, IMP.display.get_display_color(i))
-            hr = IMP.atom.Hierarchy.setup_particle(
-                IMP.Particle(self.model, "molecule " + str(i)))
-            hr.add_child(IMP.atom.Hierarchy.setup_particle(p))
-            root_hier.add_child(hr)
-            i = i + 1
-        print(root_hier.get_children())
-        #pl = []
-        #for i in range(0, len(ps) // 2):
-        #    pp = (ps[2 * i], ps[2 * i + 1])
-        #    pl.append(pp)
-        #    # create OK staring position
-        #    pp[1].set_coordinates(IMP.algebra.get_random_vector_on(pp[0].get_sphere()))
-        #    IMP.display.Colored.setup_particle(pp[0], IMP.display.get_display_color(i))
-        #    IMP.display.Colored.setup_particle(pp[1], IMP.display.get_display_color(i))
-        #    hr = IMP.atom.Hierarchy.setup_particle(
-        #        IMP.Particle(self.model, "molecule " + str(i)))
-        #    hr.add_child(IMP.atom.Hierarchy.setup_particle(pp[0]))
-        #    hr.add_child(IMP.atom.Hierarchy.setup_particle(pp[1]))
-        #    root_hier.add_child(hr)
-        #print("particle list: ", pl)
+    def _create_beads(self, num_strings, num_beads):
+        # Top level of the hierarchy is the root_hier
+        root_hier = IMP.atom.Hierarchy.setup_particle(IMP.Particle(self.model, "root")) # create a hierarchy
+        for i in range(num_strings):
+            # Second level of the hierarchy is the string
+            pc = IMP.Particle(self.model, "string" + str(i))
+            pcd = IMP.atom.Hierarchy.setup_particle(pc)            
+            root_hier.add_child(pcd) # first child which is the string as a whole
+            for j in range(num_beads):
+                #dis = np.random.uniform(0, 10)
+                p = IMP.Particle(self.model, "bead" + str(i) + str(j))
+                IMP.display.Colored.setup_particle(p, IMP.display.get_display_color(i))
+                #pd = IMP.atom.Hierarchy.setup_particle(p)
+                dr = IMP.core.XYZR.setup_particle(p) # create a decorator for the particle
+                dr.set_coordinates(IMP.algebra.get_random_vector_in(IMP.algebra.Sphere3D(IMP.algebra.Vector3D(0, 0, 0), 20.0)))
+                if j == 0 or j == num_beads - 1:
+                    dr.set_radius(2.0)
+                else:
+                    dr.set_radius(1.0)
+                dr.set_coordinates_are_optimized(True)
+                IMP.atom.Mass.setup_particle(p, 1.0)
+                pcd.add_child(p) # first grandchild which is a bead
         return root_hier
-        # create a system of beads
-#        pp = IMP.Particle(self.model) # parent particle
-#        tr = IMP.core.HierarchyTraits("String of beads") 
-#        root_hier = IMP.core.Hierarchy.setup_particle(pp, tr) # create a hierarchy
-#        pp.set_name("root")
-#        for i in range(num_strings):
-#            pc = IMP.Particle(self.model)
-#            pcd = IMP.core.Hierarchy.setup_particle(pc, tr)
-#            root_hier.add_child(pcd) # first child which is the string as a whole
-#            pc.set_name("string" + str(i))
-#            for j in range(num_beads):
-#                dis = np.random.uniform(0, 10)
-#                p = IMP.Particle(self.model)
-#                pd = IMP.core.Hierarchy.setup_particle(p, tr)
-#                p.set_name("bead" + str(j))
-#                dr = IMP.core.XYZR.setup_particle(p) # create a decorator for the particle
-#                dr.set_coordinates(IMP.algebra.Vector3D(dis, -1.0*dis , dis-1.0))
-#                if i == 0 or i == num_beads - 1:
-#                    dr.set_radius(2.0)
-#                else:
-#                    dr.set_radius(1.0)
-#                dr.set_coordinates_are_optimized(True)
-#                IMP.atom.Mass.setup_particle(p, 1.0)
-#                pcd.add_child(pd) # first grandchild which is a bead
-#        return root_hier
 
 class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
     # A simple distance restraint between two beads connecting the 
     # string of beads    
-    def __init__(self, root_hier, particle1, particle2,
+    def __init__(self, root_hier, num_strings, num_beads,
                  distancemin=0, distancemax=100, kappa=1.0,
                  label=None, weight=1.):
         """Setup distance restraint.
@@ -97,81 +66,98 @@ class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
                      particle/restraint names
         @param weight Weight of restraint
         """
-        ts1 = IMP.core.HarmonicUpperBound(distancemax, kappa)
-        ts2 = IMP.core.HarmonicLowerBound(distancemin, kappa)
+        self.model = root_hier.get_model()
+        super(ConnectBeadsRestraint, self).__init__(self.model, label=label,
+            weight=weight)
 
-        model = root_hier.get_model()
-        super(ConnectBeadsRestraint, self).__init__(model, label=label,
-                                                weight=weight)        
-        print("Created distance restraint between "
-              "%s and %s" % (particle1.get_name(),
-                             particle2.get_name()))
+        for j in range(num_strings):
+            string = root_hier.get_child(j)
+            particles = [string.get_child(i).get_particle() for i in range(num_beads)]
 
-        self.rs.add_restraint(
-            IMP.core.DistanceRestraint(self.model, ts1,
-                                       particle1,
-                                       particle2))
-        self.rs.add_restraint(
-            IMP.core.DistanceRestraint(self.model, ts2,
-                                       particle1,
-                                       particle2))
+            ts1 = IMP.core.HarmonicUpperBound(distancemax, kappa)
+            ts2 = IMP.core.HarmonicLowerBound(distancemin, kappa)
+
+            for i in range(0, num_beads-1):
+                particle1 = particles[i]
+                particle2 = particles[i + 1]        
+                print("Created distance restraint between "
+                      "%s and %s" % (particle1.get_name(),
+                                     particle2.get_name()))
+
+                self.rs.add_restraint(
+                    IMP.core.DistanceRestraint(self.model, ts1,
+                                           particle1,
+                                           particle2))
+                self.rs.add_restraint(
+                    IMP.core.DistanceRestraint(self.model, ts2,
+                                           particle1,
+                                           particle2))
+        if (num_strings > 1):
+            ts1 = IMP.core.HarmonicUpperBound(distancemax + 2.0, kappa)
+            ts2 = IMP.core.HarmonicLowerBound(distancemin + 2.0, kappa)
+            for i in range(0, num_beads - 1):
+                for j in range(num_strings):
+                    particle1 = root_hier.get_child(j).get_child(i).get_particle()
+                    particle2 = root_hier.get_child(j).get_child(i+1).get_particle()
+                    self.rs.add_restraint(
+                        IMP.core.DistanceRestraint(self.model, ts1,
+                                               particle1,
+                                               particle2))
+                    self.rs.add_restraint(
+                        IMP.core.DistanceRestraint(self.model, ts2,
+                                               particle1,
+                                               particle2))
+        def get_score(self):
+            print(self.rs.get_score())
+            return self.rs.get_score()
 
 class MCMCsampler():
     # MCMC sampler for the hierarchical system
-    def __init__(self, root_hier, particles, temperature, num_steps):
+    def __init__(self, root_hier, num_strings, num_beads, temperature, num_steps):
         self.root_hier = root_hier
         self.m = self.root_hier.get_model()
         #****************************************************************************************
         # IMP.pmi.tools is where most of the extraction of information from the hierarchy is done
         #****************************************************************************************
         self.rs = IMP.pmi.tools.get_restraint_set(self.m)
-        self.particles = particles
+        self.particles = []
+        for i in range(num_strings):
+            string = root_hier.get_child(i)
+            for j in range(num_beads):
+                self.particles.append(string.get_child(j).get_particle())
+            #self.particles.append([string.get_child(j).get_particle() for j in range(num_beads)])
         # Setup the MCMC parameters
+        IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=10)
         mc = IMP.core.MonteCarlo(self.m)
         mc.set_log_level(IMP.SILENT)
         mc.set_kt(temperature)
         sf = IMP.core.RestraintsScoringFunction(self.rs, "SF")
         mc.set_scoring_function(sf)
+        #print("particles = ", self.particles)
         bmvr = [IMP.core.BallMover(self.m, x, 0.5) for x in self.particles]
-        #mv = IMP.core.SerialMover(bmvr)
         mc.add_movers(bmvr)
-        #mc.add_movers(bmvr) # add the movers to the MonteCarlo object
-        #f = RMF.create_rmf_file("string_of_beads.rmf3")
-        #IMP.rmf.add_hierarchy(f, self.root_hier)
-        #IMP.rmf.add_restraints(f, [self.rs])
+        # Saving the frames to RMF file
+        f = RMF.create_rmf_file("string_of_beads.rmf3")
+        IMP.rmf.add_hierarchy(f, self.root_hier)
         #IMP.rmf.add_particles(f, self.particles)
+        #print("restraints set :", self.rs)
+        IMP.rmf.add_restraints(f, [self.rs])
         #o = IMP.pmi.output.Output()
-        #os = IMP.rmf.SaveOptimizerState(self.m, f)
-        #earray = []
-        #for i in range(400):
-        #os.update_always("initial conformation")
-        #os.set_log_level(IMP.SILENT)
+        os = IMP.rmf.SaveOptimizerState(self.m, f)
+        os.update_always("initial conformation")
+        os.set_log_level(IMP.SILENT)
         #os.set_simulator(mc)
-        #mc.add_optimizer_state(os)
-        IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=5)
+        mc.add_optimizer_state(os)
         mc.optimize(num_steps)
-        #print("number of accepted MCMC steps: ", mc.get_number_of_accepted_steps())
-        #eted = self.define_global_parameter()
-        #earray.append(eted)
+        print("number of accepted MCMC steps: ", mc.get_number_of_accepted_steps())
         
 if __name__ == "__main__":
     num_beads = 10
-    num_strings = 1
+    num_strings = 2
     system = system_of_beads()
-    for i in range(num_strings):
-        root_hier = system._create_beads(num_beads)
-    particles = [root_hier.get_child(i).get_particle() for i in range(num_beads)]
-    #------------------------------------------------------------------
-    #Some of the allowed usage of root_hierarchy type
-    #------------------------------------------------------------------
-    for i in range(num_beads - 1):
-        n1 = particles[i]
-        n2 = particles[i + 1]
-        cbr = ConnectBeadsRestraint(root_hier, n1, n2, 1.0, 4.0, kappa = 10.0, label = "disres")
-        cbr.add_to_model()
+    root_hier = system._create_beads(num_strings, num_beads)   
+    cbr = ConnectBeadsRestraint(root_hier, num_strings, num_beads, 1.0, 4.0, kappa = 10.0, label = "disres")
+    cbr.add_to_model()
     evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
     evr.add_to_model()
-#    rs = []
-#    rs.append(cbr.get_restraint())
-#    rs.append(evr.get_restraint())
-    MCMCsampler(root_hier, particles, 1.0, 1000)
+    MCMCsampler(root_hier, num_strings, num_beads, 3.0, 1000)
