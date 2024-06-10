@@ -111,6 +111,54 @@ class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
             print(self.rs.get_score())
             return self.rs.get_score()
 
+class EndToEndRestraint(object):
+    
+    '''Distance restraint for the end-to-end distance of a string of beads
+    '''
+    def __init__(self, root_hier):
+        '''
+        input two particles, read in the experimental end to end distance value, 
+        construct a forward model for the data point and add the noise model which
+        is a gaussian function
+        '''
+        self.model = root_hier.get_model()
+        IMP.Restraint.__init__(self, self.model, "EndToEndRestraint %1%")
+        num_beads = root_hier.get_child(0).get_number_of_children()
+        print("number of children: ", num_beads)
+        self.d1 = root_hier.get_child(0).get_child(0).get_particle()
+        self.d2 = root_hier.get_child(0).get_child(num_beads - 1).get_particle()
+        
+        
+
+    def gaussian(self, x, mu, sig, w):
+        return (w*self.np.exp(-self.np.power(x - mu, 2.)
+                / (2 * self.np.power(sig, 2.))))
+
+    def unprotected_evaluate(self, da):
+        dist = IMP.core.get_distance(self.d1, self.d2)
+        prob = self.gaussian(dist, self.dist1, self.sigma1, self.weight1) + \
+            self.gaussian(dist, self.dist2, self.sigma2, self.weight2)
+        return -self.math.log(prob)
+
+    #def do_get_inputs(self):
+    #    return self.particle_list
+
+class EstimateChi():
+
+    def __init__ (self, root_hier, num_strings, num_beads):
+        end_to_end = []
+        self.model = root_hier.get_model()
+        for i in range(num_strings):
+            dfirst = IMP.core.XYZR(self.model, root_hier.get_child(i).get_child(0).get_particle()).get_coordinates()
+            dlast = IMP.core.XYZR(self.model, root_hier.get_child(i).get_child(num_beads - 1).get_particle()).get_coordinates()
+            end_to_end.append(IMP.algebra.get_distance(dfirst, dlast))
+        print("end to end distances: ", end_to_end)
+        
+        # Save end to end distances to a file
+        with open('./end_to_end_distances.txt', 'w') as f:
+            for distance in end_to_end:
+                f.write(str(distance) + '\n')
+
 class MCMCsampler():
     # MCMC sampler for the hierarchical system
     def __init__(self, root_hier, num_strings, num_beads, temperature, num_steps):
@@ -140,24 +188,32 @@ class MCMCsampler():
         f = RMF.create_rmf_file("string_of_beads.rmf3")
         IMP.rmf.add_hierarchy(f, self.root_hier)
         #IMP.rmf.add_particles(f, self.particles)
-        #print("restraints set :", self.rs)
         IMP.rmf.add_restraints(f, [self.rs])
         #o = IMP.pmi.output.Output()
         os = IMP.rmf.SaveOptimizerState(self.m, f)
         os.update_always("initial conformation")
         os.set_log_level(IMP.SILENT)
         #os.set_simulator(mc)
+        # update the decorator (average) 
         mc.add_optimizer_state(os)
         mc.optimize(num_steps)
+        EstimateChi(self.root_hier, num_strings, num_beads)
         print("number of accepted MCMC steps: ", mc.get_number_of_accepted_steps())
         
 if __name__ == "__main__":
     num_beads = 10
-    num_strings = 2
+    num_strings = 1
     system = system_of_beads()
     root_hier = system._create_beads(num_strings, num_beads)   
     cbr = ConnectBeadsRestraint(root_hier, num_strings, num_beads, 1.0, 4.0, kappa = 10.0, label = "disres")
     cbr.add_to_model()
+    #****************************************************************************************
+    # Read in the data from the file end_to_end_data.txt
+    # pass this on to the class EndToEndRestraint and create the restraint
+    #****************************************************************************************
+    etedata = np.loadtxt('end_to_end_data.txt')
+    etr = EndToEndRestraint(root_hier)
+    
     evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
     evr.add_to_model()
     MCMCsampler(root_hier, num_strings, num_beads, 3.0, 1000)
