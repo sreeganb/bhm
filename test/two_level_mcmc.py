@@ -6,36 +6,30 @@
    local and global parameters. Use the core IMP library for 
    most of the MCMC steps."""
 import IMP
-import pymc
 import IMP.pmi.tools
 import IMP.pmi.samplers
 import IMP.pmi.restraints
-import numpy as np
-import arviz as az
-import matplotlib.pyplot as plt
-import numpy as np
-import pymc as pm
+
 
 class TwoLevelMCMC:
-    def __init__(self, data):
-        self.data = data
-        self.model = pymc.Model()
-        self.mean = pymc.Normal('mean', mu=0, tau=1)
-        self.precision = pymc.Gamma('precision', alpha=1, beta=1)
-        self.observed = pymc.Normal('observed', mu=self.mean, tau=self.precision, observed=self.data)
-        self.mcmc = pymc.MCMC(self.model)
-    
-    def run_mcmc(self, iterations, burn, thin):
-        self.mcmc.sample(iter=iterations, burn=burn, thin=thin)
-    
-    def get_samples(self):
-        samples_mean = self.mcmc.trace('mean')[:]
-        samples_precision = self.mcmc.trace('precision')[:]
-        return samples_mean, samples_precision
+    def __init__(self):
+        self.m = IMP.Model()
 
-# Create an instance of the TwoLevelMCMC class
-data = [1, 2, 3, 4, 5]
-mcmc = TwoLevelMCMC(data)
-mcmc.run_mcmc(iterations=1000, burn=100, thin=10)
-samples_mean, samples_precision = mcmc.get_samples()
-print(samples_mean)
+    def _create_global_particle(self):
+        # Create a nuisance particle to denote the end to end distance of the two strings
+        # Give it a non-informative prior (Jeffrey's prior maybe)
+        self.chi_is_sampled = True
+        chiminnuis = 1.0
+        chimaxnuis = 30.0
+        chiinit = 15.0
+        chimin = 0.01
+        chimax = 100.0
+        #chitrans = 0.5
+        chi = IMP.pmi.tools.SetupNuisance(self.model, chiinit, chiminnuis, chimaxnuis, self.chi_is_sampled).get_particle()
+        self.rs.add_restraint(IMP.isd.UniformPrior(self.model, chi, 10000.0, chimax, chimin))
+        
+        self.global_particle = IMP.Particle(self.m)
+        self.global_particle.set_name('global')
+        self.global_particle.add_attribute(IMP.FloatKey('mean'), 0)
+        self.global_particle.add_attribute(IMP.FloatKey('precision'), 1)
+        
