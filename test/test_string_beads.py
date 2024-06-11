@@ -20,6 +20,7 @@ import RMF
 import IMP.rmf
 import IMP.display
 import IMP.pmi.output
+import IMP.bhm
 
 class system_of_beads():
     # system representation:
@@ -54,19 +55,12 @@ class system_of_beads():
 class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
     # A simple distance restraint between two beads connecting the 
     # string of beads    
-    def __init__(self, root_hier, num_strings, num_beads,
+    def __init__(self, root_hier,
                  distancemin=0, distancemax=100, kappa=1.0,
                  label=None, weight=1.):
-        """Setup distance restraint.
-        @param root_hier The hierarchy to select from
-        @param distancemin The minimum dist
-        @param distancemax The maximum dist
-        @param kappa The harmonic parameter
-        @param label A unique label to be used in outputs and
-                     particle/restraint names
-        @param weight Weight of restraint
-        """
         self.model = root_hier.get_model()
+        num_beads = root_hier.get_child(0).get_number_of_children()
+        num_strings = root_hier.get_number_of_children()
         super(ConnectBeadsRestraint, self).__init__(self.model, label=label,
             weight=weight)
 
@@ -112,36 +106,67 @@ class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
             return self.rs.get_score()
 
 class EndToEndRestraint(object):
-    
     '''Distance restraint for the end-to-end distance of a string of beads
     '''
-    def __init__(self, root_hier):
+    def __init__(self, root_hier, etedata):
         '''
         input two particles, read in the experimental end to end distance value, 
         construct a forward model for the data point and add the noise model which
-        is a gaussian function
+        is a gaussian function with a free parameter sigma where sigma^2 is the variance
         '''
         self.model = root_hier.get_model()
         IMP.Restraint.__init__(self, self.model, "EndToEndRestraint %1%")
+        # create restraint sets to join restraints
+        self.rs = IMP.RestraintSet(self.model, "likelihood")
+        self.rs_priors = IMP.RestraintSet(self.model, "priors")
+
+        # create nuisance particles
+        self.sigma = IMP.pmi.tools.SetupNuisance(
+            self.model, 1., 0.01, 100., isoptimized=True).get_particle()
+
         num_beads = root_hier.get_child(0).get_number_of_children()
-        print("number of children: ", num_beads)
-        self.d1 = root_hier.get_child(0).get_child(0).get_particle()
-        self.d2 = root_hier.get_child(0).get_child(num_beads - 1).get_particle()
-        
-        
+        num_strings = root_hier.get_number_of_children()
+        sel_tuple = []
+        distances = []
+        for i in range(num_strings):
+            self.d1 = root_hier.get_child(i).get_child(0).get_particle() # select the first bead
+            self.d2 = root_hier.get_child(i).get_child(num_beads - 1).get_particle() # select the last bead
+            pair = (self.d1, self.d2)
+            for j in range(len(etedata)):
+                distances.append(etedata[j])
+                sel_tuple.append(pair)
+        print("the tuple list is: ", sel_tuple)
+        rend = IMP.bhm.EndtoEndRestraint(self.model, sel_tuple, self.sigma, distances)
 
-    def gaussian(self, x, mu, sig, w):
-        return (w*self.np.exp(-self.np.power(x - mu, 2.)
-                / (2 * self.np.power(sig, 2.))))
+    def add_to_model(self):
+        """Add the restraints to the model."""
+        for rs in [self.rs, self.rs_priors]:
+            IMP.pmi.tools.add_restraint_to_model(self.model, rs)
 
-    def unprotected_evaluate(self, da):
-        dist = IMP.core.get_distance(self.d1, self.d2)
-        prob = self.gaussian(dist, self.dist1, self.sigma1, self.weight1) + \
-            self.gaussian(dist, self.dist2, self.sigma2, self.weight2)
-        return -self.math.log(prob)
+    def get_restraint(self):
+        return self.rs
 
-    #def do_get_inputs(self):
-    #    return self.particle_list
+    def get_restraint_for_rmf(self):
+        """Get the restraint for visualization in an RMF file."""
+        return self.rs
+
+    def get_particles_to_sample(self):
+        """Get any created particles which should be sampled."""
+        out = {}
+        out["Nuisances_Sigma"] = ([self.sigma], .1)
+        return out
+
+    def get_output(self):
+        """Get outputs to write to stat files."""
+        output = {}
+        self.m.update()
+        likelihood_score = self.rs.unprotected_evaluate(None)
+        prior_score = self.rs_priors.unprotected_evaluate(None)
+        output["_TotalScore"] = likelihood_score + prior_score
+        output["EndtoendLikelihood_Score"] = likelihood_score
+        output["EndtoendPrior_Score"] = prior_score
+        output["Endtoend_Sigma"] = self.sigma.get_scale()
+        return output
 
 class EstimateChi():
 
@@ -205,14 +230,14 @@ if __name__ == "__main__":
     num_strings = 1
     system = system_of_beads()
     root_hier = system._create_beads(num_strings, num_beads)   
-    cbr = ConnectBeadsRestraint(root_hier, num_strings, num_beads, 1.0, 4.0, kappa = 10.0, label = "disres")
+    cbr = ConnectBeadsRestraint(root_hier, 1.0, 4.0, kappa = 10.0, label = "disres")
     cbr.add_to_model()
     #****************************************************************************************
     # Read in the data from the file end_to_end_data.txt
     # pass this on to the class EndToEndRestraint and create the restraint
     #****************************************************************************************
     etedata = np.loadtxt('end_to_end_data.txt')
-    etr = EndToEndRestraint(root_hier)
+    etr = EndToEndRestraint(root_hier, etedata)
     
     evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
     evr.add_to_model()
