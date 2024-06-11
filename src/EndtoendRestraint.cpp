@@ -49,7 +49,7 @@ double EndtoendRestraint::unprotected_evaluate(DerivativeAccumulator *accum) con
   if (accum) {
     /* derivative for coordinates */
     double DFM = lognormal->evaluate_derivative_FM();
-    double factor = 1 / diff; /* d(log(gamma*pow(diff,-6)))/d(diff) */
+    double factor = 1 / diff; /* d(log(1.0*pow(diff, 1)))/d(diff) */
     algebra::Vector3D deriv = DFM * factor * (c0 - c1) / diff;
     d0.add_to_derivatives(deriv, *accum);
     d1.add_to_derivatives(-deriv, *accum);

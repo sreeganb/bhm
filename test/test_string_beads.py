@@ -21,6 +21,7 @@ import IMP.rmf
 import IMP.display
 import IMP.pmi.output
 import IMP.bhm
+import IMP.bhm.restraint
 
 class system_of_beads():
     # system representation:
