@@ -21,7 +21,7 @@ import IMP.rmf
 import IMP.display
 import IMP.pmi.output
 import IMP.bhm
-import IMP.bhm.restraint
+#import IMP.bhm.restraint
 
 class system_of_beads():
     # system representation:
@@ -137,7 +137,7 @@ class EndToEndRestraint(object):
                 distances.append(etedata[j])
                 sel_tuple.append(pair)
         print("the tuple list is: ", sel_tuple)
-        rend = IMP.bhm.EndtoEndRestraint(self.model, sel_tuple, self.sigma, distances)
+        rend = IMP.bhm.EndtoendRestraint(self.model, sel_tuple, self.sigma, distances)
 
     def add_to_model(self):
         """Add the restraints to the model."""
