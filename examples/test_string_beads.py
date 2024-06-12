@@ -87,26 +87,26 @@ class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
                     IMP.core.DistanceRestraint(self.model, ts2,
                                            particle1,
                                            particle2))
-        if (num_strings > 1):
-            ts1 = IMP.core.HarmonicUpperBound(distancemax + 2.0, kappa)
-            ts2 = IMP.core.HarmonicLowerBound(distancemin + 2.0, kappa)
-            for i in range(0, num_beads - 1):
-                for j in range(num_strings):
-                    particle1 = root_hier.get_child(j).get_child(i).get_particle()
-                    particle2 = root_hier.get_child(j).get_child(i+1).get_particle()
-                    self.rs.add_restraint(
-                        IMP.core.DistanceRestraint(self.model, ts1,
-                                               particle1,
-                                               particle2))
-                    self.rs.add_restraint(
-                        IMP.core.DistanceRestraint(self.model, ts2,
-                                               particle1,
-                                               particle2))
-        def get_score(self):
-            print(self.rs.get_score())
-            return self.rs.get_score()
+#        if (num_strings > 1):
+#            ts1 = IMP.core.HarmonicUpperBound(distancemax + 2.0, kappa)
+#            ts2 = IMP.core.HarmonicLowerBound(distancemin + 2.0, kappa)
+#            for i in range(0, num_beads - 1):
+#                for j in range(num_strings):
+#                    particle1 = root_hier.get_child(j).get_child(i).get_particle()
+#                    particle2 = root_hier.get_child(j).get_child(i+1).get_particle()
+#                    self.rs.add_restraint(
+#                        IMP.core.DistanceRestraint(self.model, ts1,
+#                                               particle1,
+#                                               particle2))
+#                    self.rs.add_restraint(
+#                        IMP.core.DistanceRestraint(self.model, ts2,
+#                                               particle1,
+#                                               particle2))
+#        def get_score(self):
+#            print(self.rs.get_score())
+#            return self.rs.get_score()
 
-class EndToEndRestraint(object):
+class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
     '''Distance restraint for the end-to-end distance of a string of beads
     '''
     def __init__(self, root_hier, etedata):
@@ -118,8 +118,8 @@ class EndToEndRestraint(object):
         self.model = root_hier.get_model()
         IMP.Restraint.__init__(self, self.model, "EndToEndRestraint %1%")
         # create restraint sets to join restraints
-        self.rs = IMP.RestraintSet(self.model, "likelihood")
-        self.rs_priors = IMP.RestraintSet(self.model, "priors")
+        #self.rs = IMP.RestraintSet(self.model, "likelihood")
+        #self.rs_priors = IMP.RestraintSet(self.model, "priors")
 
         # create nuisance particles
         self.sigma = IMP.pmi.tools.SetupNuisance(
@@ -136,38 +136,41 @@ class EndToEndRestraint(object):
             for j in range(len(etedata)):
                 distances.append(etedata[j])
                 sel_tuple.append(pair)
-        print("the tuple list is: ", sel_tuple)
-        rend = IMP.bhm.EndtoendRestraint(self.model, sel_tuple, self.sigma, distances)
+                #print("the tuple list is: ", sel_tuple[0][1])
+                rs = IMP.bhm.EndtoendRestraint(self.model, sel_tuple[0][0], sel_tuple[0][1], self.sigma, etedata[j])
+                rs.add_to_model()
+        #rs_priors.add_restraint(IMP.isd.JeffreysRestraint(self.model,
+        #                                                       self.sigma))
 
-    def add_to_model(self):
+    #def add_to_model(self):
         """Add the restraints to the model."""
-        for rs in [self.rs, self.rs_priors]:
-            IMP.pmi.tools.add_restraint_to_model(self.model, rs)
+    #    for rs in [self.rs, self.rs_priors]:
+    #        IMP.pmi.tools.add_restraint_to_model(self.model, rs)
 
-    def get_restraint(self):
-        return self.rs
+    #def get_restraint(self):
+    #    return self.rs
 
-    def get_restraint_for_rmf(self):
+    #def get_restraint_for_rmf(self):
         """Get the restraint for visualization in an RMF file."""
-        return self.rs
+    #    return self.rs
 
-    def get_particles_to_sample(self):
+    #def get_particles_to_sample(self):
         """Get any created particles which should be sampled."""
-        out = {}
-        out["Nuisances_Sigma"] = ([self.sigma], .1)
-        return out
+    #    out = {}
+    #    out["Nuisances_Sigma"] = ([self.sigma], .1)
+    #    return out
 
-    def get_output(self):
+    #def get_output(self):
         """Get outputs to write to stat files."""
-        output = {}
-        self.m.update()
-        likelihood_score = self.rs.unprotected_evaluate(None)
-        prior_score = self.rs_priors.unprotected_evaluate(None)
-        output["_TotalScore"] = likelihood_score + prior_score
-        output["EndtoendLikelihood_Score"] = likelihood_score
-        output["EndtoendPrior_Score"] = prior_score
-        output["Endtoend_Sigma"] = self.sigma.get_scale()
-        return output
+    #    output = {}
+    #    self.m.update()
+    #    likelihood_score = self.rs.unprotected_evaluate(None)
+    #    prior_score = self.rs_priors.unprotected_evaluate(None)
+    #    output["_TotalScore"] = likelihood_score + prior_score
+    #    output["EndtoendLikelihood_Score"] = likelihood_score
+    #    output["EndtoendPrior_Score"] = prior_score
+    #    output["Endtoend_Sigma"] = self.sigma.get_scale()
+    #    return output
 
 class EstimateChi():
 
@@ -181,9 +184,9 @@ class EstimateChi():
         print("end to end distances: ", end_to_end)
         
         # Save end to end distances to a file
-        with open('./end_to_end_distances.txt', 'w') as f:
-            for distance in end_to_end:
-                f.write(str(distance) + '\n')
+        #with open('./derived_data/end_to_end_distances.txt', 'w') as f:
+        #    for distance in end_to_end:
+        #        f.write(str(distance) + '\n')
 
 class MCMCsampler():
     # MCMC sampler for the hierarchical system
@@ -203,7 +206,7 @@ class MCMCsampler():
         # Setup the MCMC parameters
         IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=10)
         mc = IMP.core.MonteCarlo(self.m)
-        mc.set_log_level(IMP.SILENT)
+#        mc.set_log_level(IMP.SILENT)
         mc.set_kt(temperature)
         sf = IMP.core.RestraintsScoringFunction(self.rs, "SF")
         mc.set_scoring_function(sf)
@@ -216,12 +219,12 @@ class MCMCsampler():
         #IMP.rmf.add_particles(f, self.particles)
         IMP.rmf.add_restraints(f, [self.rs])
         #o = IMP.pmi.output.Output()
-        os = IMP.rmf.SaveOptimizerState(self.m, f)
-        os.update_always("initial conformation")
-        os.set_log_level(IMP.SILENT)
+#        os = IMP.rmf.SaveOptimizerState(self.m, f)
+#        os.update_always("initial conformation")
+#        os.set_log_level(IMP.SILENT)
         #os.set_simulator(mc)
         # update the decorator (average) 
-        mc.add_optimizer_state(os)
+#        mc.add_optimizer_state(os)
         mc.optimize(num_steps)
         EstimateChi(self.root_hier, num_strings, num_beads)
         print("number of accepted MCMC steps: ", mc.get_number_of_accepted_steps())
@@ -237,7 +240,7 @@ if __name__ == "__main__":
     # Read in the data from the file end_to_end_data.txt
     # pass this on to the class EndToEndRestraint and create the restraint
     #****************************************************************************************
-    etedata = np.loadtxt('end_to_end_data.txt')
+    etedata = np.loadtxt('./derived_data/end_to_end_data.txt')
     etr = EndToEndRestraint(root_hier, etedata)
     
     evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
