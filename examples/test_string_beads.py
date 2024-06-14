@@ -22,6 +22,7 @@ import IMP.display
 import IMP.pmi.output
 import IMP.bhm
 import IMP.bhm.restraints.strings
+import IMP.bhm.samplers.two_level_mcmc
 
 class system_of_beads():
     # system representation:
@@ -68,47 +69,6 @@ class EstimateChi():
         #with open('./derived_data/end_to_end_distances.txt', 'w') as f:
         #    for distance in end_to_end:
         #        f.write(str(distance) + '\n')
-
-class MCMCsampler():
-    # MCMC sampler for the hierarchical system
-    def __init__(self, root_hier, temperature, num_steps):
-        self.root_hier = root_hier
-        self.m = self.root_hier.get_model()
-        #****************************************************************************************
-        # IMP.pmi.tools is where most of the extraction of information from the hierarchy is done
-        #****************************************************************************************
-        self.rs = IMP.pmi.tools.get_restraint_set(self.m)
-        num_beads = root_hier.get_child(0).get_number_of_children()
-        num_strings = root_hier.get_number_of_children()
-        self.particles = []
-        for i in range(num_strings):
-            string = root_hier.get_child(i)
-            for j in range(num_beads):
-                self.particles.append(string.get_child(j).get_particle())
-            #self.particles.append([string.get_child(j).get_particle() for j in range(num_beads)])
-        # Setup the MCMC parameters
-        IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=10)
-        mc = IMP.core.MonteCarlo(self.m)
-        mc.set_kt(temperature)
-        sf = IMP.core.RestraintsScoringFunction(self.rs, "SF")
-        mc.set_scoring_function(sf)
-        bmvr = [IMP.core.BallMover(self.m, x, 0.5) for x in self.particles]
-        mc.add_movers(bmvr)
-        # Saving the frames to RMF file
-        f = RMF.create_rmf_file("string_of_beads.rmf3")
-        IMP.rmf.add_hierarchy(f, self.root_hier)
-        IMP.rmf.add_particles(f, self.particles)
-        IMP.rmf.add_restraints(f, [self.rs])
-        #o = IMP.pmi.output.Output()
-        #os = IMP.rmf.SaveOptimizerState(self.m, f)
-        #os.update_always("initial conformation")
-        #os.set_log_level(IMP.SILENT)
-        #os.set_simulator(mc)
-        # update the decorator (average) 
-        #mc.add_optimizer_state(os)
-        mc.optimize(num_steps)
-        EstimateChi(self.root_hier, num_strings, num_beads)
-        print("number of accepted MCMC steps: ", mc.get_number_of_accepted_steps())
         
 if __name__ == "__main__":
     num_beads = 10
@@ -126,4 +86,4 @@ if __name__ == "__main__":
     etr.add_to_model()  # add restraint to model  
     evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
     evr.add_to_model()
-    MCMCsampler(root_hier, 3.0, 1000)
+    IMP.bhm.samplers.two_level_mcmc.MCMCsampler(root_hier, 3.0, 1000)
