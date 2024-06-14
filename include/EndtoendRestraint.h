@@ -16,6 +16,8 @@
 #include <IMP/Restraint.h>
 #include <IMP/PairContainer.h>
 #include <IMP/PairScore.h>
+#include <cereal/access.hpp>
+#include <cereal/types/base_class.hpp>
 
 IMPBHM_BEGIN_NAMESPACE
 
@@ -27,6 +29,11 @@ class IMPBHMEXPORT EndtoendRestraint : public Restraint {
   double Vexp_;
   double chi_;
   void set_chi(double chi) { chi_ = chi; }
+
+friend class cereal::access;
+template<class Archive> void serialize(Archive &ar) {
+    ar(cereal::base_class<Restraint>(this), p0_, p1_, sigma_, Vexp_, chi_);
+}
 
  public:
   //! Create the restraint.
