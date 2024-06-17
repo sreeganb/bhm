@@ -15,30 +15,29 @@ import IMP.pmi.output
 import IMP.bhm
 
 
-class create_hierarchy_beads():
+class model():
     # system representation:
     # create a system of beads and strings
     def __init__(self):
         self.model = IMP.Model()
-
-    def _create_beads(self, num_strings, num_beads, num_systems):
+    def _create_beads(self, num_systems, num_strings, num_beads):
         """
         num_systems: number of systems (to treat the monomer and dimer simultaneously)
-        num_strings: number of strings (2 for a dimer, 1 for a monomer)
+        num_strings: number of strings, array type with entries corresponding to the number of strings (2 for a dimer, 1 for a monomer)
         num_beads: number of beads in each string
         """
-        self.model = IMP.Model()
+    #    model = IMP.Model()
         # Top level of the hierarchy is the root_hier
         root_hier = IMP.atom.Hierarchy.setup_particle(IMP.Particle(self.model, "root")) # create a hierarchy
         for k in range(num_systems):
             ns = IMP.Particle(self.model, "system" + str(k))
             nss = IMP.atom.Hierarchy.setup_particle(ns)
             root_hier.add_child(nss)
-            for i in range(num_strings):
+            for i in range(int(num_strings[k])):
                 # Second level of the hierarchy is the string
                 pc = IMP.Particle(self.model, "string" + str(i))
                 pcd = IMP.atom.Hierarchy.setup_particle(pc)            
-                root_hier.add_child(pcd)
+                nss.add_child(pcd)
                 for j in range(num_beads):
                     p = IMP.Particle(self.model, "bead" + str(i) + str(j))
                     IMP.display.Colored.setup_particle(p, IMP.display.get_display_color(i))

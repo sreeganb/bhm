@@ -10,6 +10,7 @@ import IMP.container
 import IMP.pmi.tools
 import IMP.pmi.restraints
 import math
+import numpy as np
 
 class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
     # A simple distance restraint between two beads connecting the 
@@ -18,33 +19,47 @@ class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
                  distancemin=0, distancemax=100, kappa=1.0,
                  label=None, weight=1.):
         self.model = root_hier.get_model()
-        num_beads = root_hier.get_child(0).get_number_of_children()
-        num_strings = root_hier.get_number_of_children()
+        num_systems = root_hier.get_number_of_children()
+        num_strings = np.zeros(num_systems)
+        for i in range(num_systems):
+            num_strings[i] = root_hier.get_child(i).get_number_of_children()
+            num_beads = root_hier.get_child(i).get_child(0).get_number_of_children()
+
         super(ConnectBeadsRestraint, self).__init__(self.model, label=label,
             weight=weight)
+        for k in range(num_systems): # loop over the number of systems
+            # create a restraint set for each system separately
+            self.rset = IMP.RestraintSet(self.model, "connectbeads"+str(k))
+            for j in range(int(num_strings[k])):
+                string = root_hier.get_child(k).get_child(j)
+                particles = [string.get_child(i).get_particle() for i in range(num_beads)]
 
-        for j in range(num_strings):
-            string = root_hier.get_child(j)
-            particles = [string.get_child(i).get_particle() for i in range(num_beads)]
+                ts1 = IMP.core.HarmonicUpperBound(distancemax, kappa)
+                ts2 = IMP.core.HarmonicLowerBound(distancemin, kappa)
 
-            ts1 = IMP.core.HarmonicUpperBound(distancemax, kappa)
-            ts2 = IMP.core.HarmonicLowerBound(distancemin, kappa)
+                for i in range(0, num_beads-1):
+                    particle1 = particles[i]
+                    particle2 = particles[i + 1]        
+                    print("Created distance restraint between "
+                          "%s and %s" % (particle1.get_name(),
+                                         particle2.get_name()))
 
-            for i in range(0, num_beads-1):
-                particle1 = particles[i]
-                particle2 = particles[i + 1]        
-                print("Created distance restraint between "
-                      "%s and %s" % (particle1.get_name(),
-                                     particle2.get_name()))
-
-                self.rs.add_restraint(
-                    IMP.core.DistanceRestraint(self.model, ts1,
-                                           particle1,
-                                           particle2))
-                self.rs.add_restraint(
-                    IMP.core.DistanceRestraint(self.model, ts2,
-                                           particle1,
-                                           particle2))
+                    #self.rs.add_restraint(
+                    #    IMP.core.DistanceRestraint(self.model, ts1,
+                    #                           particle1,
+                    #                           particle2))
+                    #self.rs.add_restraint(
+                    #    IMP.core.DistanceRestraint(self.model, ts2,
+                    #                           particle1,
+                    #                           particle2))
+                    self.rset.add_restraint(IMP.core.DistanceRestraint(self.model, ts1,
+                                               particle1,
+                                               particle2))
+                    self.rset.add_restraint(
+                        IMP.core.DistanceRestraint(self.model, ts2,
+                                               particle1,
+                                               particle2))
+            self.rs.add_restraint(self.rset) 
 #        if (num_strings > 1):
 #            ts1 = IMP.core.HarmonicUpperBound(distancemax + 2.0, kappa)
 #            ts2 = IMP.core.HarmonicLowerBound(distancemin + 2.0, kappa)
@@ -73,28 +88,29 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
         self.model = root_hier.get_model()
         super().__init__(self.model, label=label, weight=weight)
         print(self.name)
-        # create restraint sets to join restraints
-        #self.rs = IMP.RestraintSet(self.model, "likelihood")
-        #self.rs_priors = IMP.RestraintSet(self.model, "priors")
-
+        
         # create nuisance particles
         self.sigma = IMP.pmi.tools.SetupNuisance(
             self.model, 1., 0.01, 100., isoptimized=True).get_particle()
-
-        num_beads = root_hier.get_child(0).get_number_of_children()
-        num_strings = root_hier.get_number_of_children()
+        num_systems = root_hier.get_number_of_children()
+        num_strings = np.zeros(num_systems)
+        for i in range(num_systems):
+            num_strings[i] = root_hier.get_child(i).get_number_of_children()
+            num_beads = root_hier.get_child(i).get_child(0).get_number_of_children()
         sel_tuple = []
         distances = []
-        for i in range(num_strings):
-            self.d1 = root_hier.get_child(i).get_child(0).get_particle() # select the first bead
-            self.d2 = root_hier.get_child(i).get_child(num_beads - 1).get_particle() # select the last bead
-            pair = (self.d1, self.d2)
-            for j in range(len(etedata)):
-                distances.append(etedata[j])
-                sel_tuple.append(pair)
-                #print("the tuple list is: ", sel_tuple[0][1])
-                self.rs.add_restraint(IMP.bhm.EndtoendRestraint(self.model, sel_tuple[0][0], sel_tuple[0][1], self.sigma, etedata[j]))
-                #rs.add_to_model()
+        for k in range(num_systems):
+            # create a restraint set for each system separately
+            self.rset = IMP.RestraintSet(self.model, "endtoend"+str(k))
+            for i in range(int(num_strings[k])):
+                self.d1 = root_hier.get_child(k).get_child(i).get_child(0).get_particle() # select the first bead
+                self.d2 = root_hier.get_child(k).get_child(i).get_child(num_beads - 1).get_particle() # select the last bead
+                pair = (self.d1, self.d2)
+                for j in range(len(etedata)):
+                    distances.append(etedata[j])
+                    sel_tuple.append(pair)
+                    self.rset.add_restraint(IMP.bhm.EndtoendRestraint(self.model, sel_tuple[0][0], sel_tuple[0][1], self.sigma, etedata[j]))
+            self.rs.add_restraint(self.rset)
         #rs_priors.add_restraint(IMP.isd.JeffreysRestraint(self.model,
         #                                                       self.sigma))
         
