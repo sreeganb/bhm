@@ -23,6 +23,7 @@ import IMP.pmi.output
 import IMP.bhm
 import IMP.bhm.restraints.strings
 import IMP.bhm.samplers.two_level_mcmc
+import IMP.bhm.system_representation.string_of_beads_hierarchy
 
 class system_of_beads():
     # system representation:
@@ -73,17 +74,21 @@ class EstimateChi():
 if __name__ == "__main__":
     num_beads = 10
     num_strings = 1
-    system = system_of_beads()
-    root_hier = system._create_beads(num_strings, num_beads)   
-    cbr = IMP.bhm.restraints.strings.ConnectBeadsRestraint(root_hier, 1.0, 4.0, kappa = 10.0, label = "disres")
-    cbr.add_to_model()
+    num_systems = 1
+    root_hier = IMP.bhm.system_representation.string_of_beads_hierarchy.create_hierarchy_beads.create_beads(num_strings, num_beads, num_systems)
+    print("root_hier: ", root_hier)
+    
+    #system = system_of_beads()
+    #root_hier = system._create_beads(num_strings, num_beads)   
+    #cbr = IMP.bhm.restraints.strings.ConnectBeadsRestraint(root_hier, 1.0, 4.0, kappa = 10.0, label = "disres")
+    #cbr.add_to_model()
     #****************************************************************************************
     # Read in the data from the file end_to_end_data.txt
     # pass this on to the class EndToEndRestraint and create the restraint
     #****************************************************************************************
-    etedata = np.loadtxt('./derived_data/end_to_end_data.txt')
-    etr = IMP.bhm.restraints.strings.EndToEndRestraint(root_hier, etedata, label = "endtoend", weight = 1.0)
-    etr.add_to_model()  # add restraint to model  
-    evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
-    evr.add_to_model()
-    IMP.bhm.samplers.two_level_mcmc.MCMCsampler(root_hier, 3.0, 1000)
+    #etedata = np.loadtxt('./derived_data/end_to_end_data.txt')
+    #etr = IMP.bhm.restraints.strings.EndToEndRestraint(root_hier, etedata, label = "endtoend", weight = 1.0)
+    #etr.add_to_model()  # add restraint to model  
+    #evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
+    #evr.add_to_model()
+    #IMP.bhm.samplers.two_level_mcmc.MCMCsampler(root_hier, 3.0, 1000)
