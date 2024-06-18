@@ -13,7 +13,8 @@ import IMP.rmf
 import IMP.display
 import IMP.pmi.output
 import IMP.bhm
-
+import IMP.pmi.macros
+import IMP.pmi.dof
 
 class model():
     # system representation:
@@ -26,18 +27,18 @@ class model():
         num_strings: number of strings, array type with entries corresponding to the number of strings (2 for a dimer, 1 for a monomer)
         num_beads: number of beads in each string
         """
-    #    model = IMP.Model()
         # Top level of the hierarchy is the root_hier
-        root_hier = IMP.atom.Hierarchy.setup_particle(IMP.Particle(self.model, "root")) # create a hierarchy
+        hier = []
+        bs = []
         for k in range(num_systems):
-            ns = IMP.Particle(self.model, "system" + str(k))
-            nss = IMP.atom.Hierarchy.setup_particle(ns)
-            root_hier.add_child(nss)
+            h = "root_hier" + str(k)
+            h = IMP.atom.Hierarchy.setup_particle(IMP.Particle(self.model, "root"+str(k))) # create a hierarchy
+            bsys = IMP.pmi.macros.BuildSystem(self.model)
             for i in range(int(num_strings[k])):
                 # Second level of the hierarchy is the string
                 pc = IMP.Particle(self.model, "string" + str(i))
                 pcd = IMP.atom.Hierarchy.setup_particle(pc)            
-                nss.add_child(pcd)
+                h.add_child(pcd)
                 for j in range(num_beads):
                     p = IMP.Particle(self.model, "bead" + str(i) + str(j))
                     IMP.display.Colored.setup_particle(p, IMP.display.get_display_color(i))
@@ -50,4 +51,11 @@ class model():
                     dr.set_coordinates_are_optimized(True)
                     IMP.atom.Mass.setup_particle(p, 1.0)
                     pcd.add_child(p)
-        return root_hier
+            #temp1, temp2 = bsys.execute_macro()
+            #print(temp2)
+            #bsys.add_state(h)
+            print("leaves: ", IMP.atom.get_leaves(h))
+            bs.append(bsys)
+            hier.append(h)
+
+        return hier, bs

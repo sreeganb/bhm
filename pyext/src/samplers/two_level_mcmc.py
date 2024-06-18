@@ -13,65 +13,6 @@ import RMF
 import IMP.rmf
 import IMP.pmi.tools
 
-class MCMCsampler1():
-    # MCMC sampler for the hierarchical system
-    def __init__(self, root_hier, temperature, num_steps):
-        self.root_hier = root_hier
-        self.m = self.root_hier.get_model()
-        #****************************************************************************************
-        # IMP.pmi.tools is where most of the extraction of information from the hierarchy is done
-        # First try to just add movers for the first system and check if the MCMC will work
-        #****************************************************************************************
-        self.rs = IMP.pmi.tools.get_restraint_set(self.m)
-        num_systems = root_hier.get_number_of_children()
-        num_strings = [root_hier.get_child(i).get_number_of_children() for i in range(num_systems)]
-        num_beads = root_hier.get_child(0).get_child(0).get_number_of_children()
-        self.particles = []
-
-        #self.model = IMP.Model()
-        root_hier1 = IMP.atom.Hierarchy.setup_particle(IMP.Particle(self.m, "root1")) # create a hierarchy
-        p1 = IMP.atom.Hierarchy.setup_particle(root_hier.get_child(0)) # add a inherited child
-        root_hier1.add_child(p1)
-        print(root_hier1.get_child(0).get_children())
-
-        for i in range(num_systems):
-            for j in range(num_strings[i]):
-                string = root_hier.get_child(i).get_child(j)
-                for k in range(num_beads):
-                    self.particles.append(string.get_child(k).get_particle())
-        #print("number of particles: ", len(self.particles))
-        # Setup the MCMC parameters
-        #IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=10)
-
-#        for i in range(num_strings):
-#            string = root_hier.get_child(i)
-#            for j in range(num_beads):
-#                self.particles.append(string.get_child(j).get_particle())
-#            #self.particles.append([string.get_child(j).get_particle() for j in range(num_beads)])
-#        # Setup the MCMC parameters
-#        IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=10)
-#        mc = IMP.core.MonteCarlo(self.m)
-#        mc.set_kt(temperature)
-#        sf = IMP.core.RestraintsScoringFunction(self.rs, "SF")
-#        mc.set_scoring_function(sf)
-#        bmvr = [IMP.core.BallMover(self.m, x, 0.5) for x in self.particles]
-#        mc.add_movers(bmvr)
-#        # Saving the frames to RMF file
-#        f = RMF.create_rmf_file("string_of_beads.rmf3")
-#        IMP.rmf.add_hierarchy(f, self.root_hier)
-#        IMP.rmf.add_particles(f, self.particles)
-#        IMP.rmf.add_restraints(f, [self.rs])
-#        #o = IMP.pmi.output.Output()
-#        #os = IMP.rmf.SaveOptimizerState(self.m, f)
-#        #os.update_always("initial conformation")
-#        #os.set_log_level(IMP.SILENT)
-#        #os.set_simulator(mc)
-#        # update the decorator (average) 
-#        #mc.add_optimizer_state(os)
-#        mc.optimize(num_steps)
-#        #EstimateChi(self.root_hier, num_strings, num_beads)
-#        #print("number of accepted MCMC steps: ", mc.get_number_of_accepted_steps())
-
 class MCMCsampler():
     # MCMC sampler for the hierarchical system
     def __init__(self, root_hier, temperature, num_steps):
@@ -82,8 +23,8 @@ class MCMCsampler():
         # First try to just add movers for the first system and check if the MCMC will work
         #****************************************************************************************
         self.rs = IMP.pmi.tools.get_restraint_set(self.m)
-        num_beads = root_hier.get_child(0).get_number_of_children()
         num_strings = root_hier.get_number_of_children()
+        num_beads = root_hier.get_child(0).get_number_of_children()
         self.particles = []
         for i in range(num_strings):
             string = root_hier.get_child(i)
@@ -111,12 +52,11 @@ class MCMCsampler():
         # update the decorator (average) 
         #mc.add_optimizer_state(os)
         mc.optimize(num_steps)
-        #EstimateChi(self.root_hier, num_strings, num_beads)
-        #print("number of accepted MCMC steps: ", mc.get_number_of_accepted_steps())
 
 class TwoLevelMCMC:
-    def __init__(self):
-        self.m = IMP.Model()
+    def __init__(self, root_hier, temperature, num_steps):
+        self.root_hier = root_hier
+        self.m = self.root_hier.get_model()
 
     def _create_global_particle(self):
         # Create a nuisance particle to denote the end to end distance of the two strings
