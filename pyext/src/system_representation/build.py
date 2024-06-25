@@ -54,6 +54,8 @@ class model():
             #temp1, temp2 = bsys.execute_macro()
             #print(temp2)
             bsys.add_state(h)
+            hier, dof = bsys.execute_macro()
+            print("degrees of freedom: ", dof)
             print("leaves: ", IMP.atom.get_leaves(h))
             bs.append(bsys)
             hier.append(h)

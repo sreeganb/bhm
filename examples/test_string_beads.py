@@ -15,6 +15,7 @@ import IMP.pmi
 import IMP.pmi.tools
 import IMP.pmi.restraints
 import IMP.pmi.restraints.stereochemistry
+import IMP.pmi.topology
 import numpy as np
 import IMP.pmi.macros
 import IMP.pmi.dof
@@ -43,6 +44,16 @@ import IMP.bhm.system_representation.build
         #        f.write(str(distance) + '\n')
         
 if __name__ == "__main__":
+    # New build system, create it here only
+    mdl = IMP.Model()
+    s = IMP.pmi.topology.System(mdl)
+    st1 = s.create_state() 
+    # Create a molecule
+    sequence = "A" * 10
+    m1 = st1.create_molecule("m1", sequence, chain_id = "A")
+    m1.add_representation(st1, resolutions = [1])
+    print("molecule created: ", m1)
+
     num_systems = 2
     num_strings = np.array([1, 2])
     #num_strings = np.array([1])
