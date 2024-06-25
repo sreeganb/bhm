@@ -53,6 +53,7 @@ class ConnectBeadsRestraint(IMP.pmi.restraints.RestraintBase):
 class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
     '''Distance restraint for the end-to-end distance of a string of beads
     '''
+    _include_in_rmf = True
     def __init__(self, root_hier, etedata, label = None, weight = 1.0):
         '''
         input two particles, read in the experimental end to end distance value, 
@@ -60,7 +61,8 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
         is a gaussian function with a free parameter sigma where sigma^2 is the variance
         '''
         self.model = root_hier.get_model()
-        super().__init__(self.model, label=label, weight=weight)
+        super(EndToEndRestraint, self).__init__(self.model, label=label,
+            weight=weight)
         print(self.name)
         
         # create nuisance particles
@@ -83,20 +85,3 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
             self.rs.add_restraint(self.rset)
         #rs_priors.add_restraint(IMP.isd.JeffreysRestraint(self.model,
         #                                                       self.sigma))
-        
-    def get_output(self):
-        """Get the output of the restraint to be used by the IMP.pmi.output
-        object"""
-        output = super().get_output()
-
-        output["EndtoEndRestraint between particles_"] = str(self.d1)
-
-        return output
-
-    def get_likelihood(self):
-        """Get the unweighted likelihood of the restraint"""
-        likelihood = 1
-        for restraint in self.rs:
-            likelihood *= restraint.get_probability()
-
-        return likelihood

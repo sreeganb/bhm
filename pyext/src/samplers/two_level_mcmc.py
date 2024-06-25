@@ -41,17 +41,23 @@ class MCMCsampler():
         mc.set_kt(temperature)
         sf = IMP.core.RestraintsScoringFunction(self.rs, "SF")
         mc.set_scoring_function(sf)
-        bmvr = [IMP.core.BallMover(self.m, x, 0.5) for x in self.particles]
+        # Add movers for each particle
+        print("what are the particles: ", self.particles)
+        bmvr = [IMP.core.BallMover(self.m, x, 1.0) for x in self.particles]
+        #sm = IMP.core.SerialMover(bmvr)
+        #IMP.set_log_level(IMP.SILENT)
         mc.add_movers(bmvr)
+        #mc.add_movers(sm)
         # Saving the frames to RMF file
         o = IMP.pmi.output.Output()
         os = IMP.rmf.SaveOptimizerState(self.m, f)
         os.update_always("initial conformation")
-        os.set_log_level(IMP.SILENT)
+        #os.set_log_level(IMP.SILENT)
         #os.set_simulator(mc)
         # update the decorator (average) 
         mc.add_optimizer_state(os)
         mc.optimize(num_steps)
+        print("number of accepted steps: ", mc.get_number_of_accepted_steps())
 
 class TwoLevelMCMC:
     def __init__(self, root_hier, temperature, num_steps):
