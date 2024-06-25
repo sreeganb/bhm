@@ -43,9 +43,9 @@ import IMP.bhm.system_representation.build
         #        f.write(str(distance) + '\n')
         
 if __name__ == "__main__":
-    num_systems = 2
-    num_strings = np.array([1, 2])
-    #num_strings = np.array([1])
+    num_systems = 1
+    #num_strings = np.array([1, 2])
+    num_strings = np.array([1])
     num_beads = 10
     
     system_rep = IMP.bhm.system_representation.build.model()
@@ -55,10 +55,10 @@ if __name__ == "__main__":
     for i in range(num_systems):
         cbr = IMP.bhm.restraints.strings.ConnectBeadsRestraint(root_hier[i], 1.0, 4.0, kappa = 10.0, label = "disres")
         cbr.add_to_model()  # add restraint to model
-        etr = IMP.bhm.restraints.strings.EndToEndRestraint(root_hier[i], etedata, label = "endtoend", weight = 1.0)
-        etr.add_to_model()  # add restraint to model
+        #etr = IMP.bhm.restraints.strings.EndToEndRestraint(root_hier[i], etedata, label = "endtoend", weight = 1.0)
+        #etr.add_to_model()  # add restraint to model
         evr = "evr_" + str(i)
         evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
         evr.add_to_model()
     print("degrees of freedom: ", build_sys[0].execute_macro()[1])
-    IMP.bhm.samplers.two_level_mcmc.MCMCsampler(root_hier[1], 3.0, 100)
+    IMP.bhm.samplers.two_level_mcmc.MCMCsampler(root_hier[0], 3.0, 100)

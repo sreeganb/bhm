@@ -30,7 +30,11 @@ class MCMCsampler():
             string = root_hier.get_child(i)
             for j in range(num_beads):
                 self.particles.append(string.get_child(j).get_particle())
-            #self.particles.append([string.get_child(j).get_particle() for j in range(num_beads)])
+        f = RMF.create_rmf_file("string_of_beads.rmf3")
+        IMP.rmf.add_hierarchy(f, self.root_hier)
+        #IMP.rmf.add_particles(f, self.particles)
+        IMP.rmf.add_restraints(f, [self.rs])
+        
         # Setup the MCMC parameters
         IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=10)
         mc = IMP.core.MonteCarlo(self.m)
@@ -40,17 +44,13 @@ class MCMCsampler():
         bmvr = [IMP.core.BallMover(self.m, x, 0.5) for x in self.particles]
         mc.add_movers(bmvr)
         # Saving the frames to RMF file
-        f = RMF.create_rmf_file("string_of_beads.rmf3")
-        IMP.rmf.add_hierarchy(f, self.root_hier)
-        IMP.rmf.add_particles(f, self.particles)
-        IMP.rmf.add_restraints(f, [self.rs])
-        #o = IMP.pmi.output.Output()
-        #os = IMP.rmf.SaveOptimizerState(self.m, f)
-        #os.update_always("initial conformation")
-        #os.set_log_level(IMP.SILENT)
+        o = IMP.pmi.output.Output()
+        os = IMP.rmf.SaveOptimizerState(self.m, f)
+        os.update_always("initial conformation")
+        os.set_log_level(IMP.SILENT)
         #os.set_simulator(mc)
         # update the decorator (average) 
-        #mc.add_optimizer_state(os)
+        mc.add_optimizer_state(os)
         mc.optimize(num_steps)
 
 class TwoLevelMCMC:
