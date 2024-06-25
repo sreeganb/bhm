@@ -11,12 +11,15 @@ import IMP.isd
 import IMP.core
 import IMP.container
 import IMP.atom
+import IMP.algebra
 import IMP.pmi
 import IMP.pmi.tools
 import IMP.pmi.restraints
 import IMP.pmi.restraints.stereochemistry
 import IMP.pmi.topology
 import numpy as np
+import os
+import sys
 import IMP.pmi.macros
 import IMP.pmi.dof
 import IMP.rmf
@@ -42,34 +45,55 @@ import IMP.bhm.system_representation.build
         #with open('./derived_data/end_to_end_distances.txt', 'w') as f:
         #    for distance in end_to_end:
         #        f.write(str(distance) + '\n')
-        
-if __name__ == "__main__":
-    # New build system, create it here only
-    mdl = IMP.Model()
-    s = IMP.pmi.topology.System(mdl)
-    st1 = s.create_state() 
-    # Create a molecule
-    sequence = "A" * 10
-    m1 = st1.create_molecule("m1", sequence, chain_id = "A")
-    m1.add_representation(st1, resolutions = [1])
-    print("molecule created: ", m1)
 
-    num_systems = 2
-    num_strings = np.array([1, 2])
-    #num_strings = np.array([1])
-    num_beads = 10
+#----------------------------------------------------------------------
+# New build system for the monomer 
+#----------------------------------------------------------------------
+ids = ["A", "B", "C"]
+mdl = IMP.Model()
+s = IMP.pmi.topology.System(mdl)
+num_states = 2
+num_mols = [1, 2]
+sequence = 'A'*10
+mols = []
+for i in range(num_states):
+    st1 = s.create_state()
+    k = 0
+    for j in range(num_mols[i]):
+        m1 = st1.create_molecule("prot%s"%(ids[k]), sequence, chain_id ='%s'%(ids[j]))
+        m1.add_representation(m1, resolutions = [1])
+        mols.append(m1)
+        k += 1
+
+r_hier = s.build()
+dof = IMP.pmi.dof.DegreesOfFreedom(mdl)
+for k in mols:
+     dof.create_flexible_beads(k, max_trans = 0.1)
+
+IMP.atom.show_with_representations(r_hier)
+
+print("test ", r_hier.get_child(1).get_child(1).get_child(0).get_child(0).get_number_of_children())
+cr = IMP.pmi.restraints.stereochemistry.ConnectivityRestraint(mols[0])
+cr.add_to_model()
+
+print("children: ", r_hier.get_number_of_children())
+
+num_systems = 2
+num_strings = np.array([1, 2])
+#num_strings = np.array([1])
+num_beads = 10
     
-    system_rep = IMP.bhm.system_representation.build.model()
-    root_hier, build_sys = system_rep._create_beads(num_systems, num_strings, num_beads)
-    print(root_hier[1].get_child(1).get_children())
-    etedata = np.loadtxt('./derived_data/end_to_end_data.txt')
-    for i in range(num_systems):
-        cbr = IMP.bhm.restraints.strings.ConnectBeadsRestraint(root_hier[i], 1.0, 4.0, kappa = 10.0, label = "disres")
-        cbr.add_to_model()  # add restraint to model
-        #etr = IMP.bhm.restraints.strings.EndToEndRestraint(root_hier[i], etedata, label = "endtoend", weight = 1.0)
-        #etr.add_to_model()  # add restraint to model
-        evr = "evr_" + str(i)
-        evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
-        evr.add_to_model()
+system_rep = IMP.bhm.system_representation.build.model()
+root_hier, build_sys = system_rep._create_beads(num_systems, num_strings, num_beads)
+print(root_hier[1].get_child(1).get_children())
+etedata = np.loadtxt('./derived_data/end_to_end_data.txt')
+for i in range(num_systems):
+    cbr = IMP.bhm.restraints.strings.ConnectBeadsRestraint(root_hier[i], 1.0, 4.0, kappa = 10.0, label = "disres")
+    cbr.add_to_model()  # add restraint to model
+    #etr = IMP.bhm.restraints.strings.EndToEndRestraint(root_hier[i], etedata, label = "endtoend", weight = 1.0)
+    #etr.add_to_model()  # add restraint to model
+    evr = "evr_" + str(i)
+    evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(root_hier)
+    evr.add_to_model()
     #print("degrees of freedom: ", build_sys[0].execute_macro()[1])
     #IMP.bhm.samplers.two_level_mcmc.MCMCsampler(root_hier[1], 3.0, 400)
