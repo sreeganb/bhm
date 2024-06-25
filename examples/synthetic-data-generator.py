@@ -9,12 +9,13 @@ class SyntheticDataGenerator:
     
     def generate_data(self):
         mean1 = np.random.uniform(*self.mean_range)
-        mean2 = np.random.uniform(*self.mean_range)
-        std1 = np.random.uniform(0.5, 1.5)
-        std2 = np.random.uniform(0.5, 1.5)
+        std1 = np.random.uniform(0.4, 1.6)
         data1 = np.random.normal(mean1, std1, self.num_samples)
-        data2 = np.random.normal(mean2, std2, self.num_samples)
-        return np.concatenate((data1, data2))
+        mean2 = np.mean(data1)
+        std2 = np.std(data1)
+        print("Mean:", mean2)
+        print("Standard Deviation:", std2)
+        return data1
     
     def plot_distributions(self):
         data = self.generate_data()
@@ -29,6 +30,6 @@ class SyntheticDataGenerator:
         np.savetxt(filename, data)
 
 if __name__ == "__main__":
-    generator = SyntheticDataGenerator(num_samples=20, mean_range=(3, 20))
+    generator = SyntheticDataGenerator(num_samples=80, mean_range=(3, 6))
     generator.plot_distributions()
     generator.write_to_file('synthetic_data.txt')
