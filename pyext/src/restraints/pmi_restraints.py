@@ -92,5 +92,8 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
                 sel_tuple.append(pair)
                 self.rset.add_restraint(IMP.bhm.EndtoendRestraint(self.model, sel_tuple[0][0], sel_tuple[0][1], self.sigma, etedata[j]))
             self.rs.add_restraint(self.rset)
+
+            # Add a get_output function to the restraint
+            
         #rs_priors.add_restraint(IMP.isd.JeffreysRestraint(self.model,
         #                                                       self.sigma))
