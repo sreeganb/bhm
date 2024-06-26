@@ -69,7 +69,7 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
         
         # create nuisance particles
         self.sigma = IMP.pmi.tools.SetupNuisance(
-            self.model, 5.0, 3.0, 20.0, isoptimized=True).get_particle()
+            self.model, 10.0, 5.0, 30.0, isoptimized=True).get_particle()
         # get all parameters from the root hierarchy
         num_strings = root_hier.get_child(0).get_number_of_children()
         print(num_strings)

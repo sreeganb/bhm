@@ -29,16 +29,15 @@ class MCMCsampler():
         IMP.rmf.add_restraints(f, [self.rs])
         
         # Setup the MCMC parameters
-        IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=50)
+        #IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=50)
         mc = IMP.core.MonteCarlo(self.m)
         mc.set_kt(temperature)
         sf = IMP.core.RestraintsScoringFunction(self.rs, "SF")
         mc.set_scoring_function(sf)
         #bmvr = [IMP.core.BallMover(self.m, x, 1.0) for x in self.particles]
         sm = dof.get_movers()
-        IMP.set_log_level(IMP.SILENT)
-        #mc.add_movers(bmvr)
         mc.add_movers(sm)
+        IMP.set_log_level(IMP.SILENT)
         # Saving the frames to RMF file
         o = IMP.pmi.output.Output()
         os = IMP.rmf.SaveOptimizerState(self.m, f)
