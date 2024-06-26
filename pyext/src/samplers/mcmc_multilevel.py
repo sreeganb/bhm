@@ -51,16 +51,21 @@ class MCMCsampler():
         print("number of accepted steps: ", mc.get_number_of_accepted_steps())
 
 class TwoLevelMCMC:
+    """
+    Two level MCMC sampler for the hierarchical model
+    Should first sample the local parameters and then the global parameters
+    The global parameters are sampled using the local parameters 
+    """
     def __init__(self, root_hier, dof, temperature, num_steps):
         self.root_hier = root_hier
         self.m = self.root_hier.get_model()
 
     def _create_global_particle(self):
-        # Create a nuisance particle to denote the end to end distance of the two strings
+        # Create a nuisance particle to denote the mean of the gaussian distribution
         # Give it a non-informative prior (Jeffrey's prior maybe)
         self.chi_is_sampled = True
         chiminnuis = 1.0
-        chimaxnuis = 30.0
+        chimaxnuis = 20.0
         chiinit = 15.0
         chimin = 0.01
         chimax = 100.0

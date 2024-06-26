@@ -69,25 +69,24 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
         
         # create nuisance particles
         self.sigma = IMP.pmi.tools.SetupNuisance(
-            self.model, 1., 0.01, 100., isoptimized=True).get_particle()
+            self.model, 5.0, 3.0, 20.0, isoptimized=True).get_particle()
         # get all parameters from the root hierarchy
-        num_states = root_hier.get_number_of_children()
-        num_mols = [root_hier.get_child(i).get_number_of_children() for i in range(num_states)]
-        num_beads = root_hier.get_child(0).get_child(0).get_child(0).get_child(0).get_number_of_children()
-
-        num_strings = root_hier.get_number_of_children()
-        num_beads = root_hier.get_child(0).get_number_of_children()
+        num_strings = root_hier.get_child(0).get_number_of_children()
+        print(num_strings)
+        #num_strings = root_hier.get_number_of_children()
+        #num_beads = root_hier.get_child(0).get_number_of_children()
         sel_tuple = []
         distances = []
         # create a restraint set for each system separately
         for i in range(num_strings):
             self.rset = IMP.RestraintSet(self.model, "endtoend"+str(i))
             
-            root_hier.get_child(1).get_child(1).get_child(0).get_child(0).get_children()[-1]
+            #root_hier.get_child(1).get_child(1).get_child(0).get_child(0).get_children()[-1]
 
-            self.d1 = root_hier.get_child(i).get_child(0).get_particle() # select the first bead
-            self.d2 = root_hier.get_child(i).get_child(num_beads - 1).get_particle() # select the last bead
+            self.d1 = root_hier.get_child(0).get_child(i).get_child(0).get_child(0).get_child(0).get_particle() # select the first bead
+            self.d2 = root_hier.get_child(0).get_child(i).get_child(0).get_child(0).get_children()[-1].get_particle() # select the last bead
             pair = (self.d1, self.d2)
+            print(pair)
             for j in range(len(etedata)):
                 distances.append(etedata[j])
                 sel_tuple.append(pair)

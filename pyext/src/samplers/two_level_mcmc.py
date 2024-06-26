@@ -54,7 +54,6 @@ class MCMCsampler():
         os.update_always("initial conformation")
         #os.set_log_level(IMP.SILENT)
         #os.set_simulator(mc)
-        # update the decorator (average) 
         mc.add_optimizer_state(os)
         mc.optimize(num_steps)
         print("number of accepted steps: ", mc.get_number_of_accepted_steps())

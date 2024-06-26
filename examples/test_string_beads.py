@@ -27,6 +27,7 @@ import IMP.display
 import IMP.pmi.output
 import IMP.bhm
 import IMP.bhm.restraints.strings
+import IMP.bhm.restraints.pmi_restraints
 import IMP.bhm.samplers.two_level_mcmc
 import IMP.bhm.samplers.mcmc_multilevel
 import IMP.bhm.system_representation.build
@@ -74,7 +75,7 @@ for k in mols2:
      dof_s2.create_flexible_beads(k, max_trans = 2.0)
 #IMP.atom.show_with_representations(r2_hier)
 #--------------------------------------------------
-#print("test ", r2_hier.get_child(0).get_child(1).get_child(0).get_child(0).get_children())
+print("test ", r2_hier.get_child(0).get_child(1).get_child(0).get_child(0).get_children()[-1].get_particle())
 for i in range(len(mols1)):
     cr1 = IMP.pmi.restraints.stereochemistry.ConnectivityRestraint(mols1[i])
     cr1.add_to_model()
@@ -85,9 +86,14 @@ for i in range(len(mols2)):
     cr2.add_to_model()
 evr2 = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(r2_hier)
 evr2.add_to_model()
-print("children: ", r2_hier.get_child(0).get_child(0).get_child(0).get_child(0).get_children())
+# Add the end to end restraint to the model by reading the data from a file
+etedata = np.loadtxt('./derived_data/synthetic_data_monomer.txt')
+etr = IMP.bhm.restraints.pmi_restraints.EndToEndRestraint(r1_hier, etedata, label = "endtoend", weight = 1.0)
+etr.add_to_model()  # add restraint to model
+dof_s1.get_nuisances_from_restraint(etr)
+
 IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r1_hier, dof_s1, 2.0, 400, "monomer.rmf3")
-IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r2_hier, dof_s2, 2.0, 400, "dimer.rmf3")
+#IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r2_hier, dof_s2, 2.0, 400, "dimer.rmf3")
 #num_systems = 2
 #num_strings = np.array([1, 2])
 #num_strings = np.array([1])
@@ -96,7 +102,7 @@ IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r2_hier, dof_s2, 2.0, 400, "dimer.r
 #system_rep = IMP.bhm.system_representation.build.model()
 #root_hier, build_sys = system_rep._create_beads(num_systems, num_strings, num_beads)
 #print(root_hier[1].get_child(1).get_children())
-etedata = np.loadtxt('./derived_data/end_to_end_data.txt')
+#etedata = np.loadtxt('./derived_data/end_to_end_data.txt')
 #for i in range(num_systems):
     #cbr = IMP.bhm.restraints.strings.ConnectBeadsRestraint(root_hier[i], 1.0, 4.0, kappa = 10.0, label = "disres")
     #cbr.add_to_model()  # add restraint to model
