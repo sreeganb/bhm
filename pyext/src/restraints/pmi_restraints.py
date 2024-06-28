@@ -67,9 +67,14 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
             weight=weight)
         print(self.name)
         
-        # create nuisance particles
+        # create nuisance particles and add a uniform prior to it
+        self.sigma_res = self._create_restraint_set("sigma")
         self.sigma = IMP.pmi.tools.SetupNuisance(
             self.model, 10.0, 5.0, 30.0, isoptimized=True).get_particle()
+        sigmamax = 30.0
+        sigmamin = 5.0
+        self.sigma_res.add_restraint(IMP.isd.UniformPrior(self.model, self.sigma,
+                                                          10.0, sigmamax, sigmamin))
         # get all parameters from the root hierarchy
         num_strings = root_hier.get_child(0).get_number_of_children()
         print(num_strings)
@@ -94,6 +99,6 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
             self.rs.add_restraint(self.rset)
 
             # Add a get_output function to the restraint
-            
+
         #rs_priors.add_restraint(IMP.isd.JeffreysRestraint(self.model,
         #                                                       self.sigma))

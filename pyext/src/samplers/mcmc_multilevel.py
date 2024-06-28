@@ -16,6 +16,7 @@ import IMP.pmi.tools
 class MCMCsampler():
     # MCMC sampler for the hierarchical system
     def __init__(self, root_hier, dof, temperature, num_steps, file_name):
+        # Pass different list of movers  
         self.root_hier = root_hier
         self.m = self.root_hier.get_model()
         #****************************************************************************************
@@ -29,42 +30,37 @@ class MCMCsampler():
         IMP.rmf.add_restraints(f, [self.rs])
         
         # Setup the MCMC parameters
-        #IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=50)
+        IMP.pmi.tools.shuffle_configuration(self.root_hier, max_translation=50)
         mc = IMP.core.MonteCarlo(self.m)
         mc.set_kt(temperature)
         sf = IMP.core.RestraintsScoringFunction(self.rs, "SF")
         mc.set_scoring_function(sf)
         #bmvr = [IMP.core.BallMover(self.m, x, 1.0) for x in self.particles]
         sm = dof.get_movers()
-        mc.add_movers(sm)
         IMP.set_log_level(IMP.SILENT)
+        #mc.add_movers(bmvr)
+        mc.add_movers(sm)
         # Saving the frames to RMF file
         o = IMP.pmi.output.Output()
         os = IMP.rmf.SaveOptimizerState(self.m, f)
         os.update_always("initial conformation")
         os.set_log_level(IMP.SILENT)
         #os.set_simulator(mc)
-        # update the decorator (average) 
         mc.add_optimizer_state(os)
         mc.optimize(num_steps)
         print("number of accepted steps: ", mc.get_number_of_accepted_steps())
 
 class TwoLevelMCMC:
-    """
-    Two level MCMC sampler for the hierarchical model
-    Should first sample the local parameters and then the global parameters
-    The global parameters are sampled using the local parameters 
-    """
     def __init__(self, root_hier, dof, temperature, num_steps):
         self.root_hier = root_hier
         self.m = self.root_hier.get_model()
 
     def _create_global_particle(self):
-        # Create a nuisance particle to denote the mean of the gaussian distribution
+        # Create a nuisance particle to denote the end to end distance of the two strings
         # Give it a non-informative prior (Jeffrey's prior maybe)
         self.chi_is_sampled = True
         chiminnuis = 1.0
-        chimaxnuis = 20.0
+        chimaxnuis = 30.0
         chiinit = 15.0
         chimin = 0.01
         chimax = 100.0
