@@ -95,12 +95,6 @@ class MCMCsampler():
                 output.init_stat2(stat_file,
                                   self.output_objects,
                                   extralabels=["rmf_file", "rmf_frame_index"])
-        # stop watch functionality
-        sw = IMP.pmi.tools.Stopwatch()
-        if self.output_objects is not None:
-            self.output_objects.append(sw)
-        if self.rmf_output_objects is not None:
-            self.rmf_output_objects.append(sw)
         #--------------------------------------------------
         # setup the RMF files for saving coordinates
         #--------------------------------------------------

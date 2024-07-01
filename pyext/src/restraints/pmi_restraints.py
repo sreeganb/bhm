@@ -75,32 +75,23 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
         self.rssig = self._create_restraint_set("PriorSig")
         self.sigma = self.create_sigma(sigmaname)
         
-
-        #self.sigma_res = self._create_restraint_set("sigma")
-        #self.sigma = IMP.pmi.tools.SetupNuisance(
-        #    self.model, 10.0, 5.0, 30.0, isoptimized=True).get_particle()
-        #sigmamax = 30.0
-        #sigmamin = 5.0
-        #self.sigma_res.add_restraint(IMP.isd.UniformPrior(self.model, self.sigma,
-        #                                                  10.0, sigmamax, sigmamin))
         # get all parameters from the root hierarchy
         num_strings = root_hier.get_child(0).get_number_of_children()
         sel_tuple = []
         distances = []
         # create a restraint set for each system separately
         for i in range(num_strings):
-            self.rset = IMP.RestraintSet(self.model, "endtoend"+str(i))
-            
+            #self.rset = IMP.RestraintSet(self.model, "endtoend"+str(i))
             # get the first and last bead of the string
             self.d1 = root_hier.get_child(0).get_child(i).get_child(0).get_child(0).get_child(0).get_particle() # select the first bead
             self.d2 = root_hier.get_child(0).get_child(i).get_child(0).get_child(0).get_children()[-1].get_particle() # select the last bead
             pair = (self.d1, self.d2)
-            print(pair)
             for j in range(len(etedata)):
                 distances.append(etedata[j])
                 sel_tuple.append(pair)
-                self.rset.add_restraint(IMP.bhm.EndtoendRestraint(self.model, sel_tuple[0][0], sel_tuple[0][1], self.sigma, etedata[j]))
-            self.rs.add_restraint(self.rset)
+                #self.rset.add_restraint(IMP.bhm.EndtoendRestraint(self.model, sel_tuple[0][0], sel_tuple[0][1], self.sigma, etedata[j]))
+                self.rs.add_restraint(IMP.bhm.EndtoendRestraint(self.model, sel_tuple[0][0], sel_tuple[0][1], self.sigma, etedata[j]))
+            #self.rs.add_restraint(self.rset)
         
     def create_sigma(self, name):
         """ This is called internally. Creates a nuisance
@@ -129,6 +120,14 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
                 sigmamax,
                 sigmamin))
         return sigma
+    
+    def get_restraint_for_rmf(self):
+        """ get the dummy restraints to be displayed in the rmf file """
+        return self.rs, self.rssig
+    
+    def get_restraint_sets(self):
+        """ get the restraint set """
+        return self.rs
 
     def get_output(self):
         """Get the output of the restraint to be used by the IMP.pmi.output
@@ -155,3 +154,21 @@ class EndToEndRestraint(IMP.pmi.restraints.RestraintBase):
             likelihood *= restraint.get_probability()
 
         return likelihood
+    
+    def get_movers(self):
+        """ Get all need data to construct a mover in IMP.pmi.dof class"""
+        movers = []
+        if self.sigma_is_sampled:
+            for sigmaname in self.sigma_dictionary:
+                mover_name = \
+                    "Nuisances_EndtoEndRestraint_Sigma_" \
+                    + str(sigmaname) + "_" + self.label
+                particle = self.sigma_dictionary[sigmaname][0]
+                maxstep = (self.sigma_dictionary[sigmaname][1])
+                mv = IMP.core.NormalMover(
+                    [particle], IMP.FloatKeys([IMP.FloatKey("nuisance")]),
+                    maxstep)
+                mv.set_name(mover_name)
+                movers.append(mv)
+
+        return movers
