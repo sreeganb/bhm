@@ -111,6 +111,10 @@ IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r1_hier, dof_s1, 2.0, 400, "monomer
                                              output_objects, rmf_output_objects, 
                                              "stat_file", "output_dir")
 
+#IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r2_hier, dof_s2, 2.0, 400, "dimer.rmf3", 
+#                                             output_objects, rmf_output_objects, 
+#                                             "stat_file", "output_dir")
+
 #IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r2_hier, dof_s2, 2.0, 400, "dimer.rmf3")
 #num_systems = 2
 #num_strings = np.array([1, 2])
