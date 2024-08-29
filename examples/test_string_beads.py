@@ -28,7 +28,7 @@ import IMP.pmi.output
 import IMP.bhm
 import IMP.bhm.restraints.strings
 import IMP.bhm.restraints.pmi_restraints
-import IMP.bhm.samplers.two_level_mcmc
+#import IMP.bhm.samplers.two_level_mcmc
 import IMP.bhm.samplers.mcmc_multilevel
 import IMP.bhm.system_representation.build
 #----------------------------------------------------------------------
