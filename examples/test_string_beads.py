@@ -58,30 +58,30 @@ dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
 for k in mols1:
      dof_s1.create_flexible_beads(k, max_trans = 2.0)
 IMP.pmi.tools.shuffle_configuration(r1_hier, max_translation=50.0)
-#IMP.atom.show_with_representations(r1_hier)
+IMP.atom.show_with_representations(r1_hier)
 #------------------------------------
 # state 2
 #------------------------------------
-s2 = IMP.pmi.topology.System(mdl)
-st2 = s2.create_state()
-num_mols = 2
-mols2 = []
-k = 1
-for j in range(num_mols):
-    m2 = st2.create_molecule("prot%s"%(ids[k]), sequence, chain_id ='%s'%(ids[k]))
-    m2.add_representation(m2, resolutions = [1])
-    mols2.append(m2)
-    k += 1
-r2_hier = s2.build()
-dof_s2 = IMP.pmi.dof.DegreesOfFreedom(mdl)
-for k in mols2:
-     dof_s2.create_flexible_beads(k, max_trans = 2.0)
-IMP.pmi.tools.shuffle_configuration(r2_hier, max_translation=50.0)
-#IMP.atom.show_with_representations(r2_hier)
+  #s2 = IMP.pmi.topology.System(mdl)
+  #st2 = s2.create_state()
+  #num_mols = 2
+  #mols2 = []
+  #k = 1
+  #for j in range(num_mols):
+  #    m2 = st2.create_molecule("prot%s"%(ids[k]), sequence, chain_id ='%s'%(ids[k]))
+  #    m2.add_representation(m2, resolutions = [1])
+  #    mols2.append(m2)
+  #    k += 1
+  #r2_hier = s2.build()
+  #dof_s2 = IMP.pmi.dof.DegreesOfFreedom(mdl)
+  #for k in mols2:
+  #     dof_s2.create_flexible_beads(k, max_trans = 2.0)
+  #IMP.pmi.tools.shuffle_configuration(r2_hier, max_translation=50.0)
+  #IMP.atom.show_with_representations(r2_hier)
 output_objects = [] # keep a list of functions that need to be reported
 rmf_output_objects = [] # keep a list of functions that need to be reported
 #--------------------------------------------------
-print("test ", r2_hier.get_child(0).get_child(1).get_child(0).get_child(0).get_children()[-1].get_particle())
+#print("test ", r2_hier.get_child(0).get_child(1).get_child(0).get_child(0).get_children()[-1].get_particle())
 for i in range(len(mols1)):
     cr1 = IMP.pmi.restraints.stereochemistry.ConnectivityRestraint(mols1[i])
     cr1.add_to_model()
@@ -91,15 +91,15 @@ evr1 = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(r1_hier)
 evr1.add_to_model()
 output_objects.append(evr1)
 rmf_output_objects.append(evr1)
-for i in range(len(mols2)):
-    cr2 = IMP.pmi.restraints.stereochemistry.ConnectivityRestraint(mols2[i])
-    cr2.add_to_model()
-    output_objects.append(cr2)
-    rmf_output_objects.append(cr2)
-evr2 = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(r2_hier)
-evr2.add_to_model()
-output_objects.append(evr2)
-rmf_output_objects.append(evr2)
+#for i in range(len(mols2)):
+#    cr2 = IMP.pmi.restraints.stereochemistry.ConnectivityRestraint(mols2[i])
+#    cr2.add_to_model()
+#    output_objects.append(cr2)
+#    rmf_output_objects.append(cr2)
+#evr2 = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(r2_hier)
+#evr2.add_to_model()
+#output_objects.append(evr2)
+#rmf_output_objects.append(evr2)
 # Add the end to end restraint to the model by reading the data from a file
 etedata = np.loadtxt('./derived_data/synthetic_data_monomer.txt')
 etr = IMP.bhm.restraints.pmi_restraints.EndToEndRestraint(r1_hier, etedata, label = "endtoend", weight = 1.0)
@@ -107,7 +107,7 @@ etr.add_to_model()  # add restraint to model
 output_objects.append(etr)
 dof_s1.get_nuisances_from_restraint(etr)
 rmf_output_objects.append(etr)
-
+print("rmf_output_objects: ", rmf_output_objects)
 IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r1_hier, dof_s1, 2.0, 400, "monomer.rmf3", 
                                              output_objects, rmf_output_objects, 
                                              "stat_file", "./output_dir")
