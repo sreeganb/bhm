@@ -28,8 +28,9 @@ import IMP.pmi.output
 import IMP.bhm
 import IMP.bhm.restraints.strings
 import IMP.bhm.restraints.pmi_restraints
-#import IMP.bhm.samplers.two_level_mcmc
 import IMP.bhm.samplers.mcmc_multilevel
+#from IMP.bhm.samplers.mcmc_multilevel import two_level_mcmc
+#import IMP.bhm.samplers.two_level_mcmc
 import IMP.bhm.system_representation.build
 #----------------------------------------------------------------------
 # New build system for the monomer 
@@ -104,12 +105,12 @@ etedata = np.loadtxt('./derived_data/synthetic_data_monomer.txt')
 etr = IMP.bhm.restraints.pmi_restraints.EndToEndRestraint(r1_hier, etedata, label = "endtoend", weight = 1.0)
 etr.add_to_model()  # add restraint to model
 output_objects.append(etr)
-rmf_output_objects.append(etr)
 dof_s1.get_nuisances_from_restraint(etr)
+rmf_output_objects.append(etr)
 
 IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r1_hier, dof_s1, 2.0, 400, "monomer.rmf3", 
                                              output_objects, rmf_output_objects, 
-                                             "stat_file", "output_dir")
+                                             "stat_file", "./output_dir")
 
 #IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r2_hier, dof_s2, 2.0, 400, "dimer.rmf3", 
 #                                             output_objects, rmf_output_objects, 

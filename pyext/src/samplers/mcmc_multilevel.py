@@ -13,6 +13,7 @@ import RMF
 import IMP.rmf
 import IMP.pmi.tools
 import IMP.atom
+import os
 
 class _RMFRestraints:
     """All restraints that are written out to the RMF file"""
@@ -49,20 +50,37 @@ class MCMCsampler():
     def __init__(self, root_hier, dof, temperature, num_steps, file_name, 
                  output_objects,
                  rmf_output_objects, 
-                 stat_file_name_suffix, global_output_directory,
+                 stat_file_name_suffix, 
+                 global_output_directory="./",
                  initial_rmf_name_suffix="initial",
-                 nframes_write_coordinates=1
+                 nframes_write_coordinates=1,
+                 do_clean_first=True,
+                 do_create_directories=True,
+                 #rmf_dir="rmfs/",
+                 #best_pdb_dir="pdbs/",
+                 #replica_stat_file_suffix="stat_replica",
+                 #em_object_for_rmf=None,
+                 atomistic=False,
+                 #replica_exchange_object=None,
+                 test_mode=False,
+                 #score_moved=False,
+                 use_nestor=False,
+                 #nestor_restraints=None,
                  ):
         self.root_hier = root_hier
         self.m = self.root_hier.get_model()
         self.output_objects = output_objects
         self.vars = {}
         self.vars["global_output_directory"] = global_output_directory
+        self.vars["do_clean_first"] = do_clean_first
+        self.vars["do_create_directories"] = do_create_directories
         self.vars["initial_rmf_name_suffix"] = initial_rmf_name_suffix
         self.vars["number_of_mcmc_steps"] = num_steps
         self.vars["nframes_write_coordinates"] = nframes_write_coordinates
         self._rmf_restraints = _RMFRestraints(self.m, None)
         self.rmf_output_objects = rmf_output_objects
+        self.nest = use_nestor
+        self.test_mode = test_mode
         samplers = []
         sampler_mc = None
         #****************************************************************************************
@@ -82,12 +100,41 @@ class MCMCsampler():
         if (isinstance(root_hier, IMP.atom.Hierarchy)
                 and not root_hier.get_parent()):
             if self.output_objects is not None:
-                print("isinstance is true man")
                 self.output_objects.append(
                     IMP.pmi.io.TotalScoreOutput(self.m))
         # Set up the stat file
         print("Setting up stat file")
         globaldir = self.vars["global_output_directory"] + "/"
+        #rmf_dir = globaldir + self.vars["rmf_dir"]
+        #pdb_dir = globaldir + self.vars["best_pdb_dir"]
+                
+        if not self.test_mode and not self.nest:
+            if self.vars["do_clean_first"]:
+                pass
+
+            if self.vars["do_create_directories"]:
+
+                try:
+                    os.makedirs(globaldir)
+                except:  # noqa: E722
+                    pass
+        #        try:
+        #            os.makedirs(rmf_dir)
+        #        except:  # noqa: E722
+        #            pass
+
+        #        if not self.is_multi_state:
+        #            try:
+        #                os.makedirs(pdb_dir)
+        #            except:  # noqa: E722
+        #                pass
+        #        else:
+        #            for n in range(self.vars["number_of_states"]):
+        #                try:
+        #                    os.makedirs(pdb_dir + "/" + str(n))
+        #                except:  # noqa: E722
+        #                    pass
+                        
         stat_file = globaldir + stat_file_name_suffix + "_bhm.out"
         self.vars["stat_file"] = stat_file
         self.m.update() # update the model before writing the stat file
@@ -121,12 +168,13 @@ class MCMCsampler():
         #----------------------------------------------------------------------
         # Using the IMP.pmi.samplers.MonteCarlo class to perform the MCMC steps
         #----------------------------------------------------------------------
+        print("movers are: ", dof.get_movers())
         sampler_mc = IMP.pmi.samplers.MonteCarlo(self.m, dof.get_movers(), temperature)
         if self.output_objects is not None:
-                self.output_objects.append(sampler_mc)
-                if self.rmf_output_objects is not None:
-                    self.rmf_output_objects.append(sampler_mc)
-                samplers.append(sampler_mc)
+            self.output_objects.append(sampler_mc)
+        if self.rmf_output_objects is not None:
+            self.rmf_output_objects.append(sampler_mc)
+        samplers.append(sampler_mc)
         #----------------------------------------------------------------------
         # Run the MCMC for nframes number of steps
         #----------------------------------------------------------------------
@@ -135,6 +183,7 @@ class MCMCsampler():
             sampler_mc.optimize(self.vars["number_of_mcmc_steps"])
             score = IMP.pmi.tools.get_restraint_set(
                     self.m).evaluate(False)
+            print("score is: ", score)
             output.set_output_entry("score", score)
             if i % self.vars["nframes_write_coordinates"] == 0:
                 print('--- writing coordinates')
