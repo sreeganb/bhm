@@ -5,7 +5,7 @@ mkdir build/
 cd build/
 # cmake ../ -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=../install -DIMP_DIR=/opt/homebrew/Cellar/imp/2.21.0_5/lib/cmake/IMP/ -DCMAKE_CXX_FLAGS='-std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION' -G Ninja 
 #cmake ../ -DCMAKE_BUILD_TYPE=Release -DIMP_DIR=/opt/homebrew/Cellar/imp/2.21.0_5/lib/cmake/IMP/ -DCMAKE_CXX_FLAGS='-std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION' -G Ninja 
-cmake ../ -DIMP_DIR=/Users/sreeganeshbalasubramani/work/imp_release/ -DCMAKE_CXX_FLAGS='-std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION' -DPython3_EXECUTABLE=/Users/sreeganeshbalasubramani/bin/anaconda3/bin/python
+cmake ../ -DIMP_DIR=/Users/sreeganeshbalasubramani/work/imp/build/ -DCMAKE_CXX_FLAGS='-std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION' -DPython3_EXECUTABLE=/Users/sreeganeshbalasubramani/bin/anaconda3/bin/python
 cmake --build . -j8
 #cmake ../ -DCMAKE_BUILD_TYPE=Release -DIMP_DIR=/opt/homebrew/Cellar/imp/2.21.0_5/lib/cmake/IMP/ -DCMAKE_CXX_FLAGS='-std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION' -G Ninja 
 #make -j8
