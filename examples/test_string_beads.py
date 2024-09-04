@@ -80,6 +80,9 @@ IMP.atom.show_with_representations(r1_hier)
   #IMP.atom.show_with_representations(r2_hier)
 output_objects = [] # keep a list of functions that need to be reported
 rmf_output_objects = [] # keep a list of functions that need to be reported
+out = IMP.pmi.output.Output()
+out.init_rmf("initial_structure.rmf3", [r1_hier])
+out.write_rmf("initial_structure.rmf3")
 #--------------------------------------------------
 #print("test ", r2_hier.get_child(0).get_child(1).get_child(0).get_child(0).get_children()[-1].get_particle())
 for i in range(len(mols1)):
@@ -108,7 +111,7 @@ output_objects.append(etr)
 dof_s1.get_nuisances_from_restraint(etr)
 rmf_output_objects.append(etr)
 print("rmf_output_objects: ", rmf_output_objects)
-IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r1_hier, dof_s1, 2.0, 400, "monomer.rmf3", 
+IMP.bhm.samplers.mcmc_multilevel.MCMCSampler(r1_hier, dof_s1, 2.0, 400, 
                                              output_objects, rmf_output_objects, 
                                              "stat_file", "./output_dir")
 
