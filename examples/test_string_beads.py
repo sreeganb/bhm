@@ -54,11 +54,6 @@ for j in range(num_mols):
     mols1.append(m1)
     k += 1
 r1_hier = s1.build()
-dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
-for k in mols1:
-     dof_s1.create_flexible_beads(k, max_trans = 2.0)
-IMP.pmi.tools.shuffle_configuration(r1_hier, max_translation=50.0)
-IMP.atom.show_with_representations(r1_hier)
 #------------------------------------
 # state 2
 #------------------------------------
@@ -108,12 +103,20 @@ etedata = np.loadtxt('./derived_data/synthetic_data_monomer.txt')
 etr = IMP.bhm.restraints.pmi_restraints.EndToEndRestraint(r1_hier, etedata, label = "endtoend", weight = 1.0)
 etr.add_to_model()  # add restraint to model
 output_objects.append(etr)
-dof_s1.get_nuisances_from_restraint(etr)
 rmf_output_objects.append(etr)
-print("rmf_output_objects: ", rmf_output_objects)
-IMP.bhm.samplers.mcmc_multilevel.MCMCSampler(r1_hier, dof_s1, 2.0, 400, 
-                                             output_objects, rmf_output_objects, 
-                                             "stat_file", "./output_dir")
+
+dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
+for k in mols1:
+     dof_s1.create_flexible_beads(k, max_trans = 1.0)
+IMP.pmi.tools.shuffle_configuration(r1_hier, max_translation=50.0)
+IMP.atom.show_with_representations(r1_hier)
+
+dof_s1.get_nuisances_from_restraint(etr)
+#print("rmf_output_objects: ", rmf_output_objects)
+IMP.bhm.samplers.mcmc_multilevel.MCMCSampler(r1_hier, dof_s1, 2.0, 100, 
+                                            output_objects, rmf_output_objects, 
+                                            "stat", "monomer", "output_dir")
+
 
 #IMP.bhm.samplers.mcmc_multilevel.MCMCsampler(r2_hier, dof_s2, 2.0, 400, "dimer.rmf3", 
 #                                             output_objects, rmf_output_objects, 
