@@ -168,7 +168,7 @@ class MCMCSampler:
 
         nframes = 100  # Number of frames to run MCMC
         print(f"RMF file name: {rmfname}")
-        print("rmf dictionary", output.dictionary_rmfs)
+        #print("rmf dictionary", output.dictionary_rmfs)
 
         stat_file = self.vars["stat_file"]
 

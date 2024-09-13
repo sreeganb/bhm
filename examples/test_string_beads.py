@@ -106,6 +106,8 @@ output_objects.append(etr)
 rmf_output_objects.append(etr)
 
 dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
+print("degrees of freedom: ", dof_s1.get_movers())
+
 for k in mols1:
      dof_s1.create_flexible_beads(k, max_trans = 1.0)
 IMP.pmi.tools.shuffle_configuration(r1_hier, max_translation=50.0)
@@ -113,7 +115,8 @@ IMP.atom.show_with_representations(r1_hier)
 
 dof_s1.get_nuisances_from_restraint(etr)
 #print("rmf_output_objects: ", rmf_output_objects)
-IMP.bhm.samplers.mcmc_multilevel.MCMCSampler(r1_hier, dof_s1, 2.0, 100, 
+print("movers", dof_s1.get_movers())
+IMP.bhm.samplers.mcmc_multilevel.MCMCSampler(r1_hier, dof_s1.get_movers(), 2.0, 100, 
                                             output_objects, rmf_output_objects, 
                                             "stat", "monomer", "output_dir")
 
