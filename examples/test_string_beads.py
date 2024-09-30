@@ -115,7 +115,7 @@ IMP.atom.show_with_representations(r1_hier)
 
 dof_s1.get_nuisances_from_restraint(etr)
 #print("rmf_output_objects: ", rmf_output_objects)
-print("movers", dof_s1.get_movers())
+#print("movers", dof_s1.get_movers())
 IMP.bhm.samplers.mcmc_multilevel.MCMCSampler(r1_hier, dof_s1.get_movers(), 2.0, 100, 
                                             output_objects, rmf_output_objects, 
                                             "stat", "monomer", "output_dir")
