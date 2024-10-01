@@ -186,13 +186,13 @@ class MCMCSampler:
             score = IMP.pmi.tools.get_restraint_set(self.m).evaluate(False)
             print(f"Frame {i}: score is {score}")
             output.set_output_entry("score", score)
-            #self.m.update()
             if i % self.vars["nframes_write_coordinates"] == 0:
                 print(f"Frame {i}: Writing coordinates to {rmfname}")
                 if rmfname not in output.dictionary_rmfs:
                     print(f"ERROR: RMF file {rmfname} is NOT registered in dictionary_rmfs")
                 print("dictionary second element:", output.dictionary_rmfs[rmfname][2])
                 self.m.update()
+                # write the rmf file
                 output.write_rmf(rmfname)
                 output.set_output_entry("rmf_file", rmfname)
                 output.set_output_entry("rmf_frame_index", ntimes_at_low_temp)
