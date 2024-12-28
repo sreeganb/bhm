@@ -61,7 +61,7 @@ sigma_dimer_true = np.array([
 ])
 
 # Simulate dimer data
-N_dimer = 400
+N_dimer = 200
 dimer_states = np.random.choice(4, size=N_dimer, p=pi_dimer_true)
 dimer_obs = np.random.normal(mu_dimer_true[dimer_states], sigma_dimer_true[dimer_states])
 
