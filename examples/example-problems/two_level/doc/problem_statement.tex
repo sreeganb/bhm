@@ -115,19 +115,54 @@ Each dimer observation is assumed to arise from a mixture of these four dimer st
     \cdot \mathcal{N}(\mu_{\text{dimer}, k}, \sigma_{\text{dimer}, k}^2).
 \end{align}
 
-\subsection{Joint Distribution}
-Combining all components, the joint probability distribution is:
+\subsection{Joint Probability Distribution}
+
+The hierarchical Bayesian model defines a joint probability distribution over all parameters, hyperparameters, and observed data. This distribution encapsulates the dependencies between different levels of the hierarchy.
 
 \begin{align}
     &p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}, \pi, \mu_{\text{helix}}, 
     \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, 
     \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma}) \nonumber \\
-    &= p(\mu_{\mu}) p(\sigma_{\mu}) p(\mu_{\sigma}) p(\sigma_{\sigma}) \\
-    &\quad \times p(\pi) p(\mu_{\text{helix}} | \mu_{\mu}, \sigma_{\mu}) p(\mu_{\text{glob}} | \mu_{\mu}, \sigma_{\mu}) p(\sigma_{\text{helix}} | \mu_{\sigma}) p(\sigma_{\text{glob}} | \mu_{\sigma}) \\
-    &\quad \times p(\bm{d}^{\text{mono}} | \pi, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}) \\
-    &\quad \times p(\pi_{\text{dimer}}) p(\bm{\delta}) p(\bm{d}^{\text{dimer}} | \pi_{\text{dimer}}, 
-    \bm{\delta}, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}).
+    &= p(\mu_{\mu})\, p(\sigma_{\mu})\, p(\mu_{\sigma})\, p(\sigma_{\sigma}) \\
+    &\quad \times p(\pi)\, p(\mu_{\text{helix}} \mid \mu_{\mu}, \sigma_{\mu})\, p(\mu_{\text{glob}} \mid \mu_{\mu}, \sigma_{\mu})\, p(\sigma_{\text{helix}} \mid \mu_{\sigma})\, p(\sigma_{\text{glob}} \mid \mu_{\sigma}) \\
+    &\quad \times p(\bm{d}^{\text{mono}} \mid \pi, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}) \\
+    &\quad \times p(\pi_{\text{dimer}})\, p(\bm{\delta})\, p(\bm{d}^{\text{dimer}} \mid \pi_{\text{dimer}}, \bm{\delta}, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}).
 \end{align}
+
+\subsection{Posterior Distribution}
+
+Given the observed data, the posterior distribution over the model parameters is defined as the conditional probability of the parameters given the data. This is the core of Bayesian inference, where we update our beliefs about the parameters after observing the data.
+
+\begin{align}
+    &p(\pi, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, 
+    \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma} \mid \bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}) \\
+    &= \frac{p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}, \pi, \mu_{\text{helix}}, 
+    \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, 
+    \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma})}{p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}})}.
+\end{align}
+
+\noindent Here, \( p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}) \) is the marginal likelihood, which serves as a normalization constant ensuring that the posterior distribution sums to one.
+
+\subsection{Conditional Dependencies}
+
+The posterior distribution captures the conditional dependencies between the model parameters 
+and the observed data. Each parameter's distribution is updated based on the data, reflecting 
+the hierarchical structure of the model.
+
+\begin{align}
+    p(\text{Parameters} \mid \text{Data}) &= \frac{p(\text{Data} \mid \text{Parameters})\, p(\text{Parameters})}{p(\text{Data})}
+\end{align}
+
+\noindent In the context of this model:
+
+\begin{itemize}
+    \item \( \text{Parameters} \) include \( \pi, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma} \).
+    \item \( \text{Data} \) comprises \( \bm{d}^{\text{mono}} \) and \( \bm{d}^{\text{dimer}} \).
+\end{itemize}
+
+This conditional probability formulation is essential for performing Bayesian inference, 
+allowing the estimation of parameter distributions that best explain the observed data 
+within the hierarchical framework.
 
 \section{Hierarchical Modeling Benefits}
 

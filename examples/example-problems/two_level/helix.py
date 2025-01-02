@@ -2,20 +2,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pymc as pm
-import pymc.math as pm_math  # For PyMC 4.x
+import arviz as az
 
 # Set random seed for reproducibility
-np.random.seed(42)
+np.random.seed(10101)
 
 # True parameters for simulation
 pi_true = 0.6  # Probability that a monomer is in the helical state
 mu_helix_true = 15
 sigma_helix_true = 2
-mu_glob_true = 7
+mu_glob_true = 6
 sigma_glob_true = 3
 
 # Simulate monomer data
-N_monomer = 500
+N_monomer = 800
 monomer_states = np.random.binomial(1, pi_true, size=N_monomer)
 monomer_obs = np.where(
     monomer_states == 1,
@@ -24,40 +24,36 @@ monomer_obs = np.where(
 )
 
 # Simulate dimer data
-# Possible dimer states:
+# Dimer states:
 # 0: globular-globular
 # 1: globular-helical
 # 2: helical-globular
 # 3: helical-helical
 
-# Interaction terms for each dimer state
-delta_true = np.array([1.5, 1.0, 1.0, 0.5])
-
-# Create all possible combinations of monomer states
-monomer_pairs = np.array(np.meshgrid([0, 1], [0, 1])).T.reshape(-1, 2)
-dimer_states_possible = monomer_pairs[:, 0] + monomer_pairs[:, 1]*2  # Encode states as 0-3
+# Interaction terms (delta) for each dimer state
+delta_true = np.array([0.0, 0.0, 0.0, 0.0])  # Adjust if interactions exist
 
 # Probabilities for each dimer state
 pi_dimer_true = np.array([
-    (1 - pi_true)**2,     # globular-globular
-    (1 - pi_true)*pi_true,  # globular-helical
-    pi_true*(1 - pi_true),  # helical-globular
-    pi_true**2            # helical-helical
+    (1 - pi_true) ** 2,   # globular-globular
+    (1 - pi_true) * pi_true,  # globular-helical
+    pi_true * (1 - pi_true),  # helical-globular
+    pi_true ** 2           # helical-helical
 ])
-pi_dimer_true /= pi_dimer_true.sum()  # Normalize
 
-# Means and standard deviations for dimer states
+# Dimer means and standard deviations
 mu_dimer_true = np.array([
-    2*mu_glob_true + delta_true[0],
-    mu_glob_true + mu_helix_true + delta_true[1],
-    mu_helix_true + mu_glob_true + delta_true[2],
-    2*mu_helix_true + delta_true[3]
+    mu_glob_true + delta_true[0],
+    (mu_glob_true + mu_helix_true) / 2 + delta_true[1],
+    (mu_glob_true + mu_helix_true) / 2 + delta_true[2],
+    mu_helix_true + delta_true[3]
 ])
+
 sigma_dimer_true = np.array([
-    np.sqrt(2*sigma_glob_true**2),
-    np.sqrt(sigma_glob_true**2 + sigma_helix_true**2),
-    np.sqrt(sigma_helix_true**2 + sigma_glob_true**2),
-    np.sqrt(2*sigma_helix_true**2)
+    sigma_glob_true,
+    (sigma_glob_true + sigma_helix_true) / 2,
+    (sigma_glob_true + sigma_helix_true) / 2,
+    sigma_helix_true
 ])
 
 # Simulate dimer data
@@ -78,29 +74,27 @@ plt.xlabel('Distance')
 plt.tight_layout()
 plt.show()
 
+# Hierarchical Bayesian Model
 with pm.Model() as hierarchical_model:
     # Hyperpriors for the monomer means
-    mu_mu = pm.Normal('mu_mu', mu=10, sigma=5)  # Adjusted mean and sigma
-
-    # Hyperpriors for the monomer standard deviations
-    mu_sigma = pm.HalfNormal('mu_sigma', sigma=2)
-
-    # Prior for monomer state probability π
-    pi = pm.Beta('pi', alpha=2.0, beta=2.0)
-
-    # Monomer helical state parameters
-    mu_helix = pm.Normal('mu_helix', mu=mu_mu, sigma=2)        # Narrower sigma
-    sigma_helix = pm.HalfNormal('sigma_helix', sigma=2)
-
-    # Monomer globular state parameters
-    mu_glob = pm.Normal('mu_glob', mu=mu_mu, sigma=2)          # Narrower sigma
-    sigma_glob = pm.HalfNormal('sigma_glob', sigma=2)
+    mu_mu = pm.Normal('mu_mu', mu=10, sigma=5)
+    sigma_mu = pm.HalfNormal('sigma_mu', sigma=5)
+    
+    # Monomer state probabilities
+    pi = pm.Beta('pi', alpha=2, beta=2)
+    
+    # Monomer parameters
+    mu_glob = pm.Normal('mu_glob', mu=mu_mu, sigma=sigma_mu)
+    sigma_glob = pm.HalfNormal('sigma_glob', sigma=5)
+    
+    mu_helix = pm.Normal('mu_helix', mu=mu_mu, sigma=sigma_mu)
+    sigma_helix = pm.HalfNormal('sigma_helix', sigma=5)
     
     # Monomer mixture components
-    monomer_components = [
-        pm.Normal.dist(mu=mu_glob, sigma=sigma_glob),
-        pm.Normal.dist(mu=mu_helix, sigma=sigma_helix)
-    ]
+    monomer_components = pm.Normal.dist(
+        mu=[mu_glob, mu_helix],
+        sigma=[sigma_glob, sigma_helix]
+    )
     
     # Monomer mixture model
     monomer_obs_ = pm.Mixture(
@@ -110,32 +104,34 @@ with pm.Model() as hierarchical_model:
         observed=monomer_obs
     )
     
-    # Prior for dimer state probabilities π_k
-    alpha_dirichlet = np.ones(4)
-    pi_dimer = pm.Dirichlet('pi_dimer', a=alpha_dirichlet)
-    
-    # Priors for interaction terms δ_k
-    delta = pm.Normal('delta', mu=1.0, sigma=0.5, shape=4)
-    
-    # Dimer state means and standard deviations
-    mu_dimer = pm.Deterministic('mu_dimer', pm.math.stack([
-        2 * mu_glob + delta[0],          # globular-globular
-        mu_glob + mu_helix + delta[1],   # globular-helical
-        mu_helix + mu_glob + delta[2],   # helical-globular
-        2 * mu_helix + delta[3]          # helical-helical
+    # Dimer state probabilities based on monomer probabilities
+    pi_dimer = pm.Deterministic('pi_dimer', pm.math.stack([
+        (1 - pi) ** 2,        # globular-globular
+        (1 - pi) * pi,        # globular-helical
+        pi * (1 - pi),        # helical-globular
+        pi ** 2               # helical-helical
     ]))
-
+    
+    # Interaction terms for dimer states
+    delta = pm.Normal('delta', mu=0, sigma=1, shape=4)
+    
+    # Dimer means and standard deviations
+    mu_dimer = pm.Deterministic('mu_dimer', pm.math.stack([
+        mu_glob + delta[0],
+        (mu_glob + mu_helix) / 2 + delta[1],
+        (mu_glob + mu_helix) / 2 + delta[2],
+        mu_helix + delta[3]
+    ]))
+    
     sigma_dimer = pm.Deterministic('sigma_dimer', pm.math.stack([
-        pm.math.sqrt(2 * sigma_glob**2),
-        pm.math.sqrt(sigma_glob**2 + sigma_helix**2),
-        pm.math.sqrt(sigma_helix**2 + sigma_glob**2),
-        pm.math.sqrt(2 * sigma_helix**2)
+        sigma_glob,
+        (sigma_glob + sigma_helix) / 2,
+        (sigma_glob + sigma_helix) / 2,
+        sigma_helix
     ]))
     
     # Dimer mixture components
-    dimer_components = [
-        pm.Normal.dist(mu=mu_dimer[i], sigma=sigma_dimer[i]) for i in range(4)
-    ]
+    dimer_components = pm.Normal.dist(mu=mu_dimer, sigma=sigma_dimer)
     
     # Dimer mixture model
     dimer_obs_ = pm.Mixture(
@@ -145,37 +141,23 @@ with pm.Model() as hierarchical_model:
         observed=dimer_obs
     )
     
-    # Sample from the posterior
-    trace = pm.sample(5000, tune=2000, cores=4, random_seed=44, 
-                      target_accept=0.9, return_inferencedata=True)
-    
-import arviz as az
+    # Sampling
+    trace = pm.sample(
+        draws=3000, 
+        tune=2000, 
+        target_accept=0.9, 
+        cores=1, 
+        random_seed=42
+    )
 
-# Summary of the posterior
-summary = az.summary(trace, var_names=['pi', 'mu_helix', 'sigma_helix', 'mu_glob', 'sigma_glob', 'pi_dimer', 'delta'])
-
+# Summarize the results
+summary = az.summary(trace, var_names=[
+    'pi', 'mu_glob', 'sigma_glob', 'mu_helix', 'sigma_helix', 'delta'
+])
 print(summary)
 
-# Plot trace plots for key parameters
-az.plot_trace(
-    trace,
-    var_names=['pi', 'mu_helix', 'sigma_helix', 'mu_glob', 'sigma_glob', 'delta'],
-    compact=True
-)
-plt.show()
-
 # Plot posterior distributions
-az.plot_posterior(trace, var_names=['pi', 'mu_helix', 'sigma_helix', 'mu_glob', 'sigma_glob'], hdi_prob=0.95)
+az.plot_posterior(trace, var_names=[
+    'pi', 'mu_glob', 'sigma_glob', 'mu_helix', 'sigma_helix', 'delta'
+])
 plt.show()
-
-# Plot posterior distributions of interaction terms
-az.plot_posterior(trace, var_names=['delta'], hdi_prob=0.95)
-plt.show()
-
-# Compare true values with posterior estimates
-print(f"True pi: {pi_true}")
-print(f"Estimated pi mean: {summary.loc['pi', 'mean']}")
-print(f"True mu_helix: {mu_helix_true}")
-print(f"Estimated mu_helix mean: {summary.loc['mu_helix', 'mean']}")
-print(f"True mu_glob: {mu_glob_true}")
-print(f"Estimated mu_glob mean: {summary.loc['mu_glob', 'mean']}")
