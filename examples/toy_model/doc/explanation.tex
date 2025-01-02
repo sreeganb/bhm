@@ -46,6 +46,129 @@ This document provides a detailed explanation of the Python script \texttt{BHM\_
 
 This document explains each part of the code in detail and describes how these parts fit together.
 
+\section*{Detailed Mathematical Explanation of the PairSampler Code}
+
+This document explains the core mathematical ideas behind the \texttt{PairSampler} class. The class seeks to place particles of various types in a three-dimensional box in such a way that (1) certain minimum distances are respected (exclusion), and (2) observed or desired inter-particle distances are matched by minimizing the negative log-likelihood of a Gaussian-based distance model.
+
+\subsection*{1. Initialization of Positions}
+
+The code generates initial positions for each type of particle:
+\[
+\text{positions}[t] \sim \mathcal{U}(0,\text{box\_size})^{N \times 3},
+\]
+where $t$ is the particle type (\emph{e.g.,} "A", "B", "C"), and $N$ is the number of particles of type $t$. This creates a random arrangement in a cubic volume of size $\texttt{box\_size}$. 
+
+\subsection*{2. Gaussian Negative Log-Likelihood for Pairwise Distances}
+
+To measure how well any two particles match a desired \emph{target distance}, the code computes a \textit{negative log-likelihood}. If we have two sets of coordinates,
+\[
+\mathbf{r}_1, \mathbf{r}_2 \in \mathbb{R}^{3},
+\]
+the Euclidean distance $d(\mathbf{r}_1, \mathbf{r}_2)$ is
+\[
+d(\mathbf{r}_1, \mathbf{r}_2) = \sqrt{(\mathbf{r}_1 - \mathbf{r}_2)^\top(\mathbf{r}_1 - \mathbf{r}_2)}.
+\]
+The code uses a Gaussian model for the likelihood that the distance is near a \emph{target} distance $\mu$ with a tolerance $\sigma$:
+\[
+\text{likelihood}(d) = \exp\!\Bigl(-\frac{(d - \mu)^2}{2 \sigma^2}\Bigr).
+\]
+To prevent numerical underflow, the code clips the likelihood at a minimum value $\epsilon$ (here, $10^{-10}$). Then, the negative log-likelihood for a single pair is
+\[
+-\log \max\Bigl(\exp\!\bigl(-\frac{(d - \mu)^2}{2 \sigma^2}\bigr), \, \epsilon\Bigr).
+\]
+For multiple particles in sets $\{\mathbf{r}_{1,i}\}_{i=1}^m$ and $\{\mathbf{r}_{2,j}\}_{j=1}^n$, the code constructs a matrix of negative log-likelihoods:
+\[
+\bigl[M(i,j)\bigr]_{m \times n} 
+= -\log \max\Bigl(\exp\!\bigl(-\frac{(d(\mathbf{r}_{1,i}, \mathbf{r}_{2,j}) - \mu)^2}{2 \sigma^2}\bigr), \, \epsilon\Bigr).
+\]
+It then performs a procedure to select minimal entries (representing the best pairs) and sums them up.
+
+% filepath: /home/sree/git/bhm/examples/toy_model/doc/explanation.tex
+\subsection*{Best Pair Selection Procedure}
+
+After constructing the negative log-likelihood matrix 
+\[
+M(i,j), 
+\]
+the code proceeds to identify ``best pairs'' by selecting the minimum entry in each row and each column. In more formal mathematical terms, suppose \(M\) is an \(m \times n\) matrix where \(M(i,j)\) is the negative log-likelihood for pairing particle \(i\) (among the \(m\) particles of a certain type) with particle \(j\) (among the \(n\) particles of another type). We perform the following steps:
+
+\begin{enumerate}
+    \item \textbf{Row-minima selection:} For each row \(i \in \{1,2,\ldots,m\}\), find 
+    \[
+    r_i = \arg\min_{j \in \{1,\ldots,n\}} \; M(i,j).
+    \]
+    We then select the pair \((i, r_i)\).
+
+    \item \textbf{Column-minima selection:} For each column \(j \in \{1,2,\ldots,n\}\), find 
+    \[
+    c_j = \arg\min_{i \in \{1,\ldots,m\}} \; M(i,j).
+    \]
+    We then select the pair \((c_j, j)\).
+
+    \item \textbf{Combine unique pairs:} Let 
+    \[
+    U = \left\{(i, r_i)\,\big\vert\, i = 1,\ldots,m\right\} \;\cup\; 
+         \left\{(c_j, j)\,\big\vert\, j = 1,\ldots,n\right\}.
+    \]
+    In other words, \(U\) is the union of all row-wise minima and column-wise minima.
+
+    \item \textbf{Sum the matrix entries:} The code sums up \(M(i,j)\) over all unique pairs in \(U\):
+    \[
+    \text{Sum} = \sum_{(i,j) \in U} M(i,j).
+    \]
+\end{enumerate}
+
+This procedure ensures that for every row, at least one minimal element is included, and for every column, at least one minimal element is included. In practical terms, it captures pairs that best satisfy the distance-based likelihood constraints from both the row (\(\arg\min\)) and the column (\(\arg\min\)) perspectives, ensuring that no row or column's minimal pairing is overlooked.
+
+Note that this method is not a full \emph{global} matching (like the Hungarian algorithm would be). Instead, it is a simpler heuristic that collects the best row-wise and column-wise partners, then sums their negative log-likelihood values. As a result, it effectively retains those interactions that contribute the smallest penalty (or highest likelihood) for each row and each column:
+
+\[
+\text{NLL total contribution} \;=\;
+\sum_{(i, j) \in U} M(i,j).
+\]
+
+Collecting these minimal pairs in the set \(U\) and summing their negative log-likelihood matrix entries provides a focused measure of how close each particle can come to its ``best'' partner, either from the row or column perspective.
+
+\subsection*{3. Exclusion Energy (Excluded Volume Term)}
+
+To avoid overlapping of particles, each pair of particles has a minimum distance:
+\[
+d_{\mathrm{min}} = R_1 + R_2,
+\]
+where $R_1$ and $R_2$ are the radii of the corresponding particle types. If a particle pair is closer than $d_{\mathrm{min}}$, the code exacts a penalty proportional to
+\[
+\bigl(d_{\mathrm{min}} - d(\mathbf{r}_1,\mathbf{r}_2)\bigr)^2,
+\]
+scaled by a large constant $k_{\mathrm{exclude}}$. Summing this penalty for each violating pair yields:
+\[
+\mathrm{NLL}_{\mathrm{excl}} = k_{\mathrm{exclude}} \sum_{\substack{i,j\,:\,\\ d(\mathbf{r}_{i}, \mathbf{r}_{j}) < d_{\mathrm{min}}}} 
+\Bigl[d_{\mathrm{min}} - d(\mathbf{r}_{i}, \mathbf{r}_{j})\Bigr]^2.
+\]
+
+\subsection*{4. Total Negative Log-Likelihood}
+
+The code combines both terms: the sum of negative log-likelihood for \emph{matching} desired inter-particle distances, plus the exclusion penalty. We can write it as:
+\[
+\mathrm{NLL}_{\mathrm{total}}(\{\mathbf{r}\}) 
+= \mathrm{NLL}_{\mathrm{excl}}(\{\mathbf{r}\}) 
++ \sum_{\substack{\text{types }(t_1, t_2)}} 
+\sum_{\substack{i,j}}\! M_{t_1,t_2}(i,j),
+\]
+where $M_{t_1,t_2}(i,j)$ denotes the negative log-likelihood matrix entry for the distance between particle $i$ of type $t_1$ and particle $j$ of type $t_2$, considering the minimal combination over each row and column to avoid double counting.
+
+\subsection*{5. Summary}
+
+In essence, the code:
+
+\begin{enumerate}
+\item Randomly initializes particle positions in a 3D box. 
+\item Uses a Gaussian-based negative log-likelihood term to encourage particle distances to match certain target distances within a given tolerance.
+\item Penalizes particles that overlap (excluded volume term).
+\item Sums these contributions to get a total negative log-likelihood, \(\mathrm{NLL}_{\mathrm{total}}\), which the code can then attempt to minimize.
+\end{enumerate}
+
+This approach enables stochastic sampling or energy minimization to place particles according to the desired distances between pairs and to prevent them from occupying the same space.
+
 \section{Imports and Setup}
 Below is a partial listing of the first lines of code:
 
