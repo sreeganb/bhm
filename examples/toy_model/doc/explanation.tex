@@ -168,6 +168,128 @@ In essence, the code:
 \end{enumerate}
 
 This approach enables stochastic sampling or energy minimization to place particles according to the desired distances between pairs and to prevent them from occupying the same space.
+%-----------------------------------------------------------------------------------------
+\section*{Mathematical Explanation of the \texttt{TetramerSampler} Code}
+
+\textbf{Context:} This class extends a \texttt{PairSampler} to include special ``tetramer moves'' in a Monte Carlo (MC) framework. A tetramer here is defined as a set of four particles of types A, B, C, C (i.e., one A, one B, and two Cs). The code seeks to place them close to certain target distances through a Markov Chain Monte Carlo (MCMC) procedure.
+
+\subsection*{1. Monte Carlo Loop in \texttt{run\_mc}}
+
+\begin{enumerate}
+    \item \textbf{Initialization:} 
+    \[
+      \text{positions} \gets \text{initialize\_positions()}
+    \]
+    with an initial score 
+    \[
+      E_{\text{current}} = \text{calculate\_score}(\text{positions}).
+    \]
+    Also, we keep track of:
+    \[
+      E_{\text{best}} = E_{\text{current}}, \quad \text{positions}_{\text{best}} = \text{positions}.
+    \]
+    \item \textbf{Temperature Schedule:} A cooling schedule modifies the temperature \(T\) at each iteration \(\text{step}\). Given an initial temperature \(T_{\text{init}}\) and a final temperature \(T_{\text{final}}\), the temperature at step \(\text{step}\) (out of \(n_{\text{steps}}\) total) is set to
+    \[
+      T(\text{step}) = T_{\text{init}} \left(\frac{T_{\text{final}}}{T_{\text{init}}}\right)^{\frac{\text{step}}{n_{\text{steps}}}}.
+    \]
+    \item \textbf{Move Types:} With probabilities 0.4, 0.1, and 0.5 respectively, the code chooses one of:
+    \[
+      \begin{cases}
+      \text{``position'' move},\\
+      \text{``sigma'' move},\\
+      \text{``tetramer'' move}.
+      \end{cases}
+    \]
+    Depending on the choice, a proposed state \((\text{proposed\_positions}, \text{proposed\_sigma})\) is generated.
+
+    \item \textbf{Energy Calculation and Metropolis Acceptance:} 
+    The proposed state's score \(E_{\text{proposed}} = \text{calculate\_score}(\text{proposed\_positions})\). The energy difference is
+    \[
+      \Delta E = E_{\text{proposed}} - E_{\text{current}}.
+    \]
+    We accept the move if 
+    \[
+      \Delta E < 0 \quad \text{or} \quad \exp\!\bigl(-\Delta E / T\bigr) > \mathcal{U}(0,1),
+    \]
+    where \(\mathcal{U}(0,1)\) is a uniform random draw between 0 and 1. If accepted, we set
+    \[
+      \text{positions} \gets \text{proposed\_positions}, \quad E_{\text{current}} \gets E_{\text{proposed}}.
+    \]
+    If the new score is better than the best score so far, we record it as 
+    \[
+      E_{\text{best}} \gets E_{\text{proposed}}, \quad \text{positions}_{\text{best}} \gets \text{proposed\_positions}.
+    \]
+
+    \item \textbf{Trajectory Storage:} Every \(\text{save\_freq}\) steps, the code stores current state information (positions, energy, etc.) and prints a log message.
+
+\end{enumerate}
+
+\subsection*{2. Identifying Tetramers: \texttt{get\_tetramers}}
+
+A \textit{tetramer} in this code is an (A, B, C, C) tuple identified by minimum distances:
+\[
+\text{For each } i \text{ in positions['A']}, \quad 
+   \text{choose } b = \arg\min_j \bigl\|\mathbf{r}_{A,i} - \mathbf{r}_{B,j}\bigr\|.
+\]
+Then find two \texttt{C} indices \(c_1\) and \(c_2\) such that 
+\[
+(c_1,c_2) = \arg\min_{k,l} \Bigl(\bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,k}\bigr\| + \bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,l}\bigr\|\Bigr),
+\]
+or equivalently, it sorts all \(\bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,k}\bigr\|\) in ascending order and picks the first two elements. Each tetramer is thus stored as \((i,b,c_1,c_2)\).
+
+\subsection*{3. Scoring a Tetramer: \texttt{calculate\_tetramer\_score}}
+
+For a given tetramer, composed of indices \((i,b,c_1,c_2)\), the code calculates the sum of pairwise negative log-likelihood scores:
+\[
+\text{score}_{AB} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{A,i}, \mathbf{r}_{B,b},\, \mu_{AB},\, \sigma_{AB}\bigr),
+\]
+\[
+\text{score}_{BC1} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{B,b}, \mathbf{r}_{C,c_1},\, \mu_{BC},\, \sigma_{BC}\bigr),
+\quad
+\text{score}_{BC2} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{B,b}, \mathbf{r}_{C,c_2},\, \mu_{BC},\, \sigma_{BC}\bigr),
+\]
+\[
+\text{score}_{C1C2} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{C,c_1}, \mathbf{r}_{C,c_2},\, \mu_{CC},\, \sigma_{CC}\bigr).
+\]
+The total tetramer score is 
+\[
+\text{score}_{\text{tetramer}} = \text{score}_{AB} + \text{score}_{BC1} + \text{score}_{BC2} + \text{score}_{C1C2}.
+\]
+
+\subsection*{4. Overall System Score: \texttt{calculate\_score}}
+
+This function adds:
+\[
+\text{score}_{\text{pairs}}(\mathbf{r}) + \sum_{\substack{\text{tetramer } T}} \text{score}_{\text{tetramer}}(T),
+\]
+where \(\mathbf{r}\) is the current set of positions, and \(\text{score}_{\text{pairs}}(\mathbf{r})\) is inherited from \texttt{PairSampler} (covering all pairwise distance constraints among A, B, C). Then each identified tetramer $T$ contributes additional constraints through \(\text{calculate\_tetramer\_score}\).
+
+\subsection*{5. Proposing a Tetramer Move: \texttt{propose\_tetramer\_move}}
+
+\begin{enumerate}
+    \item \textbf{Identify a Random Tetramer:}
+    \[
+      i = \text{random index in A}, \quad
+      b = \arg\min_j \bigl\|\mathbf{r}_{A,i} - \mathbf{r}_{B,j}\bigr\|,
+    \]
+    \[
+      c_1, c_2 = \arg\!\min_{k,l}\bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,k}\bigr\|, \quad \text{picking the two closest C's}.
+    \]
+    \item \textbf{Random Displacement:} A Gaussian displacement \(\Delta \mathbf{r}\) is sampled from \(\mathcal{N}(\mathbf{0}, \sigma^2 I)\), here $\sigma=5$ in each dimension. This displacement is then added to all four particles $(A_i, B_b, C_{c_1}, C_{c_2})$:
+    \[
+      \mathbf{r}'_{A,i} \gets \mathbf{r}_{A,i} + \Delta \mathbf{r}, \quad
+      \mathbf{r}'_{B,b} \gets \mathbf{r}_{B,b} + \Delta \mathbf{r}, \quad
+      \mathbf{r}'_{C,c_1} \gets \mathbf{r}_{C,c_1} + \Delta \mathbf{r}, \quad
+      \mathbf{r}'_{C,c_2} \gets \mathbf{r}_{C,c_2} + \Delta \mathbf{r}.
+    \]
+    Thus, the entire tetramer is effectively translated by a random vector.
+    \item \textbf{Return Proposed State:} The updated positions are a copy of the old state with only the chosen tetramer's coordinates changed.
+\end{enumerate}
+
+\section*{Summary}
+
+By combining a \textbf{tetramer-aware} scoring mechanism and a specialized \textbf{tetramer proposal move}, this approach fosters closer adherence to the intended distances among groups of four particles (A-B-C-C). The MCMC loop, with an annealing-style temperature schedule, guides the system toward configurations that minimize the overall energy (negative log-likelihood) while exploring potential global minima.
+
 
 \section{Imports and Setup}
 Below is a partial listing of the first lines of code:
