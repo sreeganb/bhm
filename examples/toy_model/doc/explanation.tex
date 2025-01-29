@@ -288,8 +288,92 @@ where \(\mathbf{r}\) is the current set of positions, and \(\text{score}_{\text{
 
 \section*{Summary}
 
-By combining a \textbf{tetramer-aware} scoring mechanism and a specialized \textbf{tetramer proposal move}, this approach fosters closer adherence to the intended distances among groups of four particles (A-B-C-C). The MCMC loop, with an annealing-style temperature schedule, guides the system toward configurations that minimize the overall energy (negative log-likelihood) while exploring potential global minima.
+By combining a \textbf{tetramer-aware} scoring mechanism and a 
+specialized \textbf{tetramer proposal move}, this approach fosters 
+closer adherence to the intended distances among groups of four 
+particles (A-B-C-C). The MCMC loop, with an annealing-style 
+temperature schedule, guides the system toward configurations 
+that minimize the overall energy (negative log-likelihood) while 
+exploring potential global minima.
 
+\section{Mathematical Explanation}
+
+\subsection{Coordinated Octet Move}
+The \texttt{propose\_octet\_move} method creates a higher-level (or larger-scale) displacement of components:
+\begin{enumerate}
+    \item Randomly select one \(\mathrm{A}\) copy (via \(\texttt{a\_idx}\)).
+    \item Find the nearest other \(\mathrm{A}\) by computing distance via \(\mathrm{cdist}\).
+    \item For each \( \mathrm{A} \) in this pair, find the nearest \(\mathrm{B}\), then find the two closest \(\mathrm{C}\) copies.
+    \item A random displacement vector \(\vec{\delta} \in \mathbb{R}^3\) is sampled from a normal distribution \(\mathcal{N}(0,3^2)\), and added to all these coordinates, i.e.\ 
+    \[
+        \mathbf{x}_{A} \leftarrow \mathbf{x}_{A} + \vec{\delta},\quad
+        \mathbf{x}_{B} \leftarrow \mathbf{x}_{B} + \vec{\delta},\quad
+        \mathbf{x}_{C_i} \leftarrow \mathbf{x}_{C_i} + \vec{\delta}, 
+    \]
+    for the two \(\mathrm{C}\) copies that belong to this tetramer structure. 
+\end{enumerate}
+Hence, the method enforces a coordinated motion of an ``octet'' arrangement (two \(\mathrm{A}\)'s and their attached \(\mathrm{B}\) and \(\mathrm{C}\) partners).
+
+\subsection{Temperature Schedule}
+Both \texttt{OctetSampler} and \texttt{FullSystemSampler} use an exponential cooling schedule:
+\[
+    T_{\mathrm{step}} \;=\; T_{\mathrm{init}} \,\Bigl(
+        \frac{T_{\mathrm{final}}}{T_{\mathrm{init}}}
+    \Bigr)^{\frac{\mathrm{step}}{n_{\mathrm{steps}}}},
+\]
+starting from \(\mathrm{initial\_temp}\) and ending at \(\mathrm{final\_temp}\). This schedule gradually lowers the temperature to allow the sampler to escape shallow minima in early stages but settle into deeper minima near the end.
+
+\subsection{Move Selection}
+In each Monte Carlo (MC) iteration, the sampler randomly chooses from different move types:
+
+\[
+    \text{Probability of move type} =
+    \begin{cases}
+        0.3,& \text{for `position'} \\
+        0.1,& \text{for `sigma'} \\
+        0.3,& \text{for `tetramer'} \\
+        0.3,& \text{for `octet'} 
+    \end{cases}
+\]
+in the \texttt{OctetSampler}, and slightly adjusted weights in the \texttt{FullSystemSampler} (with heavier emphasis on larger moves, e.g.\ 0.4 for `octet').
+
+\subsection{Scoring and Metropolis Acceptance}
+Each proposed move modifies coordinates or parameters (\(\sigma\)). After the move,
+\[
+    \Delta E \;=\;
+        \text{Score}_{\text{proposed}} \;-\;
+        \text{Score}_{\text{current}}.
+\]
+This difference \(\Delta E\) acts like an energy change. The acceptance probability is given by the Metropolis criterion:
+\[
+    p_\mathrm{accept} \;=\; \min \Bigl(1,\ e^{-\Delta E / T}\Bigr).
+\]
+If \(\Delta E < 0\), the move is automatically accepted (since it improves the score). Otherwise, the move is accepted with probability \(\exp(-\Delta E / T)\), allowing occasional uphill steps to avoid local minima.
+
+\subsection{FullSystemSampler with Slower Cooling}
+The \texttt{FullSystemSampler} class inherits from \texttt{OctetSampler} but uses:
+\[
+    T_{\mathrm{initial}} = 20.0,\quad
+    T_{\mathrm{final}} = 0.01,
+\]
+giving a larger range in temperature. This more slowly anneals the system, encouraging more thorough exploration of high-energy regions before converging.
+
+\subsection{Efficiency, Best Score, and Trajectory}
+Throughout the run:
+\begin{itemize}
+    \item \(\mathrm{accepted}\) counts the fraction of moves accepted, an indicator of how well the sampler is exploring the parameter space.
+    \item \(\mathrm{best\_score}\) tracks the lowest score observed so far, and \(\mathrm{best\_positions}\) the corresponding positions.
+    \item Every \(\mathrm{save\_freq}\) steps, the sampler saves a state snapshot in \(\mathrm{trajectory}\) and prints progress. 
+\end{itemize}
+
+\section{Conclusion}
+This code snippet extends the base Monte Carlo approach to 
+include larger-scale, coordinated ``tetramer'' and ``octet'' moves. 
+By randomly shifting clusters of components, the sampler can more 
+efficiently navigate the high-dimensional configuration space. 
+The exponential cooling schedule and Metropolis acceptance criterion 
+ensure that early steps allow broad exploration, while later steps 
+refine the configuration to find lower-energy (or lower-score) states.
 
 \section{Imports and Setup}
 Below is a partial listing of the first lines of code:
