@@ -10,50 +10,51 @@ import IMP.pmi.restraints.stereochemistry
 import IMP.pmi.dof
 import IMP.pmi.macros
 
-# Define particle properties
-ids = ["A", "B", "C"]       # Particle types
-radii = [20.0, 4.0, 10.0]    # Radii for each type
-counts = [8, 8, 16]         # Number of particles for each type
-color_map = {
-    "A": "red",
-    "B": "green",
-    "C": "blue"
-}
-
-# Create the IMP model and PMI system
 mdl = IMP.Model()
 system = IMP.pmi.topology.System(mdl)
 state = system.create_state()
+b1 = IMP.atom.Hierarchy.create_molecule(bead_radius = 20.0, Model=mdl)
+print(b1)
 
-mols1 = []
+m1A = state.create_molecule(name='ProtA', sequence='X', chain_id='A')
+m1A.add_representation(resolutions=[1], color='red')
 
-# Add spherical particles for each type
-for p_type, radius, count in zip(ids, radii, counts):
-    for i in range(count):
-        name = f"{p_type}_{i+1}"
-        particle = state.create_molecule(name=name, sequence="X", chain_id=p_type)
-        color = color_map.get(p_type, "gray")  # Default color if not found
-        particle.add_representation(resolutions=[1], color=color)
-        mols1.append(particle)
+# Clone molecule B with a sequence too.
+m2A = m1A.create_clone(chain_id='B')
 
 # Build the hierarchy
 hierarchy = system.build()
-print(hierarchy.get_child(0).get_children())
+print(hierarchy.get_children())
+
+#for j in range(len(counts)):
+#    for i in range(counts[j]):
+#        m1A.create_clone(chain_id=chain_ids[i+1])
+
+# Add spherical particles for each type
+#for p_type, radius, count in zip(ids, radii, counts):
+#    for i in range(count):
+#        # create copies after the first particle is created
+#        # clones and copies : clones are identical to the original particle, copies are not
+#        name = f"{p_type}_{i+1}"
+#        particle = state.create_molecule(name=name, sequence="X", chain_id=p_type)
+#        color = color_map.get(p_type, "gray")  # Default color if not found
+#        particle.add_representation(resolutions=[1], color=color)
 
 # Assign random positions/radii to each molecule
-bbox = IMP.algebra.BoundingBox3D(
-    IMP.algebra.Vector3D(-100, -100, -100),
-    IMP.algebra.Vector3D(100, 100, 100)
-)
-for molecule in IMP.atom.get_by_type(hierarchy, IMP.atom.MOLECULE_TYPE):
-    p_type = molecule.get_name().split('_')[0]
-    radius = radii[ids.index(p_type)] 
+#bbox = IMP.algebra.BoundingBox3D(
+#    IMP.algebra.Vector3D(-100, -100, -100),
+#    IMP.algebra.Vector3D(100, 100, 100)
+#)
+
+#for molecule in IMP.atom.get_by_type(hierarchy, IMP.atom.MOLECULE_TYPE):
+#    p_type = molecule.get_name().split('_')[0]
+#    radius = radii[ids.index(p_type)] 
 
     # Get the child particle representation
-    particle = molecule.get_child(0).get_particle()
-    xyzr = IMP.core.XYZR.setup_particle(particle)
-    xyzr.set_radius(radius)
-    xyzr.set_coordinates(IMP.algebra.get_random_vector_in(bbox))
+#    particle = molecule.get_child(0).get_particle()
+#    xyzr = IMP.core.XYZR.setup_particle(particle)
+#    xyzr.set_radius(radius)
+#    xyzr.set_coordinates(IMP.algebra.get_random_vector_in(bbox))
 
 # Shuffle configuration to reduce overlaps
 IMP.pmi.tools.shuffle_configuration(hierarchy, max_translation=20.0)
@@ -97,12 +98,8 @@ class scoring_function():
         return score
 
 dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
-for k in mols1:
-     dof_s1.create_flexible_beads(k, max_trans = 1.0)
 IMP.pmi.tools.shuffle_configuration(hierarchy, max_translation=10.0)
 IMP.atom.show_with_representations(hierarchy)
-print("degrees of freedom: ", dof_s1.get_movers())
 
 sf = scoring_function(system)
 sf.add_restraint(IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(hierarchy), mdl, dof_s1, hierarchy)
-
