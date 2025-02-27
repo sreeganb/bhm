@@ -841,6 +841,34 @@ def run_mc(self, n_steps: int = 50000, save_freq: int = 100) -> Tuple:
 \noindent
 This concludes the detailed explanation of lines 284--496 in \texttt{BHM\_toy.py}. The code establishes a flexible Monte Carlo framework, allowing both positional shifts and parameter adjustments to seek configurations with minimal penalty (or maximal likelihood) under the model’s distance constraints and radii exclusions.
 
+\begin{equation}
+    P_{\text{pair}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{pair}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    This formulation induces partial pooling across pairwise distances, shrinking extreme values based on shared uncertainty in $\sigma$.
+    
+    \begin{equation}
+    P_{\text{tetramer}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{tetramer}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    By linking multiple particles, tetramer constraints propagate uncertainty through hierarchical couplings, further refining $\sigma$.
+    
+    \begin{equation}
+    P_{\text{octet}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{octet}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    Octet-level interactions reinforce partial pooling by coupling subgroups of parameters, promoting coherent shrinkage of outliers.
+    
+    \begin{equation}
+    P_{\text{full}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{full}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    The full model merges all hierarchical layers, ensuring uncertainties flow across pairwise, tetramer, and octet levels for robust posterior inference.
+
 % End of Appendix
 
 \end{document}
