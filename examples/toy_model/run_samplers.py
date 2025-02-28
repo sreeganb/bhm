@@ -1,0 +1,163 @@
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from typing import Dict, List, Type
+from collections import defaultdict
+
+from parameters import SystemParameters
+from base_sampler import BaseMCSampler
+from pair_sampler import PairSampler
+#from tetramer_sampler import TetramerSampler
+#from octamer_sampler import OctamerSampler
+from visualization import visualize_3d_configuration, visualize_trajectory_plotly
+#from graph_results import SigmaAnalyzer
+
+SAMPLER_MAP = {
+    "PairSampler": PairSampler#,
+#    "TetramerSampler": TetramerSampler,
+#    "OctamerSampler": OctamerSampler, # Uncomment when OctamerSampler is implemented
+}
+
+def run_hierarchical_sampling(
+    sampler_class: Type[BaseMCSampler],
+    n_chains: int = 1,
+    n_steps: int = 200000,
+    save_freq: int = 500,
+    use_sigma_distribution: bool = False,
+    output_folder: str = "output_analysis"
+):
+    """
+    Runs hierarchical sampling for a given sampler class.
+    Args:
+        sampler_class: The class of the sampler to use (e.g., PairSampler, TetramerSampler).
+        n_chains: Number of independent chains to run.
+        n_steps: Number of Monte Carlo steps per chain.
+        save_freq: Frequency at which to save trajectory data.
+    Returns:
+        A dict with results for each chain.
+    """
+    if sampler_class == PairSampler:
+        output_folder = os.path.join(output_folder, "pairsampler_results")
+#    elif sampler_class == TetramerSampler:
+#        output_folder = os.path.join(output_folder, "tetramersampler_results")
+#    elif sampler_class == OctamerSampler:
+#        output_folder = os.path.join(output_folder, "octamersampler_results")
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    params = SystemParameters() # Consider making SystemParameters configurable if needed.
+    results = {}
+    levels = []
+    sampler_name = sampler_class.__name__
+
+    for chain_idx in range(n_chains):
+        level = f"{sampler_name}_chain_{chain_idx+1}"
+        levels.append(level)
+        print(f"\nRunning {level} sampling ({sampler_name})...")
+
+        sampler = sampler_class(use_sigma_distribution) # Initialize the sampler with default parameters
+        
+        best_positions, trajectory, traj_file = sampler.run_mc(
+            n_steps=n_steps,
+            save_freq=save_freq,
+        )
+
+        # --- File Handling ---
+        base_filename = f"{sampler_name.lower()}_chain_{chain_idx+1}" # Consistent filename base
+
+        # Trajectory file
+        new_traj_file = os.path.join(output_folder, f"trajectory_{level}.h5")
+        os.rename(traj_file, new_traj_file)
+        traj_file = new_traj_file
+
+        # Sigma history file - Assuming sampler.sigma_history and .sigma_history_tetramer are consistent or adaptable
+#        sigma_history_attr = "sigma_history" if sampler_name == "PairSampler" else "sigma_history_tetramer" # Adapt attribute name
+#        sigma_filename_base = "sigma_history" if sampler_name == "PairSampler" else "sigma_history_tetramer" # Adapt filename base
+#        sigma_fil = os.path.join(output_folder, f"{sigma_filename_base}.csv") # Read intermediate file
+#        new_sigmafil = os.path.join(output_folder, f"sigma_history_{level}.csv") # Rename
+#        os.rename(sigma_fil, new_sigmafil)
+
+        print(f"{level} sampling complete ({sampler_name}):")
+        print(f"Final sigma values: {sampler.sigma}")
+
+        visualize_3d_configuration(best_positions, params.radii, f"Final {level} configuration")
+        visualize_trajectory_plotly(trajectory, params.box_size, params.radii)
+
+        results[level] = {
+            'best_positions': best_positions,
+            'trajectory_file': traj_file,
+            'final_sigma': sampler.sigma,
+            #'sigma_history_path': csv_path # No longer needed as path is predictable
+        }
+    return results
+
+def main():
+    run_config = {
+        "pair_sampler": {
+            "run": True,
+            "n_chains": 3,
+            "n_steps": 200000,
+            "save_freq": 100,
+        }#,
+#        "tetramer_sampler": {
+#            "run": True,
+#            "n_chains": 2,
+#            "n_steps": 100000,
+#            "save_freq": 100,
+#            "read_pos": False, # Example of sampler-specific parameter
+#        },
+        # "octamer_sampler": { # Example configuration for OctamerSampler
+        #     "run": True,
+        #     "n_chains": 1,
+        #     "n_steps": 500000,
+        #     "save_freq": 250,
+        #     "read_pos": False,
+        # },
+    }
+
+    output_folder = "output_analysis"
+    sampler_results = {}
+    last_sigma = None # To hold sigma from previous level if hierarchical
+
+    #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
+    sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
+    #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
+
+    for sampler_key in sampler_sequence:
+        config = run_config[sampler_key]
+        if config["run"]:
+            sampler_name = sampler_key.replace("_sampler", "").capitalize() # e.g., "PairSampler"
+            sampler_name = sampler_name + "Sampler"
+            sampler_class = SAMPLER_MAP[sampler_name]
+
+            print(f"\nStarting sampling with {sampler_name}...")
+            results = run_hierarchical_sampling(
+                sampler_class=sampler_class,
+                n_chains=config["n_chains"],
+                n_steps=config["n_steps"],
+                save_freq=config["save_freq"],
+                use_sigma_distribution=None, # Placeholder for future use
+                output_folder=output_folder
+            )
+            sampler_results[sampler_key] = results
+
+            print(f"{sampler_name} hierarchical sampling complete.")
+        else:
+            print(f"{sampler_key} run is skipped as per configuration.")
+
+    print("\nNext steps:")
+    print(f"• Check '{output_folder}/sigma_history_*' CSV files for sigma evolution.")
+    print("• Now call the SigmaAnalyzer for post-processing...")
+
+    # Analyze results - using TetramerSampler analyzer for all for now, adjust if needed.
+#    analyzer = SigmaAnalyzer(output_folder=output_folder, sampler="TetramerSampler") # Or adapt analyzer if needed per sampler type
+#    analyzer.generate_report()
+#    analyzer.plot_convergence()
+#    analyzer.plot_trace_combined()
+#    analyzer.constraint_violations()
+
+if __name__ == "__main__":
+    main()
