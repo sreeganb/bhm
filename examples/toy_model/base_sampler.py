@@ -8,25 +8,26 @@ import h5py
 #---------------------------------------------------------------------------
 class Priors:
     '''Defines different priors for the sigma parameter.'''
-    def __init__(self, lb: float, ub: float, sigma: float, prior_type: str):
-        self.lb = lb
-        self.ub = ub
-        self.sigma = sigma
+    def __init__(self, prior_type: str):
         self.prior_type = prior_type
     
-    def neg_log_prior(self) -> float:
-        if self.sigma <= self.lb or self.sigma >= self.ub:
-            return np.inf
-        
-        if self.prior_type == 'uniform':
-            return 0.0
-        elif self.prior_type == 'jeffreys':
-            return np.log(self.sigma)
-        elif self.prior_type == 'halfcauchy':
-            scale = 1.0
-            return np.log(1 + (self.sigma / scale) ** 2)
-        else:
-            raise ValueError(f"Unknown prior type: {self.prior_type}")
+    def neg_log_prior(self, sigma: Dict[str, float], sigma_range: Dict[str, Tuple[float, float]]) -> float:
+        # for all the pair types loop over and find the total negative log prior
+        total_prior = 0.0
+        for pair_type in sigma.keys():
+            if sigma[pair_type] <= sigma_range[pair_type][0] or sigma[pair_type] >= sigma_range[pair_type][1]:
+                return np.inf
+            
+            if self.prior_type == 'uniform':
+                total_prior += 0.0
+            elif self.prior_type == 'jeffreys':
+                total_prior += np.log(sigma[pair_type])
+            elif self.prior_type == 'halfcauchy':
+                scale = 1.0
+                total_prior += np.log(1 + (sigma[pair_type] / scale) ** 2)
+            else:
+                raise ValueError(f"Unknown prior type: {self.prior_type}")
+        return total_prior
 #---------------------------------------------------------------------------
 class BaseMCSampler:
     def __init__(self):
@@ -38,7 +39,6 @@ class BaseMCSampler:
         # Dictionaries for sigma parameters, ranges, and priors.
         sigma: Dict[str, float] = {}
         sigma_range: Dict[str, Tuple[float, float]] = {}
-        priors: Dict[str, Priors] = {}
 
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
@@ -159,7 +159,7 @@ class BaseMCSampler:
     
     def save_state(
         self, step: int, positions: Dict[str, np.ndarray], sigma: Dict[str, float], 
-        total_score: float, prior_score: float, pair_score: float, exvol_score: float
+        total_score: float, prior_score: float, pair_score: float, exvol_score: float, tet_score: float = 0.0
     ) -> Dict:
         """Save the current state of the MCMC simulation with detailed score breakdown."""
         state = {
@@ -170,6 +170,7 @@ class BaseMCSampler:
             "prior_score": prior_score,
             "pair_score": pair_score,
             "exvol_score": exvol_score,
+            "tet_score": tet_score,
             "types": {},
             "bead_numbers": {},
         }
@@ -190,6 +191,7 @@ class BaseMCSampler:
         group.attrs["prior_score"] = state["prior_score"]
         group.attrs["pair_score"] = state["pair_score"]
         group.attrs["exvol_score"] = state["exvol_score"]
+        group.attrs["tet_score"] = state["tet_score"]
 
         # Save sigma as a subgroup
         sigma_grp = group.create_group("sigma")

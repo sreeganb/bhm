@@ -23,6 +23,8 @@ class PairSampler(BaseMCSampler):
         self.exclusion_weight = ex_weight
         self.pair_weight = pair_weight
         self.params = SystemParameters()  # Initialize system parameters
+        if not self.use_sigma_distribution:
+            self.priors = Priors("jeffreys")  # Initialize priors
 
         # Initialize sigma, sigma_range, and priors.
         self.sigma, self.sigma_range = self.initialize_sigma()
@@ -33,7 +35,7 @@ class PairSampler(BaseMCSampler):
         self,
         pos: Dict[str, np.ndarray],  # input positions
         sig: Dict[str, float],       # input sigma values
-        sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
+        sig_range: Dict[str, Tuple[float, float]] = None,  # input sigma ranges
         excluded_pairs=None,
         use_sigma_distribution=False,
         prior_penalty_from_distribution=0.0
@@ -83,15 +85,7 @@ class PairSampler(BaseMCSampler):
         # 3) Prior penalty: if not using the sigma distribution, compute using Priors.
         prior_penalty = 0.0
         if not use_sigma_distribution:
-            for pair_type, _ in sig.items():
-                prior = Priors(
-                    sig_range[pair_type][0],
-                    sig_range[pair_type][1],
-                    sig[pair_type],
-                    'jeffreys'
-                )
-                # Use the log_prior_penalty function (which returns negative log prior)
-                prior_penalty += prior.neg_log_prior()
+            prior_penalty = self.priors.neg_log_prior(sig, sig_range)
         else:
             prior_penalty = prior_penalty_from_distribution
 

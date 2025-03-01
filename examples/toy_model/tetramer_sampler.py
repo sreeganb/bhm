@@ -1,13 +1,36 @@
-
-
-class TetramerSampler(PairSampler):
-    def __init__(
-        self,
-        params: SystemParameters,
-        use_sigma_distribution=True
-    ):
-        super().__init__(params)
+#----------------------------------------------------------------------
+# TetramerSampler class which will use the base sampler functions 
+# and run the MCMC simulations for the tetramers sampling and 
+# track sigma values
+#----------------------------------------------------------------------
+import os
+import numpy as np
+import pandas as pd
+import json
+import os
+import random
+import re
+import pickle
+from typing import List, Dict, Tuple, Optional
+from base_sampler import BaseMCSampler, Priors  # Import BaseMCSampler and related classes
+from parameters import SystemParameters
+from visualization import visualize_3d_configuration
+from scipy.spatial.distance import cdist
+from typing import Dict, List, Tuple
+from scipy.stats import multivariate_normal
+from pair_sampler import PairSampler
+#-----------------------------------------------------------------------
+class TetramerSampler(BaseMCSampler):
+    """
+    Sampler for Tetramer-level interactions, inheriting from BaseMCSampler.
+    Includes run_mc method.
+    """
+    def __init__(self, use_sigma_distribution=False):
+        super().__init__()  # Call BaseMCSampler constructor
         self.use_sigma_distribution = use_sigma_distribution
+        self.params = SystemParameters()  # Initialize system parameters
+        self.positions = self.initialize_positions() # Initialize positions
+        self.ps = PairSampler() # Initialize PairSampler
 
         # Additional initialization for tetramer-specific features
         self.tetramer_trans_step = 0.5
@@ -16,329 +39,296 @@ class TetramerSampler(PairSampler):
         #-------------------------------------
         # tracking acceptance rates
         self.tet_trans_acc_rate = 0.5
-        self.tet_rot_acc_rate = 0.5
-        self.target_acceptance = 0.4
+        #self.tet_rot_acc_rate = 0.5
+        self.target_acceptance = 0.5
         #-------------------------------------
-        self.sigma_history_tetramer = {
-            "AA": [],
-            "AB": [],
-            "BC": [],
-            "CC": []
-        }
 
         required_pairs = {"AA", "AB", "BC", "CC"}
         if not required_pairs.issubset(self.params.pair_distances.keys()):
             raise ValueError("Missing required pair types for tetramer sampling.")
 
         if use_sigma_distribution:
-            # Load pre-fit GMM parameters from the JSON file
-            gmm_file = "output_analysis/gmm_parameters.json"
-            print(f"Loading GMM parameters from: {gmm_file}")
-            try:
-                with open(gmm_file, "r") as f:
-                    self.gmm_data = json.load(f)
-                print("GMM parameters loaded successfully.")
-            except FileNotFoundError:
-                print(f"Error: GMM parameters file not found: {gmm_file}")
-                raise
-            except json.JSONDecodeError:
-                print(f"Error: Could not decode JSON in {gmm_file}")
-                raise
-            except Exception as e:
-                print(f"An unexpected error occurred while loading GMM: {e}")
-                raise
+            pwd = os.getcwd()
+            sampler_output_dir = os.path.join(pwd, "output_analysis/pairsampler_results") # hard coded here, needs to be changed later
+            sampler_name = "PairSampler" # hard coded here, needs to be changed later
+            if os.path.exists(sampler_output_dir):  # Check if the directory exists
+                pattern = re.compile(r"gmm_fit_(AA|AB|BC|CC)_" + re.escape(sampler_name) + r"_chain_(\d+)\.json")
+                chain_numbers = set()
+
+                for filename in os.listdir(sampler_output_dir):
+                    match = pattern.match(filename)
+                    if match:
+                        chain_numbers.add(int(match.group(2)))
+
+                if chain_numbers:  # Check if any chains were found
+                    selected_chain = random.choice(list(chain_numbers))
+                    self.gmm_params = {}  # Store parameters in an instance variable
+                    for sigma_type in ["AA", "AB", "BC", "CC"]:
+                        json_path = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_{sampler_name}_chain_{selected_chain}.json")
+                        if os.path.exists(json_path):  # Check file existence
+                            try:
+                                with open(json_path, 'r') as f:
+                                    self.gmm_params[sigma_type] = json.load(f)
+                            except (FileNotFoundError, json.JSONDecodeError) as e:
+                                print(f"Error loading {json_path}: {e}")
+                                # Decide how to handle the error, e.g., set a default value, raise, etc.
+                                self.gmm_params[sigma_type] = None # or some other default value
+                        else:  # File not found for this sigma_type
+                            print(f"GMM fit file not found for {sigma_type}, chain {selected_chain}: {json_path}")
+                            self.gmm_params[sigma_type] = None  # Optional: store None
+                else:
+                    print(f"No GMM fit JSON files found for {sampler_name} in {sampler_output_dir}")
+                    self.gmm_params = None  # Or some other default behavior
+            else:  # Directory doesn't exist
+                print(f"Output directory not found: {sampler_output_dir}")
+                self.gmm_params = None  # No GMM parameters available
 
             # Initialize self.sigma by sampling from the GMM
-            self.initialize_sigma_from_gmm()
+            self.sigma = self.initialize_sigma_from_gmm()
+            self.sigma_range = None  # Not used in this case
         else:
             # Normal PairSampler initialization logic
-            self.initialize_sigma()  # Initialize sigma values from BaseMCSampler
+            self.sigma, self.sigma_range = self.initialize_sigma()  # Initialize sigma values from BaseMCSampler
+            self.base_priors = Priors("jeffreys")  # Initialize priors
             print("Using default sigma initialization (no GMM).")
 
     def initialize_sigma_from_gmm(self):
         """
-        For each required pair type, sample an initial sigma value from the GMM.
+        Initializes sigma values by sampling from the pre-fit GMMs.
+
+        Returns:
+            dict: A dictionary where keys are pair types (e.g., "AA", "AB") and
+                values are the sampled sigma values (floats).
         """
-        print("Initializing sigma from GMM...")
+        sigma: Dict[str, float] = {}
+        for pair_type in self.params.pair_distances.keys():
+            if pair_type in self.gmm_params:
+                gmm_info = self.gmm_params[pair_type]
+                if gmm_info is not None:
+                    # Correctly sample from the GMM
+                    n_components = gmm_info['n_components']
+                    means = np.array(gmm_info['means']).reshape(n_components, 1)
+                    covariances = np.array(gmm_info['covariances']).reshape(n_components, 1, 1)
+                    weights = np.array(gmm_info['weights'])
 
-        def sample_from_gmm_1d(means, covariances, mixture_weights):
-            # Normalize the mixture_weights so they sum to 1
-            mixture_weights = np.array(mixture_weights)
-            mixture_weights = mixture_weights / mixture_weights.sum()
-            print(f"  Mixture weights (normalized): {mixture_weights}")
+                    # 1. Choose a component based on weights
+                    component_choice = np.random.choice(n_components, p=weights)
 
-            comp_idx = np.random.choice(range(len(means)), p=mixture_weights)
-            print(f"  Selected component index: {comp_idx}")
-            mean = means[comp_idx]
-            var = covariances[comp_idx]
-            print(f"  Selected component mean: {mean}, variance: {var}")
-             #check variance
-            if var <= 0:
-                print("Warning: Variance is zero or negative. Setting candidate to 1.0")
-                return 1.0
-            candidate = np.random.normal(mean, np.sqrt(var))
-            print(f"  Sampled candidate: {candidate}")
-            return candidate if candidate > 0 else 1.0
+                    # 2. Sample from the chosen component's Gaussian
+                    sampled_value = np.random.multivariate_normal(
+                        mean=means[component_choice].flatten(),
+                        cov=covariances[component_choice]
+                    )
+                    sigma[pair_type] = float(sampled_value[0])  # Extract the single value
 
-        for pair_type in ["AA", "AB", "BC", "CC"]:
-            if pair_type not in self.gmm_data:
-                # Fallback if no GMM is present for this type
-                print(f"  No GMM data found for {pair_type}. Setting sigma to default 1.0")
-                self.sigma[pair_type] = 1.0
-                continue
-
-            gmm_params = self.gmm_data[pair_type]
-            means = gmm_params["means"]
-            covariances = gmm_params["covariances"]
-            mixture_weights = gmm_params["mixture_weights"]
-            print(f"Sampling sigma for {pair_type} from GMM:")
-
-            # Sample a value from the GMM
-            self.sigma[pair_type] = sample_from_gmm_1d(means, covariances, mixture_weights)
-            print(f"  Initialized sigma[{pair_type}] = {self.sigma[pair_type]}")
-
-        #print("Sigma initialization complete.")
-
-    def compute_prior_penalty(self, proposed_sigma: dict) -> float:
-        """
-        Computes a penalty (negative log-likelihood) based on the GMM PDF.
-        """
-        # Return 0 if not using GMM
-        if not self.use_sigma_distribution:
-        #    print("compute_prior_penalty: GMM prior not used. Returning 0.0")
-            return 0.0
-
-        def pdf_1d_gmm(x, means, covariances, mixture_weights):
-            pdf_val = 0.0
-            for (m, c, w) in zip(means, covariances, mixture_weights):
-                if c <= 0:
-                    continue  # Skip components with non-positive variance
-                norm_const = 1.0 / (math.sqrt(2.0 * math.pi * c))
-                exponent = -((x - m)**2) / (2.0 * c)
-                pdf_val += w * norm_const * math.exp(exponent)
-            return pdf_val
-
-        penalty = 0.0
-        #print("Calculating prior penalty...")
-        for param, val in proposed_sigma.items():
-        #    print(f"  Checking prior for {param} = {val}")
-            # If we didn't fit a GMM for this parameter, skip
-            if param not in self.gmm_data:
-                print(f"    No GMM data for {param}. Skipping.")
-                continue
-
-            gmm_info = self.gmm_data[param]
-            prob = pdf_1d_gmm(
-                val,
-                gmm_info["means"],
-                gmm_info["covariances"],
-                gmm_info["mixture_weights"]
-            )
-        #    print(f"    GMM PDF value at {val}: {prob}")
-
-            if prob < 1e-12:
-            #    print(f"    Probability too small. Applying large penalty.")
-                penalty += 9999  # Or some other large value
-            else:
-                penalty -= math.log(prob)
-            #    print(f"    -log(prob): {-math.log(prob)}, Accumulated penalty: {penalty}")
-
-        #print(f"Total prior penalty: {penalty}")
-        return penalty
-    
-    def propose_tetramer_sigma_move(self):
-        """Proposes a new sigma value in log-space, with clipping."""
-        proposed_sigma = self.sigma.copy()  # Start with a copy of the current sigmas
-
-        if self.use_sigma_distribution:
-            pair_types = list(self.gmm_data.keys())
-        else:
-            pair_types = list(self.sigma.keys())
-
-        total_combs = 488.0
-        # Select pair type based on population
-        pair_type = np.random.choice(pair_types, p=[56.0/total_combs, 64.0/total_combs, 128.0/total_combs, 240.0/total_combs])
-        current_sigma = self.sigma[pair_type]
-
-        # --- Key Changes: Log-space proposal and clipping ---
-        log_current_sigma = np.log(current_sigma)  # Work in log-space
-        log_proposal = log_current_sigma + np.random.normal(0, 0.1)
-
-        # Clipping:  Define reasonable bounds for sigma (adjust as needed)
-        sigma_min = 0.01 # Example minimum
-        sigma_max = 5.0 # Example Maximum
-        proposal = np.clip(np.exp(log_proposal), sigma_min, sigma_max)  # Clip after exponentiating
-
-        proposed_sigma[pair_type] = proposal
-        # --- End of Key Changes ---
-
-        #print(f"Proposing sigma move: {pair_type} from {current_sigma:.4f} to {proposed_sigma[pair_type]:.4f} "
-        #      f"(log: {log_current_sigma:.4f} to {np.log(proposal):.4f})")
-        return proposed_sigma, pair_type
-                
-    def _validate_positions(self, positions):
-        """Ensure required components exist"""
-        for comp in ['A', 'B', 'C']:
-            if comp not in positions:
-                raise ValueError(f"Missing {comp} particles in initial positions")
-        return positions
-    
-    def read_positions(self):
-        pkl_files = [f for f in os.listdir("output_analysis") if f.startswith("trajectory_PairSampler_chain_") and f.endswith(".pkl")]
-        pair_pkl_file = os.path.join("output_analysis", random.choice(pkl_files))
-        
-        with open(pair_pkl_file, "rb") as f:
-            trajectory = pickle.load(f)
-        # Skip the first 80% of the steps
-        skip_steps = int(0.8 * len(trajectory))
-        trajectory = trajectory[skip_steps:]
-        # Choose one step at random
-        step_data = random.choice(trajectory)
-        visualize_3d_configuration(step_data["positions"], self.params.radii, f"Initial tetramer configuration")
-        
-        return step_data["positions"]
-        
-    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, pos_read: bool = False) -> Tuple:
-        """Monte Carlo sampling with tetramer moves."""
-        if pos_read:
-            positions = self.read_positions()
-        else:
-            positions = self.initialize_positions()
-        current_score = self.calculate_score(positions, exclusion_weight=1.0, 
-                                             pair_weight=1.0, tetramer_weight=1.0)
-        best_positions = {k: v.copy() for k, v in positions.items()}
-        best_score = current_score
-        self.trajectory = []
-        accepted = 0
-        initial_temp = 5.0
-        final_temp = 1.0
-        
-        tet_moves = 0
-        tet_accepted = 0  # Single counter for tetramer moves (combined trans+rot)
-        
-        for step in range(n_steps):
-            temp = initial_temp * (final_temp / initial_temp)**(step / n_steps)
-            move_type = np.random.choice(['position', 'sigma', 'tetramer'], 
-                                       p=[0.4, 0.1, 0.5])
-            if move_type == 'position':
-                proposed_positions = self.propose_position_move(positions)
-                proposed_sigma = self.sigma.copy()
-            elif move_type == 'sigma':
-                proposed_positions = positions.copy()
-                if self.use_sigma_distribution:
-                    #propose a sigma move based on the GMM
-                    proposed_sigma, pair_type = self.propose_tetramer_sigma_move()
                 else:
-                    proposed_sigma, pair_type = self.propose_sigma_move()
-            else:  # tetramer move
-                tet_moves += 1
-                self.tet_trans_acc_rate = tet_accepted / max(1, tet_moves)
-                self.tet_rot_acc_rate = tet_accepted / max(1, tet_moves)  # Same rate for simplicity
-                proposed_positions = self.propose_tetramer_move(positions)
-                proposed_sigma = self.sigma.copy()
-            old_sigma = self.sigma.copy()
-            self.sigma = proposed_sigma
-            prior_penalty_from_distribution = 0.0
-            if self.use_sigma_distribution:
-                # calculate the prior penalty
-                prior_penalty_from_distribution = self.compute_prior_penalty(proposed_sigma)
-            proposed_score = self.calculate_score(proposed_positions, 
-                                                  prior_penalty_from_distribution)
-            #print("proposed score: ", proposed_score)
-            delta_e = proposed_score - current_score
-            acceptance = 0
-            if delta_e < 0 or np.random.random() < np.exp(-delta_e/temp):
-                positions = proposed_positions
-                current_score = proposed_score
-                accepted += 1
-                acceptance = 1
-                if current_score < best_score:
-                    best_score = current_score
-                    best_positions = {k: v.copy() for k, v in positions.items()}
+                    print(f"No GMM parameters available for {pair_type}. Using default sigma.")
+                    sigma[pair_type] = self.params.pair_distances[pair_type]
             else:
-                self.sigma = old_sigma
+                print(f"No GMM data for {pair_type}. Using default sigma.")
+                sigma[pair_type] = self.params.pair_distances[pair_type]
+
+        return sigma
+    
+        def _calculate_gmm_log_prob(self, sigma_value: float) -> float:
+            """
+            Calculates the log probability density of a GMM for a *single* sigma value.
+            Args:
+                sigma_value: The sigma value.
+            Returns:
+                float: Log probability density (or -inf if gmm_params is None).
+            """
+            if self.gmm_params is None:
+                return -np.inf  # Or handle with a default prior, see below
+
+            n_components = self.gmm_params['n_components']
+            means = np.array(self.gmm_params['means']).reshape(n_components, 1)
+            covariances = np.array(self.gmm_params['covariances']).reshape(n_components, 1, 1)
+            weights = np.array(self.gmm_params['weights'])
+
+            log_prob = -np.inf
+            for i in range(n_components):
+                component_log_prob = multivariate_normal.logpdf(sigma_value, mean=means[i].flatten(), cov=covariances[i].squeeze())
+                log_prob = np.logaddexp(log_prob, np.log(weights[i]) + component_log_prob)
+            return log_prob
+        
+    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
+        """Calculates the negative log prior for a set of sigma values.
+        Args:
+            sigma: Dictionary of sigma values (key: pair_type, value: sigma).
+        Returns:
+            float: The *negative* log prior probability.
+        """
+        total_negative_log_prior = 0.0
+
+        for pair_type, sigma_value in sigma.items():
+            # Calculate log prior using the helper function
+            log_prior = self._calculate_gmm_log_prob(sigma_value)
+            total_negative_log_prior += -log_prior
             
-            # Ensure the output directory exists
-            os.makedirs("output_analysis", exist_ok=True)
-            csv_log_file = "output_analysis/all_info_mcmc_tetramer.csv"  # Different filename
-            accept_rate = accepted / (step + 1)
-
-            if step % save_freq == 0:    
-                # After accept/reject, record the current sigma in the dictionary
-                self.sigma_history_tetramer["AA"].append(self.sigma["AA"])
-                self.sigma_history_tetramer["AB"].append(self.sigma["AB"])
-                self.sigma_history_tetramer["BC"].append(self.sigma["BC"])
-                self.sigma_history_tetramer["CC"].append(self.sigma["CC"])
-
-                # --- Saving Logic (Consolidated and Improved) ---
-                if step == 0:
-                    with open(csv_log_file, "w") as log_file:
-                        header = "Step,T,Score,Accepted\n"  # Simpler header for tetramer
-                        log_file.write(header)
-
-                with open(csv_log_file, "a") as log_file:
-                    log_file.write(f"{step},{temp:.4f},{current_score:.4f},{acceptance:.4f}\n")
-
-                self.trajectory.append(self.save_state(step, positions, current_score))
-
-                with open("total_score_log_tetramer.csv", "a") as log_file: #separate file for score
-                    log_file.write(f"{step},{current_score}\n")
-                
-                print(f"Step {step}, Score: {current_score:.2f}, "
-                      f"Temp: {temp:.4f}, Accept: {accept_rate:.2f}")
-
-        # Save sigma history to CSV (Corrected: use sigma_history_tetramer)
-        os.makedirs("output_analysis", exist_ok=True)
-        df = pd.DataFrame(self.sigma_history_tetramer)
-        df.to_csv("output_analysis/sigma_history_tetramer.csv", index=False)
-
-        return best_positions, self.trajectory, self.save_trajectory()
+        return total_negative_log_prior
     
     def get_tetramers(self, positions: Dict[str, np.ndarray], temp=1.0) -> List[Tuple[int, ...]]:
-        """Safer probability calculation with validation"""
-        tetramers = []
-        n_b = len(positions['B'])
-        n_c = len(positions['C'])
+        """Efficient and robust tetramer selection. For this systems returns 8 tetramers."""
         
-        for a_idx in range(len(positions['A'])):
-            # B selection with fallback
-            dist_AB = cdist([positions['A'][a_idx]], positions['B'])[0]
-            probs_B = np.exp(-dist_AB / temp)
-            probs_B = np.nan_to_num(probs_B, nan=1/n_b)  # Handle NaNs
-            if probs_B.sum() == 0:
-                probs_B = np.ones(n_b)/n_b
-            probs_B /= probs_B.sum()
-            
-            b_idx = np.random.choice(n_b, p=probs_B)
-
-            # C selection with validation
-            dist_BC = cdist([positions['B'][b_idx]], positions['C'])[0]
-            probs_C = np.exp(-dist_BC / temp)
-            probs_C = np.nan_to_num(probs_C, nan=1/n_c)
-            if probs_C.sum() == 0 or len(probs_C) < 2:
+        a_positions = positions['A']
+        b_positions = positions['B']
+        c_positions = positions['C']
+        
+        n_a = len(a_positions)
+        n_b = len(b_positions)
+        n_c = len(c_positions)
+        
+        tetramers = []
+        
+        dist_AB = cdist(a_positions, b_positions) / temp
+        probs_B = np.exp(-dist_AB)
+        probs_B = np.nan_to_num(probs_B, nan=1 / n_b)
+        probs_B /= probs_B.sum(axis=1, keepdims=True)
+        
+        b_indices = np.array([np.random.choice(n_b, p=probs_B[i]) for i in range(n_a)])
+        
+        dist_BC = cdist(b_positions[b_indices], c_positions) / temp
+        probs_C = np.exp(-dist_BC)
+        probs_C = np.nan_to_num(probs_C, nan=1 / n_c)
+        
+        for a_idx, b_idx in enumerate(b_indices):
+            if probs_C[a_idx].sum() == 0 or n_c < 2:
                 c_indices = np.random.choice(n_c, size=2, replace=(n_c < 2))
             else:
-                probs_C /= probs_C.sum()
-                c_indices = np.random.choice(n_c, size=2, replace=False, p=probs_C)
-                
+                probs_C_normalized = probs_C[a_idx] / probs_C[a_idx].sum()
+                c_indices = np.random.choice(n_c, size=2, replace=False, p=probs_C_normalized)
+            
             tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
         
         return tetramers
+#-----------------------------------------------------------------------  
+    def run_mc(self, n_steps: int = 50000, save_freq: int = 100) -> Tuple:
+        """Monte Carlo sampling with tetramer moves."""
+        best_positions = None
+        trajectory = []
+        sigma_history_tetramer = {key: [] for key in self.sigma}  # Pre-allocate sigma history
+
+        # Calculate the prior for the initial sigma values
+        if self.use_sigma_distribution:
+            prior_penalty = self.calculate_negative_log_prior(self.sigma)
+        else:
+            prior_penalty = self.base_priors.neg_log_prior(self.sigma, self.sigma_range)
+
+        # Initial score calculation
+        current_score, curr_ex, curr_pair, curr_tet  = self.neg_log_posterior(self.positions,
+                                            self.get_tetramers(self.positions),
+                                            prior_penalty, self.sigma)
+        curr_prior = prior_penalty
+        best_score = current_score  # Initialize with the initial score
+
+        # Pre-calculate temperature schedule
+        initial_temp = 5.0
+        final_temp = 1.0
+        cooling_factor = -np.log(final_temp / initial_temp) / n_steps
+        temperatures = initial_temp * np.exp(-cooling_factor * np.arange(n_steps))
+
+        # Prepare output directories and files
+        output_dir = os.path.join("output_analysis", "tetramersampler_results")
+        os.makedirs(output_dir, exist_ok=True)
+        csv_log_file = os.path.join(output_dir, "all_info_mcmc_tetramer.csv")
+
+        # Write CSV header (include individual score components)
+        with open(csv_log_file, "w") as f:
+            f.write("Step,T,Prior,Exvol_score,Pair_score,Score,Accepted\n")
+        
+        tet_moves = 0
+        tet_accepted = 0  # Single counter for tetramer moves (combined trans+rot)
+        accepted_moves = 0
+        
+        for step in range(n_steps):
+            temp = temperatures[step]
+            move_type = np.random.choice(['position', 'sigma', 'tetramer'],
+                                        p=[0.4, 0.1, 0.5])
+
+            if move_type == 'position':
+                proposed_positions = self.propose_position_move(self.positions)
+                proposed_sigma = self.sigma
+            elif move_type == 'sigma':
+                proposed_positions = self.positions
+                proposed_sigma, pair_type = self.propose_sigma_move(self.sigma)
+            else:  # tetramer move
+                tet_moves += 1
+                self.tet_trans_acc_rate = tet_accepted / max(1, tet_moves)
+                proposed_positions = self.propose_tetramer_move(self.positions)
+                proposed_sigma = self.sigma
+            
+            new_prior_penalty = 0.0
+            # Calculate the prior for the initial sigma values
+            if self.use_sigma_distribution:
+                new_prior_penalty = self.calculate_negative_log_prior(proposed_sigma)
+            else:
+                new_prior_penalty = self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range)
+            # Calculate proposed score    
+            proposed_score, prop_ex, prop_pair, prop_tet = self.neg_log_posterior(proposed_positions,
+                                            self.get_tetramers(proposed_positions),
+                                            new_prior_penalty, proposed_sigma)
+            
+            delta_e = proposed_score - current_score
+            acceptance = 0
+            if delta_e < 0 or np.random.random() < np.exp(-delta_e / temp):
+                self.positions = proposed_positions
+                self.sigma = proposed_sigma
+                current_score = proposed_score
+                curr_ex = prop_ex
+                curr_pair = prop_pair
+                curr_tet = prop_tet
+                curr_prior = new_prior_penalty
+                accepted_moves += 1
+                acceptance = 1
+
+                if move_type == 'tetramer':
+                    tet_accepted += 1  # Increment tetramer acceptance counter
+
+                if current_score < best_score:
+                    best_score = current_score
+                    best_positions = {k: v.copy() for k, v in self.positions.items()}
+            
+            # Batch logging and saving trajectory
+            if step % save_freq == 0:
+                accept_rate = accepted_moves / (step + 1)
+                # update sigma history
+                for key in sigma_history_tetramer:
+                    sigma_history_tetramer[key].append(self.sigma[key])
+                
+                # Append current state with detailed score breakdown.
+                trajectory.append(
+                    self.save_state(
+                        step, self.positions, self.sigma, current_score,
+                        prior_score=curr_prior,
+                        pair_score=curr_pair,
+                        exvol_score=curr_ex,
+                        tet_score=curr_tet
+                    )
+                )
+                
+                with open(csv_log_file, "a") as f:
+                    f.write(
+                        f"{step},{curr_prior:.1f},{curr_ex:.1f},{curr_pair:.1f},"
+                        f"{curr_tet:.1f},{current_score:.1f},{acceptance:.1f}\n"
+                    )
+
+                print(f"Step {step}, Score: {current_score:.1f}, "
+                      f"Temp: {temp:.1f}, Accept: {accept_rate:.1f}")
+
+        sigma_history_tet_df = pd.DataFrame(sigma_history_tetramer)
+        sigma_history_tet_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
+        
+        # Save the trajectory in HDF5 format in the output folder.
+        trajectory_file = os.path.join(output_dir, "trajectory.h5")
+        final_file = self.save_trajectory(trajectory, trajectory_file)
+
+        return best_positions, trajectory, final_file
+#-----------------------------------------------------------------------
     
     def propose_tetramer_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
         Propose a coordinated move for an entire ABCC tetramer with adaptive translation and rotation.
-        
-        Strategy:
-        1. Select one tetramer probabilistically using get_tetramers
-        2. Apply coordinated translation with adaptive step size
-        3. Apply rotation about tetramer's geometric center with adaptive step size
-        
-        Args:
-            positions: Current positions dictionary with particle coordinates by type
-            
-        Returns:
-            New positions dictionary with updated tetramer coordinates
         """
         # Create a deep copy of the current positions to avoid modifying the original
         new_pos = {k: v.copy() for k, v in positions.items()}
@@ -359,9 +349,7 @@ class TetramerSampler(PairSampler):
         trans_adjust = np.clip(1.0 + 2.0 * (self.tet_trans_acc_rate - self.target_acceptance), 0.5, 2.0)
         trans_step = self.tetramer_trans_step * trans_adjust  # Scale base step size
         
-        # Calculate adaptive step size for rotation using the same logic
-        rot_adjust = np.clip(1.0 + 2.0 * (self.tet_rot_acc_rate - self.target_acceptance), 0.5, 2.0)
-        rot_step = self.tetramer_rot_step * rot_adjust  # Scale base rotation step (in radians)
+        rot_step = self.tetramer_rot_step  * trans_adjust # Scale base rotation step (in radians)
         
         # Generate a random 3D displacement vector for translation
         displacement = np.random.normal(0, trans_step, 3)  # Mean 0, std dev trans_step
@@ -419,7 +407,7 @@ class TetramerSampler(PairSampler):
         return I + np.sin(theta)*K + (1-np.cos(theta))*(K @ K)
         
     def calculate_tetramer_score(self, positions: Dict[str, np.ndarray], 
-                                tetramer: Tuple[int, ...]) -> float:
+                                tetramer: Tuple[int, ...], sig: Dict[str,float] = None) -> float:
         """Calculate score for a single tetramer."""
         a_idx, b_idx, c1_idx, c2_idx = tetramer
         score = 0.0
@@ -427,31 +415,32 @@ class TetramerSampler(PairSampler):
             positions['A'][a_idx],
             positions['B'][b_idx],
             self.params.pair_distances['AB'],
-            self.sigma['AB']
+            sig['AB']
         )
         for c_idx in [c1_idx, c2_idx]:
             score += self.pair_score_nll(
                 positions['B'][b_idx],
                 positions['C'][c_idx],
                 self.params.pair_distances['BC'],
-                self.sigma['BC']
+                sig['BC']
             )
         score += self.pair_score_nll(
             positions['C'][c1_idx],
             positions['C'][c2_idx],
             self.params.pair_distances['CC'],
-            self.sigma['CC']
+            sig['CC']
         )
         return score
     
-    def calculate_score(
+    def neg_log_posterior(
         self,
         positions: Dict[str, np.ndarray],
+        tetramers: List[Tuple[int, ...]],
         prior_penalty_from_distribution: float = 0.0,
+        sig: Dict[str, float] = None,
         exclusion_weight: float = 1.0,
         pair_weight: float = 1.0,
         tetramer_weight: float = 1.0,
-        excluded_pairs=None
     ) -> float:
         """
         Calculate the total score for a tetramer system:
@@ -460,7 +449,7 @@ class TetramerSampler(PairSampler):
         3. Add an additional term for tetramer-specific scoring.
         """
         # 1) Identify pairs within tetramers
-        tetramers = self.get_tetramers(positions)  # Method that finds tuples like (a_idx, b_idx, c1_idx, c2_idx)
+        #tetramers = self.get_tetramers(positions)  # Method that finds tuples like (a_idx, b_idx, c1_idx, c2_idx)
         tetramer_pairs = set()
         for a_idx, b_idx, c1_idx, c2_idx in tetramers:
             tetramer_pairs.add(('A', a_idx, 'B', b_idx))
@@ -470,18 +459,21 @@ class TetramerSampler(PairSampler):
 
         # 2) Calculate score using the parent PairSampler, excluding tetramer-internal pairs
         #    Note the named argument `sigma=self.sigma` to ensure the parent sees a dictionary for sigma.
-        score, _, _, _ = super().calculate_score(
-            positions=positions,
-            sigma=self.sigma,  # Pass the dictionary so parent can do sigma[pair_key]
-            exclusion_weight=exclusion_weight,
-            pair_weight=pair_weight,
-            excluded_pairs=tetramer_pairs,
-            use_sigma_distribution=self.use_sigma_distribution,
-            prior_penalty_from_distribution=prior_penalty_from_distribution
+        score, ex_score, pair_score, _ = self.ps.calculate_score(
+            positions,
+            sig,  # Pass the dictionary so parent can do sigma[pair_key]
+            self.sigma_range,
+            tetramer_pairs,
+            self.use_sigma_distribution,
+            prior_penalty_from_distribution
         )
 
         # 3) Add tetramer-specific score
+        total_tet_score = 0.0
         for tetramer in tetramers:
-            score += tetramer_weight * self.calculate_tetramer_score(positions, tetramer)
+            tet_score = self.calculate_tetramer_score(positions, tetramer, sig)
+            total_tet_score += tet_score
+        score += tetramer_weight * total_tet_score
 
-        return score
+        return score, ex_score, pair_score, tetramer_weight * total_tet_score
+#-----------------------------------------------------------------------

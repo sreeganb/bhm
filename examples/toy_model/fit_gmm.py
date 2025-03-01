@@ -219,7 +219,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
                             "covariances": gmm.covariances_.flatten().tolist(),
                             "weights": gmm.weights_.tolist(),
                         }
-                        json_filename = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_chain{chain_id}.json")
+                        json_filename = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_{chain_id}.json")
                         with open(json_filename, "w") as f:
                             json.dump(gmm_params, f, indent=4)
 
