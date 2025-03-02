@@ -48,6 +48,7 @@ class TetramerSampler(BaseMCSampler):
             raise ValueError("Missing required pair types for tetramer sampling.")
 
         if use_sigma_distribution:
+            print("using sigma distribution now: ")
             pwd = os.getcwd()
             sampler_output_dir = os.path.join(pwd, "output_analysis/pairsampler_results") # hard coded here, needs to be changed later
             sampler_name = "PairSampler" # hard coded here, needs to be changed later
@@ -59,6 +60,7 @@ class TetramerSampler(BaseMCSampler):
                     match = pattern.match(filename)
                     if match:
                         chain_numbers.add(int(match.group(2)))
+                        print("chain numbers: ", chain_numbers)
 
                 if chain_numbers:  # Check if any chains were found
                     selected_chain = random.choice(list(chain_numbers))
@@ -102,7 +104,7 @@ class TetramerSampler(BaseMCSampler):
         """
         sigma: Dict[str, float] = {}
         for pair_type in self.params.pair_distances.keys():
-            if pair_type in self.gmm_params:
+            if self.gmm_params[pair_type] is not None:
                 gmm_info = self.gmm_params[pair_type]
                 if gmm_info is not None:
                     # Correctly sample from the GMM
@@ -130,42 +132,37 @@ class TetramerSampler(BaseMCSampler):
 
         return sigma
     
-        def _calculate_gmm_log_prob(self, sigma_value: float) -> float:
-            """
-            Calculates the log probability density of a GMM for a *single* sigma value.
-            Args:
-                sigma_value: The sigma value.
-            Returns:
-                float: Log probability density (or -inf if gmm_params is None).
-            """
-            if self.gmm_params is None:
-                return -np.inf  # Or handle with a default prior, see below
-
-            n_components = self.gmm_params['n_components']
-            means = np.array(self.gmm_params['means']).reshape(n_components, 1)
-            covariances = np.array(self.gmm_params['covariances']).reshape(n_components, 1, 1)
-            weights = np.array(self.gmm_params['weights'])
-
-            log_prob = -np.inf
-            for i in range(n_components):
-                component_log_prob = multivariate_normal.logpdf(sigma_value, mean=means[i].flatten(), cov=covariances[i].squeeze())
-                log_prob = np.logaddexp(log_prob, np.log(weights[i]) + component_log_prob)
-            return log_prob
-        
-    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Calculates the negative log prior for a set of sigma values.
-        Args:
-            sigma: Dictionary of sigma values (key: pair_type, value: sigma).
-        Returns:
-            float: The *negative* log prior probability.
+    def _calculate_gmm_log_prob(self, sigma_value: float, pair_type: str) -> float:
         """
-        total_negative_log_prior = 0.0
+        Calculates the log probability density of a GMM for a *single* sigma value,
+        for a specific pair type.
+        """
+        # If no GMM parameters or none for this pair type, return -inf or handle differently
+        if self.gmm_params is None or self.gmm_params[pair_type] is None:
+            return -np.inf
 
+        gmm_info = self.gmm_params[pair_type]
+        n_components = gmm_info['n_components']
+        means = np.array(gmm_info['means']).reshape(n_components, 1)
+        covariances = np.array(gmm_info['covariances']).reshape(n_components, 1, 1)
+        weights = np.array(gmm_info['weights'])
+
+        log_prob = -np.inf
+        for i in range(n_components):
+            component_log_prob = multivariate_normal.logpdf(
+                sigma_value,
+                mean=means[i].flatten(),
+                cov=covariances[i].squeeze()
+            )
+            log_prob = np.logaddexp(log_prob, np.log(weights[i]) + component_log_prob)
+        return log_prob
+
+    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
+        """Calculates the negative log prior for a set of sigma values."""
+        total_negative_log_prior = 0.0
         for pair_type, sigma_value in sigma.items():
-            # Calculate log prior using the helper function
-            log_prior = self._calculate_gmm_log_prob(sigma_value)
+            log_prior = self._calculate_gmm_log_prob(sigma_value, pair_type)
             total_negative_log_prior += -log_prior
-            
         return total_negative_log_prior
     
     def get_tetramers(self, positions: Dict[str, np.ndarray], temp=1.0) -> List[Tuple[int, ...]]:

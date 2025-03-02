@@ -232,7 +232,8 @@ def main():
     output_folder = "output_analysis"
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-    sampler_sequence = ["pair_sampler"]
+    #sampler_sequence = ["pair_sampler"]
+    sampler_sequence = ["tetramer_sampler"]
     burnin = 0.3
     do_trace_plots = True  # Set to False to disable trace plots
     do_gmm_fits = True     # Set to False to disable GMM fitting

@@ -104,8 +104,8 @@ def main():
         "tetramer_sampler": {
             "run": True,
             "n_chains": 3,
-            "n_steps": 10000,
-            "save_freq": 100,
+            "n_steps": 500000,
+            "save_freq": 200,
             "use_sigma_dist": True, # Example of sampler-specific parameter
         }#,
         # "octamer_sampler": { # Example configuration for OctamerSampler
