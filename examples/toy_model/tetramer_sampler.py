@@ -164,41 +164,99 @@ class TetramerSampler(BaseMCSampler):
             log_prior = self._calculate_gmm_log_prob(sigma_value, pair_type)
             total_negative_log_prior += -log_prior
         return total_negative_log_prior
-    
+
     def get_tetramers(self, positions: Dict[str, np.ndarray], temp=1.0) -> List[Tuple[int, ...]]:
-        """Efficient and robust tetramer selection. For this systems returns 8 tetramers."""
+        import random
+        # 50% chance to use the existing probabilistic approach
+        if random.random() < 0.7:
+            # --- EXISTING APPROACH ---
+            a_positions = positions['A']
+            b_positions = positions['B']
+            c_positions = positions['C']
+
+            n_a = len(a_positions)
+            n_b = len(b_positions)
+            n_c = len(c_positions)
+
+            tetramers = []
+
+            dist_AB = cdist(a_positions, b_positions) / temp
+            probs_B = np.exp(-dist_AB)
+            probs_B = np.nan_to_num(probs_B, nan=1 / n_b)
+            probs_B /= probs_B.sum(axis=1, keepdims=True)
+
+            b_indices = np.array([np.random.choice(n_b, p=probs_B[i]) for i in range(n_a)])
+
+            dist_BC = cdist(b_positions[b_indices], c_positions) / temp
+            probs_C = np.exp(-dist_BC)
+            probs_C = np.nan_to_num(probs_C, nan=1 / n_c)
+
+            for a_idx, b_idx in enumerate(b_indices):
+                if probs_C[a_idx].sum() == 0 or n_c < 2:
+                    c_indices = np.random.choice(n_c, size=2, replace=(n_c < 2))
+                else:
+                    probs_C_normalized = probs_C[a_idx] / probs_C[a_idx].sum()
+                    c_indices = np.random.choice(n_c, size=2, replace=False, p=probs_C_normalized)
+                
+                tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
+
+            return tetramers
         
-        a_positions = positions['A']
-        b_positions = positions['B']
-        c_positions = positions['C']
-        
-        n_a = len(a_positions)
-        n_b = len(b_positions)
-        n_c = len(c_positions)
-        
-        tetramers = []
-        
-        dist_AB = cdist(a_positions, b_positions) / temp
-        probs_B = np.exp(-dist_AB)
-        probs_B = np.nan_to_num(probs_B, nan=1 / n_b)
-        probs_B /= probs_B.sum(axis=1, keepdims=True)
-        
-        b_indices = np.array([np.random.choice(n_b, p=probs_B[i]) for i in range(n_a)])
-        
-        dist_BC = cdist(b_positions[b_indices], c_positions) / temp
-        probs_C = np.exp(-dist_BC)
-        probs_C = np.nan_to_num(probs_C, nan=1 / n_c)
-        
-        for a_idx, b_idx in enumerate(b_indices):
-            if probs_C[a_idx].sum() == 0 or n_c < 2:
-                c_indices = np.random.choice(n_c, size=2, replace=(n_c < 2))
-            else:
-                probs_C_normalized = probs_C[a_idx] / probs_C[a_idx].sum()
-                c_indices = np.random.choice(n_c, size=2, replace=False, p=probs_C_normalized)
+        else:
+            # --- NEW "CLOSEST-PARTICLES" APPROACH (no overlap) ---
+            a_positions = positions['A']
+            b_positions = positions['B']
+            c_positions = positions['C']
+
+            n_a = len(a_positions)
+            n_b = len(b_positions)
+            n_c = len(c_positions)
+
+            used_a = set()
+            used_b = set()
+            used_c = set()
+            tetramers = []
+
+            # Shuffle A's indices so each run can differ
+            A_indices = list(range(n_a))
+            random.shuffle(A_indices)
+
+            # Until we gather up to 8 tetramers or exhaust A
+            for a_idx in A_indices:
+                if len(tetramers) >= 8:
+                    break
+                if a_idx in used_a:
+                    continue
+
+                # Find closest B to A[a_idx] among unused B
+                b_dists = np.linalg.norm(b_positions - a_positions[a_idx], axis=1)
+                b_candidates = [
+                    (dist, b_idx) for b_idx, dist in enumerate(b_dists) if b_idx not in used_b
+                ]
+                if not b_candidates:
+                    continue
+                b_candidates.sort(key=lambda x: x[0])  # sort by distance
+                b_idx = b_candidates[0][1]  # pick the closest
+
+                # Find two closest C's to B[b_idx] among unused C
+                c_dists = np.linalg.norm(c_positions - b_positions[b_idx], axis=1)
+                c_candidates = [
+                    (dist, c_idx) for c_idx, dist in enumerate(c_dists) if c_idx not in used_c
+                ]
+                if len(c_candidates) < 2:
+                    continue
+                c_candidates.sort(key=lambda x: x[0])
+                c_idx1, c_idx2 = c_candidates[0][1], c_candidates[1][1]
+
+                # Mark these as used
+                used_a.add(a_idx)
+                used_b.add(b_idx)
+                used_c.add(c_idx1)
+                used_c.add(c_idx2)
+
+                tetramers.append((a_idx, b_idx, c_idx1, c_idx2))
             
-            tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
-        
-        return tetramers
+            return tetramers
 #-----------------------------------------------------------------------  
     def run_mc(self, n_steps: int = 50000, save_freq: int = 100) -> Tuple:
         """Monte Carlo sampling with tetramer moves."""

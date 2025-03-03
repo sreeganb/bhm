@@ -98,14 +98,14 @@ def main():
         "pair_sampler": {
             "run": False,
             "n_chains": 3,
-            "n_steps": 300000,
+            "n_steps": 600000,
             "save_freq": 300,
         },
         "tetramer_sampler": {
             "run": True,
             "n_chains": 3,
-            "n_steps": 500000,
-            "save_freq": 200,
+            "n_steps": 50000,
+            "save_freq": 10,
             "use_sigma_dist": True, # Example of sampler-specific parameter
         }#,
         # "octamer_sampler": { # Example configuration for OctamerSampler
