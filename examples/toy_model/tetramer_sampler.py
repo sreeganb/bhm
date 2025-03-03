@@ -33,8 +33,8 @@ class TetramerSampler(BaseMCSampler):
         self.ps = PairSampler() # Initialize PairSampler
 
         # Additional initialization for tetramer-specific features
-        self.tetramer_trans_step = 0.5
-        self.tetramer_rot_step = 0.15
+        self.tetramer_trans_step = 0.4
+        self.tetramer_rot_step = 0.1
         self.sigma_prior_dist = {}
         #-------------------------------------
         # tracking acceptance rates
@@ -166,97 +166,39 @@ class TetramerSampler(BaseMCSampler):
         return total_negative_log_prior
 
     def get_tetramers(self, positions: Dict[str, np.ndarray], temp=1.0) -> List[Tuple[int, ...]]:
-        import random
-        # 50% chance to use the existing probabilistic approach
-        if random.random() < 0.7:
-            # --- EXISTING APPROACH ---
-            a_positions = positions['A']
-            b_positions = positions['B']
-            c_positions = positions['C']
-
-            n_a = len(a_positions)
-            n_b = len(b_positions)
-            n_c = len(c_positions)
-
-            tetramers = []
-
-            dist_AB = cdist(a_positions, b_positions) / temp
-            probs_B = np.exp(-dist_AB)
-            probs_B = np.nan_to_num(probs_B, nan=1 / n_b)
-            probs_B /= probs_B.sum(axis=1, keepdims=True)
-
-            b_indices = np.array([np.random.choice(n_b, p=probs_B[i]) for i in range(n_a)])
-
-            dist_BC = cdist(b_positions[b_indices], c_positions) / temp
-            probs_C = np.exp(-dist_BC)
-            probs_C = np.nan_to_num(probs_C, nan=1 / n_c)
-
-            for a_idx, b_idx in enumerate(b_indices):
-                if probs_C[a_idx].sum() == 0 or n_c < 2:
-                    c_indices = np.random.choice(n_c, size=2, replace=(n_c < 2))
-                else:
-                    probs_C_normalized = probs_C[a_idx] / probs_C[a_idx].sum()
-                    c_indices = np.random.choice(n_c, size=2, replace=False, p=probs_C_normalized)
-                
-                tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
-
-            return tetramers
+        """Efficient and robust tetramer selection. For this systems returns 8 tetramers."""
         
-        else:
-            # --- NEW "CLOSEST-PARTICLES" APPROACH (no overlap) ---
-            a_positions = positions['A']
-            b_positions = positions['B']
-            c_positions = positions['C']
-
-            n_a = len(a_positions)
-            n_b = len(b_positions)
-            n_c = len(c_positions)
-
-            used_a = set()
-            used_b = set()
-            used_c = set()
-            tetramers = []
-
-            # Shuffle A's indices so each run can differ
-            A_indices = list(range(n_a))
-            random.shuffle(A_indices)
-
-            # Until we gather up to 8 tetramers or exhaust A
-            for a_idx in A_indices:
-                if len(tetramers) >= 8:
-                    break
-                if a_idx in used_a:
-                    continue
-
-                # Find closest B to A[a_idx] among unused B
-                b_dists = np.linalg.norm(b_positions - a_positions[a_idx], axis=1)
-                b_candidates = [
-                    (dist, b_idx) for b_idx, dist in enumerate(b_dists) if b_idx not in used_b
-                ]
-                if not b_candidates:
-                    continue
-                b_candidates.sort(key=lambda x: x[0])  # sort by distance
-                b_idx = b_candidates[0][1]  # pick the closest
-
-                # Find two closest C's to B[b_idx] among unused C
-                c_dists = np.linalg.norm(c_positions - b_positions[b_idx], axis=1)
-                c_candidates = [
-                    (dist, c_idx) for c_idx, dist in enumerate(c_dists) if c_idx not in used_c
-                ]
-                if len(c_candidates) < 2:
-                    continue
-                c_candidates.sort(key=lambda x: x[0])
-                c_idx1, c_idx2 = c_candidates[0][1], c_candidates[1][1]
-
-                # Mark these as used
-                used_a.add(a_idx)
-                used_b.add(b_idx)
-                used_c.add(c_idx1)
-                used_c.add(c_idx2)
-
-                tetramers.append((a_idx, b_idx, c_idx1, c_idx2))
+        a_positions = positions['A']
+        b_positions = positions['B']
+        c_positions = positions['C']
+        
+        n_a = len(a_positions)
+        n_b = len(b_positions)
+        n_c = len(c_positions)
+        
+        tetramers = []
+        
+        dist_AB = cdist(a_positions, b_positions) / temp
+        probs_B = np.exp(-dist_AB)
+        probs_B = np.nan_to_num(probs_B, nan=1 / n_b)
+        probs_B /= probs_B.sum(axis=1, keepdims=True)
+        
+        b_indices = np.array([np.random.choice(n_b, p=probs_B[i]) for i in range(n_a)])
+        
+        dist_BC = cdist(b_positions[b_indices], c_positions) / temp
+        probs_C = np.exp(-dist_BC)
+        probs_C = np.nan_to_num(probs_C, nan=1 / n_c)
+        
+        for a_idx, b_idx in enumerate(b_indices):
+            if probs_C[a_idx].sum() == 0 or n_c < 2:
+                c_indices = np.random.choice(n_c, size=2, replace=(n_c < 2))
+            else:
+                probs_C_normalized = probs_C[a_idx] / probs_C[a_idx].sum()
+                c_indices = np.random.choice(n_c, size=2, replace=False, p=probs_C_normalized)
             
-            return tetramers
+            tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
+        
+        return tetramers
 #-----------------------------------------------------------------------  
     def run_mc(self, n_steps: int = 50000, save_freq: int = 100) -> Tuple:
         """Monte Carlo sampling with tetramer moves."""
@@ -383,83 +325,211 @@ class TetramerSampler(BaseMCSampler):
     
     def propose_tetramer_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
-        Propose a coordinated move for an entire ABCC tetramer with adaptive translation and rotation.
+        Enhanced proposal for tetramer moves optimized for 8-fold symmetry systems.
+        Implements several types of moves with varying aggressiveness to improve mixing.
         """
-        # Create a deep copy of the current positions to avoid modifying the original
+        # Create a deep copy of positions
         new_pos = {k: v.copy() for k, v in positions.items()}
         
-        # Get all possible tetramers using probabilistic selection based on proximity
-        tetramers = self.get_tetramers(positions, temp=1.0)  # temp controls selection softness
+        # Get tetramers with temperature parameter that encourages exploration
+        # Higher temperature = more uniform selection, less dependent on current distances
+        exploration_temp = 1.0  # Increased from 1.0 for better exploration
+        tetramers = self.get_tetramers(positions, temp=exploration_temp)
         
-        # If no tetramers are found, return the unchanged positions
         if not tetramers:
             return new_pos
+            
+        # Choose a move type with probability
+        move_type = np.random.choice([
+            'single_tetramer',     # Move one tetramer
+            'coordinated_pair',    # Move a pair of tetramers (maintaining relative orientation)
+            'radial',              # Radial movement preserving symmetry
+            'global_rotation',     # Rotate all tetramers around system center
+            'aggressive'           # Larger steps for escaping local minima
+        ], p=[0.99, 0.0025, 0.0025, 0.0025, 0.0025])
         
-        # Randomly select one tetramer from the list for this move
-        a_idx, b_idx, c_idx1, c_idx2 = tetramers[np.random.randint(len(tetramers))]
-        c_indices = [c_idx1, c_idx2]  # List of C particle indices for convenience
+        # Dynamic step sizes based on acceptance rate
+        # More sophisticated adaptation - separate translation and rotation
+        trans_base = self.tetramer_trans_step
+        rot_base = self.tetramer_rot_step
         
-        # Calculate adaptive step size for translation based on acceptance rate
-        # Adjustment factor scales between 0.5x and 2x, targeting self.target_acceptance
-        trans_adjust = np.clip(1.0 + 2.0 * (self.tet_trans_acc_rate - self.target_acceptance), 0.5, 2.0)
-        trans_step = self.tetramer_trans_step * trans_adjust  # Scale base step size
+        # Adjust based on acceptance rate, with wider range (0.3-3.0)
+        trans_adjust = np.clip(1.0 + 5.0 * (self.tet_trans_acc_rate - self.target_acceptance), 0.3, 2.0)
         
-        rot_step = self.tetramer_rot_step  * trans_adjust # Scale base rotation step (in radians)
+        if move_type == 'single_tetramer':
+            # Standard single tetramer move (enhanced)
+            return self._move_single_tetramer(new_pos, tetramers, trans_adjust, trans_base, rot_base)
+            
+        elif move_type == 'coordinated_pair':
+            # Move a pair of tetramers while maintaining their relative orientation
+            return self._move_tetramer_pair(new_pos, tetramers, trans_adjust, trans_base, rot_base)
+            
+        elif move_type == 'radial':
+            # Move preserving radial symmetry
+            return self._move_radial_symmetry(new_pos, tetramers, trans_adjust, trans_base)
+            
+        elif move_type == 'global_rotation':
+            # Global rotation around system center
+            return self._move_global_rotation(new_pos, tetramers, rot_base * trans_adjust)
+            
+        else:  # aggressive
+            # Aggressive move with larger steps - helps escape local minima
+            return self._move_single_tetramer(
+                new_pos, tetramers, 
+                trans_adjust * 2.0,  # Double the step size
+                trans_base, rot_base
+            )
+
+    def _move_single_tetramer(self, new_pos, tetramers, trans_adjust, trans_base, rot_base):
+        """Move a single tetramer with translation and rotation."""
+        # Select a random tetramer
+        tetramer_idx = np.random.randint(len(tetramers))
+        a_idx, b_idx, c_idx1, c_idx2 = tetramers[tetramer_idx]
+        c_indices = [c_idx1, c_idx2]
         
-        # Generate a random 3D displacement vector for translation
-        displacement = np.random.normal(0, trans_step, 3)  # Mean 0, std dev trans_step
+        # Independent translation and rotation with probability
+        if np.random.random() < 0.99:  # 80% chance of translation
+            # More efficient translation step
+            trans_step = trans_base * trans_adjust * np.random.uniform(0.7, 1.3)  # Add jitter
+            displacement = np.random.normal(0, trans_step, 3)
+            
+            # Apply translation
+            for part, idx in [('A', a_idx), ('B', b_idx)] + [('C', c_idx) for c_idx in c_indices]:
+                new_pos[part][idx] += displacement
+                # Improved boundary handling with periodic boundary conditions
+                new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
         
-        # Apply the same displacement to all tetramer components to maintain structure
-        for part, idx in [('A', a_idx), ('B', b_idx)] + [('C', c_idx) for c_idx in c_indices]:
-            new_pos[part][idx] += displacement  # Translate each particle
+        if np.random.random() < 0.99:  # 80% chance of rotation
+            # Collect tetramer coordinates
+            tetramer_coords = [
+                new_pos['A'][a_idx], 
+                new_pos['B'][b_idx], 
+                new_pos['C'][c_idx1], 
+                new_pos['C'][c_idx2]
+            ]
+            centroid = np.mean(tetramer_coords, axis=0)
+            
+            # Enhanced rotation with variable amplitude
+            rot_step = rot_base * trans_adjust * np.random.uniform(0.7, 1.3)  # Add jitter
+            rotation_axis = self._random_unit_vector()
+            rotation_angle = np.random.normal(0, rot_step)
+            rot_matrix = self._rotation_matrix(rotation_axis, rotation_angle)
+            
+            # Apply rotation
+            for part, idx in [('A', a_idx), ('B', b_idx)] + [('C', c_idx) for c_idx in c_indices]:
+                vec = new_pos[part][idx] - centroid
+                new_pos[part][idx] = centroid + rot_matrix @ vec
+                # Apply boundary conditions
+                new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
         
-        # Collect coordinates of the tetramer after translation for rotation
-        tetramer_coords = np.array([new_pos['A'][a_idx], new_pos['B'][b_idx]] + 
-                                [new_pos['C'][c_idx] for c_idx in c_indices])
-        
-        # Calculate the geometric center (centroid) of the tetramer
-        centroid = np.mean(tetramer_coords, axis=0)
-        
-        # Generate a random rotation axis (unit vector)
-        rotation_axis = np.random.randn(3)  # Random direction in 3D space
-        rotation_axis /= np.linalg.norm(rotation_axis)  # Normalize to ensure unit length
-        
-        # Generate a random rotation angle based on adaptive step size
-        rotation_angle = np.random.normal(0, rot_step)  # Angle in radians, mean 0, std dev rot_step
-        
-        # Compute the rotation matrix using a helper function (e.g., Rodrigues' formula)
-        rot_matrix = self._rotation_matrix(rotation_axis, rotation_angle)
-        
-        # Apply rotation about the centroid to all tetramer components
-        for part, idx in [('A', a_idx), ('B', b_idx)] + [('C', c_idx) for c_idx in c_indices]:
-            vec = new_pos[part][idx] - centroid  # Vector from centroid to particle
-            new_pos[part][idx] = centroid + rot_matrix @ vec  # Rotate and reposition
-            # Enforce boundary conditions to keep particles within the simulation box
-            new_pos[part][idx] = np.clip(new_pos[part][idx], 0, self.params.box_size)
-        
-        # Return the updated positions dictionary with the moved tetramer
         return new_pos
 
-    def _rotation_matrix(self, axis: np.ndarray, theta: float) -> np.ndarray:
-        """
-        Create 3D rotation matrix about arbitrary axis using Rodrigues' formula.
+    def _move_tetramer_pair(self, new_pos, tetramers, trans_adjust, trans_base, rot_base):
+        """Move a pair of tetramers while maintaining their relative orientation."""
+        if len(tetramers) < 2:
+            return self._move_single_tetramer(new_pos, tetramers, trans_adjust, trans_base, rot_base)
         
-        Args:
-            axis: Unit vector specifying rotation axis (3D np.array)
-            theta: Rotation angle in radians
+        # Select two tetramers
+        indices = np.random.choice(len(tetramers), size=2, replace=False)
+        
+        # Calculate centers of the tetramers
+        centers = []
+        tetramer_particles = []
+        
+        for idx in indices:
+            a_idx, b_idx, c_idx1, c_idx2 = tetramers[idx]
+            particles = [
+                ('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)
+            ]
+            tetramer_particles.append(particles)
             
-        Returns:
-            3x3 rotation matrix
+            coords = np.array([new_pos[p][i] for p, i in particles])
+            centers.append(np.mean(coords, axis=0))
+        
+        # Move both tetramers together
+        trans_step = trans_base * trans_adjust
+        displacement = np.random.normal(0, trans_step, 3)
+        
+        for particles in tetramer_particles:
+            for part, idx in particles:
+                new_pos[part][idx] += displacement
+                new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
+        
+        return new_pos
+
+    def _move_radial_symmetry(self, new_pos, tetramers, trans_adjust, trans_base):
+        """Move tetramers preserving radial symmetry."""
+        if len(tetramers) < 3:  # Need multiple tetramers for symmetry moves
+            return self._move_single_tetramer(new_pos, tetramers, trans_adjust, trans_base, self.tetramer_rot_step)
+        
+        # Calculate system center
+        all_coords = []
+        for type_name, positions_array in new_pos.items():
+            all_coords.extend(positions_array)
+        system_center = np.mean(all_coords, axis=0)
+        
+        # Randomly adjust the radial distance for all tetramers
+        radial_adjust = np.random.normal(0, trans_base * trans_adjust)
+        
+        for tetramer in tetramers:
+            a_idx, b_idx, c_idx1, c_idx2 = tetramer
+            particles = [('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)]
+            
+            for part, idx in particles:
+                vec = new_pos[part][idx] - system_center
+                distance = np.linalg.norm(vec)
+                if distance > 0:  # Avoid division by zero
+                    new_distance = max(0.1, distance + radial_adjust)
+                    scaling = new_distance / distance
+                    new_pos[part][idx] = system_center + vec * scaling
+                    new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
+        
+        return new_pos
+
+    def _move_global_rotation(self, new_pos, tetramers, rot_step):
+        """Apply a global rotation to all tetramers around the system center."""
+        # Calculate system center
+        all_coords = []
+        for type_name, positions_array in new_pos.items():
+            for pos in positions_array:
+                all_coords.append(pos)
+        system_center = np.mean(all_coords, axis=0)
+        
+        # Generate rotation
+        rotation_axis = self._random_unit_vector()
+        rotation_angle = np.random.normal(0, rot_step)
+        rotation_matrix = self._rotation_matrix(rotation_axis, rotation_angle)
+        
+        # Apply to all particles
+        for type_name in new_pos:
+            for i in range(len(new_pos[type_name])):
+                vec = new_pos[type_name][i] - system_center
+                new_pos[type_name][i] = system_center + rotation_matrix @ vec
+                new_pos[type_name][i] = np.mod(new_pos[type_name][i], self.params.box_size)
+        
+        return new_pos
+
+    def _random_unit_vector(self):
+        """Generate a random unit vector."""
+        vec = np.random.randn(3)
+        vec /= np.linalg.norm(vec) + 1e-10  # Add small epsilon to avoid division by zero
+        return vec
+
+    def _rotation_matrix(self, axis, theta):
         """
-        # Identity matrix
-        I = np.eye(3)
-        # Cross product matrix for axis
-        K = np.array([
-            [0, -axis[2], axis[1]],
-            [axis[2], 0, -axis[0]],
-            [-axis[1], axis[0], 0]
+        Create a 3D rotation matrix using Rodrigues' formula.
+        More numerically stable implementation.
+        """
+        axis = np.asarray(axis)
+        axis = axis / np.linalg.norm(axis)
+        a = np.cos(theta / 2.0)
+        b, c, d = -axis * np.sin(theta / 2.0)
+        
+        return np.array([
+            [a*a+b*b-c*c-d*d, 2*(b*c-a*d), 2*(b*d+a*c)],
+            [2*(b*c+a*d), a*a+c*c-b*b-d*d, 2*(c*d-a*b)],
+            [2*(b*d-a*c), 2*(c*d+a*b), a*a+d*d-b*b-c*c]
         ])
-        return I + np.sin(theta)*K + (1-np.cos(theta))*(K @ K)
         
     def calculate_tetramer_score(self, positions: Dict[str, np.ndarray], 
                                 tetramer: Tuple[int, ...], sig: Dict[str,float] = None) -> float:
