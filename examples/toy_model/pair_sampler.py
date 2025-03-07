@@ -92,7 +92,7 @@ class PairSampler(BaseMCSampler):
         total_score = exclusion_score + pairwise_score + prior_penalty
         return total_score, exclusion_score, pairwise_score, prior_penalty
 
-    def run_mc(self, n_steps: int = 50000, save_freq: int = 100) -> Tuple[Dict[str, np.ndarray], List[Dict], str]:
+    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, output_dir : str = "output_analysis/pairsampler_results/") -> Tuple[Dict[str, np.ndarray], List[Dict], str]:
         best_positions = None  # Will set on first improvement
         trajectory = []
         sigma_history = {key: [] for key in self.sigma}  # Pre-allocate sigma history
@@ -108,7 +108,7 @@ class PairSampler(BaseMCSampler):
         temperatures = initial_temp * np.exp(-cooling_factor * np.arange(n_steps))
 
         # Prepare output directories and files
-        output_dir = os.path.join("output_analysis", "pairsampler_results")
+        #output_dir = os.path.join("output_analysis", "pairsampler_results")
         os.makedirs(output_dir, exist_ok=True)
         csv_log_file = os.path.join(output_dir, "all_info_mcmc.csv")
 

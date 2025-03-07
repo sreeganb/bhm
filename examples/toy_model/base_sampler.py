@@ -118,7 +118,7 @@ class BaseMCSampler:
         log_min, log_max = np.log(min_sigma), np.log(max_sigma)
         
         current_val = sigma[pair_type]
-        base_step = min(0.1 * current_val, 0.02)
+        base_step = min(0.1 * current_val, 0.03)
         # Adaptive adjustment based on acceptance rate.
         adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.5, 2.0)
         step_size = base_step * adjustment
@@ -159,8 +159,8 @@ class BaseMCSampler:
     
     def save_state(
         self, step: int, positions: Dict[str, np.ndarray], sigma: Dict[str, float], 
-        total_score: float, prior_score: float, pair_score: float, exvol_score: float, tet_score: float = 0.0
-    ) -> Dict:
+        total_score: float, prior_score: float, pair_score: float, exvol_score: float, 
+        tet_score: float = 0.0, oct_score: float = 0.0) -> Dict:
         """Save the current state of the MCMC simulation with detailed score breakdown."""
         state = {
             "step": step,
@@ -171,6 +171,7 @@ class BaseMCSampler:
             "pair_score": pair_score,
             "exvol_score": exvol_score,
             "tet_score": tet_score,
+            "oct_score": oct_score,
             "types": {},
             "bead_numbers": {},
         }
@@ -192,6 +193,7 @@ class BaseMCSampler:
         group.attrs["pair_score"] = state["pair_score"]
         group.attrs["exvol_score"] = state["exvol_score"]
         group.attrs["tet_score"] = state["tet_score"]
+        group.attrs["oct_score"] = state["oct_score"]
 
         # Save sigma as a subgroup
         sigma_grp = group.create_group("sigma")

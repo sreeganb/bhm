@@ -219,7 +219,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
                             "covariances": gmm.covariances_.flatten().tolist(),
                             "weights": gmm.weights_.tolist(),
                         }
-                        json_filename = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_{chain_id}.json")
+                        json_filename = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_{sampler_name}_{chain_id}.json")
                         with open(json_filename, "w") as f:
                             json.dump(gmm_params, f, indent=4)
 
@@ -234,7 +234,8 @@ def main():
         os.makedirs(output_folder)
     #sampler_sequence = ["pair_sampler"]
     sampler_sequence = ["tetramer_sampler"]
-    burnin = 0.3
+    #sampler_sequence = ["octet_sampler"]
+    burnin = 0.4
     do_trace_plots = True  # Set to False to disable trace plots
     do_gmm_fits = True     # Set to False to disable GMM fitting
 

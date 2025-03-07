@@ -34,7 +34,7 @@ class TetramerSampler(BaseMCSampler):
 
         # Additional initialization for tetramer-specific features
         self.tetramer_trans_step = 0.4
-        self.tetramer_rot_step = 0.1
+        self.tetramer_rot_step = 0.15
         self.sigma_prior_dist = {}
         #-------------------------------------
         # tracking acceptance rates
@@ -165,7 +165,7 @@ class TetramerSampler(BaseMCSampler):
             total_negative_log_prior += -log_prior
         return total_negative_log_prior
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp=1.0) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp=0.80) -> List[Tuple[int, ...]]:
         """Efficient and robust tetramer selection. For this systems returns 8 tetramers."""
         
         a_positions = positions['A']
@@ -200,7 +200,7 @@ class TetramerSampler(BaseMCSampler):
         
         return tetramers
 #-----------------------------------------------------------------------  
-    def run_mc(self, n_steps: int = 50000, save_freq: int = 100) -> Tuple:
+    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, output_dir : str = "output_analysis/tetramersampler_results/") -> Tuple:
         """Monte Carlo sampling with tetramer moves."""
         best_positions = None
         trajectory = []
@@ -226,7 +226,7 @@ class TetramerSampler(BaseMCSampler):
         temperatures = initial_temp * np.exp(-cooling_factor * np.arange(n_steps))
 
         # Prepare output directories and files
-        output_dir = os.path.join("output_analysis", "tetramersampler_results")
+        #output_dir = os.path.join("output_analysis", "tetramersampler_results")
         os.makedirs(output_dir, exist_ok=True)
         csv_log_file = os.path.join(output_dir, "all_info_mcmc_tetramer.csv")
 
@@ -346,7 +346,7 @@ class TetramerSampler(BaseMCSampler):
             'radial',              # Radial movement preserving symmetry
             'global_rotation',     # Rotate all tetramers around system center
             'aggressive'           # Larger steps for escaping local minima
-        ], p=[0.99, 0.0025, 0.0025, 0.0025, 0.0025])
+        ], p=[0.99, 0.0015, 0.0025, 0.0015, 0.0035])
         
         # Dynamic step sizes based on acceptance rate
         # More sophisticated adaptation - separate translation and rotation

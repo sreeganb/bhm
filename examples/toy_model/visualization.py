@@ -53,7 +53,7 @@ def visualize_3d_configuration(positions, radii, title="System Configuration"):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     ax.set_title(title)
-    plt.show()
+    #plt.show()
     
 def visualize_trajectory(trajectory: List[Dict], box_size: float):
     """
@@ -95,7 +95,7 @@ def visualize_trajectory(trajectory: List[Dict], box_size: float):
 
     # Create the animation
     ani = FuncAnimation(fig, update, frames=len(trajectory), interval=100, blit=False)
-    plt.show()
+    #plt.show()
 
 
 from typing import List, Dict
@@ -202,7 +202,7 @@ def visualize_trajectory_plotly(trajectory: List[Dict], box_size: float, radii: 
     ]) for state in trajectory]
     fig.frames = frames
 
-    fig.show()
+    #fig.show()
 
 
 def visualize_distances(positions, radii):
@@ -247,7 +247,7 @@ def visualize_distances(positions, radii):
     plt.xlabel('Distance')
     plt.ylabel('Count')
     plt.legend()
-    plt.show()
+    #plt.show()
     
 def count_satisfied_restraints(positions, sigma=5.0):
     """
