@@ -3,19 +3,20 @@ from typing import Dict, List, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.spatial.transform import Rotation
-from parameters import SystemParameters
-from pair_sampler import PairSampler  # Assuming PairSampler is defined in pair_sampler.py
-from tetramer_sampler import TetramerSampler  # Assuming TetramerSampler is defined in tetramer_sampler.py
-from base_sampler import BaseMCSampler  # Assuming BaseMCSampler is defined in base_sampler.py
 import os
 import pandas as pd
+from scipy.spatial.transform import Rotation
+from toy_model.parameters import SystemParameters
+from toy_model.pair_sampler import PairSampler  # Assuming PairSampler is defined in pair_sampler.py
+from toy_model.tetramer_sampler import TetramerSampler  # Assuming TetramerSampler is defined in tetramer_sampler.py
+from toy_model.base_sampler import BaseMCSampler  # Assuming BaseMCSampler is defined in base_sampler.py
 
 @dataclass
 class PerturbedTetramerAnalysis:
     def __init__(self):
         """Initialize with system parameters and precompute constants."""
         params = SystemParameters()
+        print("reached after SystemParameters")
         self.ideal_coordinates = params.ideal_coordinates
         self.radii = params.radii
         self.pair_distances = params.pair_distances
@@ -28,17 +29,30 @@ class PerturbedTetramerAnalysis:
             tuple(sorted((comp1, comp2))): self.radii[comp1] + self.radii[comp2]
             for comp1 in self.radii for comp2 in self.radii
         }
-        # get ideal tetramers - crucially, these are based on IDEAL coordinates and remain fixed
-        self.t_sampler = TetramerSampler()
+        self.t_sampler = TetramerSampler(use_sigma_distribution = False, 
+                                         positions_ts = self.ideal_coordinates, 
+                                         sig_passed = self.sig, 
+                                         sig_range_passed = self.sigma_range)  # Initialize TetramerSampler
         self.ideal_tetramers = self.t_sampler.get_tetramers(self.ideal_coordinates)
         # Initialize PairSampler for pair scoring
-        self.ps = PairSampler()  # Assumes default initialization is valid
+        self.ps = PairSampler(use_def_sig_pos = False, sig_passed = self.sig, sig_range_passed = self.sigma_range,
+                              pos_passed = self.ideal_coordinates)  # Assumes default initialization is valid
         self.use_sigma_distribution = False  # Use fixed sigma
         # Precompute ideal score - score of the ideal coordinates and IDEAL tetramers
         self.ideal_score, ex_ideal, pair_ideal, tet_ideal = self.neg_log_posterior(self.ideal_coordinates,
                                                            self.ideal_tetramers, sig=self.sig)
         print(f"Ideal Score: {self.ideal_score}", f"ex_ideal: {ex_ideal}", f"pair_ideal: {pair_ideal}", f"tet_ideal: {tet_ideal}")
         print(f"Ideal Score: {self.ideal_score}")
+        # from the ideal coordinates, I want to parse out A-1, B-1, C-0 and C-1 coordinates
+        # pick out the coordinates of A-1, B-1, C-0, C-1 from the ideal coordinates
+        self.ideal_tetramer_coords = {
+        'A': np.array([self.ideal_coordinates['A'][0]]),      # First A particle
+        'B': np.array([self.ideal_coordinates['B'][0]]),      # First B particle
+        'C': np.array([self.ideal_coordinates['C'][0],        # First C particle
+                      self.ideal_coordinates['C'][1]])        # Second C particle
+        }
+        print("ideal_tetramer_coords :", self.ideal_tetramer_coords)
+        
         self.ideal_rmsd = 0.0
         self.ideal_accuracy = 1.0
 
@@ -97,18 +111,70 @@ class PerturbedTetramerAnalysis:
 
         return coords, overlap_exists
 
+    def calculate_rmsd_tetramer(self, ideal_coords: np.ndarray, aligned_coords: np.ndarray) -> float:
+        """
+        Compute the RMSD between the ideal and aligned perturbed coordinates for a tetramer.
+        
+        Parameters:
+            ideal_coords (np.ndarray): Ideal coordinates of shape (N, 3)
+            aligned_coords (np.ndarray): Aligned perturbed coordinates of shape (N, 3)
+            
+        Returns:
+            float: The RMSD value.
+        """
+        # Compute the difference for each coordinate
+        diff = ideal_coords - aligned_coords
+        # Compute the squared distance for each coordinate (summing over x, y, z)
+        squared_distances = np.sum(diff ** 2, axis=1)
+        # Compute the mean of the squared distances
+        mean_squared_distance = np.mean(squared_distances)
+        # Return the square root of the mean squared distance (RMSD)
+        return np.sqrt(mean_squared_distance)
+
     def calculate_rmsd(self, perturbed_coords: Dict[str, np.ndarray]) -> float:
-        """Calculate RMSD between perturbed and ideal coordinates using Kabsch algorithm for optimal rotation."""
-        keys = sorted(self.ideal_coordinates.keys())
-        ideal_flat = np.concatenate([self.ideal_coordinates[k] for k in keys])
-        perturbed_flat = np.concatenate([perturbed_coords[k] for k in keys])
-        ideal_centroid = np.mean(ideal_flat, axis=0)
-        perturbed_centroid = np.mean(perturbed_flat, axis=0)
-        ideal_centered = ideal_flat - ideal_centroid
-        perturbed_centered = perturbed_flat - perturbed_centroid
-        rot = Rotation.align_vectors(perturbed_centered, ideal_centered)[0] # Kabsch algorithm
-        aligned_perturbed = rot.apply(perturbed_centered) # Rotate perturbed coordinates to best align with ideal
-        return np.sqrt(np.mean(np.sum((ideal_centered - aligned_perturbed) ** 2, axis=1))) # Calculate RMSD
+        """Calculate the total RMSD over tetramers between perturbed and ideal coordinates.
+        
+        For each tetramer, the ideal and perturbed coordinates are centered,
+        aligned using the Kabsch algorithm, and then their RMSD is computed.
+        The final RMSD is the sum over all tetramers.
+        """
+        total_rmsd = 0.0
+        tetramers = self.t_sampler.get_tetramers(perturbed_coords)
+        
+        # Loop over each tetramer defined by indices (a_idx, b_idx, c1_idx, c2_idx)
+        for tetramer in tetramers:
+            a_idx, b_idx, c1_idx, c2_idx = tetramer
+            # Build perturbed tetramer coordinates dictionary
+            perturbed_tetramer = {
+                'A': np.array([perturbed_coords['A'][a_idx]]),
+                'B': np.array([perturbed_coords['B'][b_idx]]),
+                'C': np.array([perturbed_coords['C'][c1_idx], perturbed_coords['C'][c2_idx]])
+            }
+            
+            # Get the ideal tetramer coordinates.
+            # It is assumed that self.ideal_tetramer_coords is a dictionary with keys 'A', 'B', and 'C'
+            ideal_tetramer = self.ideal_tetramer_coords
+            
+            # Flatten the coordinates in a consistent order by sorting the keys.
+            ideal_flat = np.concatenate([ideal_tetramer[k] for k in sorted(ideal_tetramer.keys())])
+            perturbed_flat = np.concatenate([perturbed_tetramer[k] for k in sorted(perturbed_tetramer.keys())])
+            
+            # Center both sets by subtracting their centroids
+            ideal_centroid = np.mean(ideal_flat, axis=0)
+            perturbed_centroid = np.mean(perturbed_flat, axis=0)
+            ideal_centered = ideal_flat - ideal_centroid
+            perturbed_centered = perturbed_flat - perturbed_centroid
+            
+            # Use the Kabsch algorithm to align perturbed tetramer to ideal tetramer
+            rot = Rotation.align_vectors(perturbed_centered, ideal_centered)[0]
+            aligned_perturbed = rot.apply(perturbed_centered)
+            
+            # Compute RMSD for this tetramer (calculate_rmsd_tetramer is assumed to be defined)
+            tet_rmsd = self.calculate_rmsd_tetramer(ideal_centered, aligned_perturbed)
+            total_rmsd += tet_rmsd
+
+        return total_rmsd
+
 
     def calculate_tetramer_score(self, positions: Dict[str, np.ndarray],
                                  tetramer: Tuple[int, ...], sig: Dict[str, float]) -> float:

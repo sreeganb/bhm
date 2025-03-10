@@ -17,7 +17,11 @@ class PairSampler(BaseMCSampler):
     Includes run_mc method.
     """
     def __init__(self, use_sigma_distribution=False,
-                 ex_weight: float = 1.0, pair_weight: float = 1.0):
+                 ex_weight: float = 1.0, pair_weight: float = 1.0, 
+                 use_def_sig_pos : bool = True, 
+                 sig_passed: Dict[str, float] = None, 
+                 sig_range_passed: Dict[str, Tuple[float, float]] = None,
+                 pos_passed: Dict[str, np.ndarray] = None):
         super().__init__()  # Call BaseMCSampler constructor
         self.use_sigma_distribution = use_sigma_distribution
         self.exclusion_weight = ex_weight
@@ -26,10 +30,17 @@ class PairSampler(BaseMCSampler):
         if not self.use_sigma_distribution:
             self.priors = Priors("jeffreys")  # Initialize priors
 
-        # Initialize sigma, sigma_range, and priors.
-        self.sigma, self.sigma_range = self.initialize_sigma()
-        self.positions = self.initialize_positions()  # Initialize positions
-        visualize_3d_configuration(self.positions, self.params.radii)  # Visualize initial configuration        
+        if use_def_sig_pos:
+            # Initialize sigma, sigma_range, and priors.
+            self.sigma, self.sigma_range = self.initialize_sigma()
+            self.positions_ps = self.initialize_positions()  # Initialize positions
+            visualize_3d_configuration(self.positions_ps, self.params.radii)  # Visualize initial configuration
+            print("PairSampler initialized with default sigma values.")
+        else:
+            self.sigma = sig_passed
+            self.sigma_range = sig_range_passed
+            self.positions_ps = pos_passed
+            print("PairSampler initialized with passed sigma values.")        
 
     def calculate_score(
         self,
@@ -66,12 +77,13 @@ class PairSampler(BaseMCSampler):
                     mask = np.triu(np.ones_like(score_matrix), k=1)
                     score_matrix *= mask
 
-                # Zero out excluded pairs if provided
+                # excluded pairs should not be considered, so set their score to a large value to avoid selection
                 if excluded_pairs:
                     for i in range(len(pos[type1])):
                         for j in range(len(pos[type2])):
                             if (type1, i, type2, j) in excluded_pairs:
-                                score_matrix[i, j] = 0
+                                #score_matrix[i, j] = 0
+                                score_matrix[i, j] = 99999999.0  # Set to high value to avoid selection
 
                 # Identify minimal row/column pairs and accumulate the score
                 row_indices = np.argmin(score_matrix, axis=1)
@@ -98,7 +110,7 @@ class PairSampler(BaseMCSampler):
         sigma_history = {key: [] for key in self.sigma}  # Pre-allocate sigma history
 
         # Initial score calculation
-        current_score, _, _, _ = self.calculate_score(self.positions, self.sigma, self.sigma_range)
+        current_score, _, _, _ = self.calculate_score(self.positions_ps, self.sigma, self.sigma_range)
         best_score = float('inf')  # Initialize high to ensure first improvement updates
 
         # Pre-calculate temperature schedule
@@ -125,10 +137,10 @@ class PairSampler(BaseMCSampler):
 
             # Propose move: position move or sigma move
             if move_type_is_position:
-                proposed_positions = self.propose_position_move(self.positions)
+                proposed_positions = self.propose_position_move(self.positions_ps)
                 proposed_sigma = self.sigma  # use current sigma (by reference)
             else:
-                proposed_positions = self.positions  # positions remain unchanged
+                proposed_positions = self.positions_ps  # positions remain unchanged
                 proposed_sigma, pair_type = self.propose_sigma_move(self.sigma)
 
             # Calculate proposed score
@@ -140,14 +152,14 @@ class PairSampler(BaseMCSampler):
             # Metropolis criterion
             acceptance = 0
             if delta_e < 0 or np.random.random() < np.exp(-delta_e / temp):
-                self.positions = proposed_positions
+                self.positions_ps = proposed_positions
                 self.sigma = proposed_sigma
                 current_score = proposed_score
                 accepted_moves += 1
                 acceptance = 1
                 if current_score < best_score:
                     best_score = current_score
-                    best_positions = {k: v.copy() for k, v in self.positions.items()}
+                    best_positions = {k: v.copy() for k, v in self.positions_ps.items()}
 
             # Batch logging and saving trajectory
             if step % save_freq == 0:
@@ -159,7 +171,7 @@ class PairSampler(BaseMCSampler):
                 # Append current state with detailed score breakdown.
                 trajectory.append(
                     self.save_state(
-                        step, self.positions, self.sigma, current_score,
+                        step, self.positions_ps, self.sigma, current_score,
                         prior_score=curr_prior,
                         pair_score=curr_pair,
                         exvol_score=curr_excl

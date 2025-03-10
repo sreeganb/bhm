@@ -11,6 +11,7 @@ import os
 import random
 import re
 import pickle
+import h5py
 from typing import List, Dict, Tuple, Optional
 from base_sampler import BaseMCSampler, Priors  # Import BaseMCSampler and related classes
 from parameters import SystemParameters
@@ -25,12 +26,21 @@ class TetramerSampler(BaseMCSampler):
     Sampler for Tetramer-level interactions, inheriting from BaseMCSampler.
     Includes run_mc method.
     """
-    def __init__(self, use_sigma_distribution=False):
+    def __init__(self, use_sigma_distribution=False, positions_ts: Dict[str, np.ndarray] = None, 
+                 sig_passed : Dict[str, float] = None, sig_range_passed : Dict[str, Tuple[float, float]] = None):
         super().__init__()  # Call BaseMCSampler constructor
         self.use_sigma_distribution = use_sigma_distribution
+        
         self.params = SystemParameters()  # Initialize system parameters
-        self.positions = self.initialize_positions() # Initialize positions
-        self.ps = PairSampler() # Initialize PairSampler
+        if positions_ts is None:
+            #self.positions_ts = self.initialize_positions() # Initialize positions
+            self.positions_ts = self.get_positions() # Get positions from the trajectory
+            visualize_3d_configuration(self.positions_ts, self.params.radii)  # Visualize initial configuration
+            print("using the positions from the trajectory")
+        else:
+            print("using the passed in positions: ", positions_ts)
+            self.positions_ts = positions_ts
+            visualize_3d_configuration(self.positions_ts, self.params.radii)  # Visualize initial configuration
 
         # Additional initialization for tetramer-specific features
         self.tetramer_trans_step = 0.4
@@ -60,10 +70,11 @@ class TetramerSampler(BaseMCSampler):
                     match = pattern.match(filename)
                     if match:
                         chain_numbers.add(int(match.group(2)))
-                        print("chain numbers: ", chain_numbers)
+                        #print("chain numbers: ", chain_numbers)
 
                 if chain_numbers:  # Check if any chains were found
                     selected_chain = random.choice(list(chain_numbers))
+                    self.sel_chain_number = selected_chain
                     self.gmm_params = {}  # Store parameters in an instance variable
                     for sigma_type in ["AA", "AB", "BC", "CC"]:
                         json_path = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_{sampler_name}_chain_{selected_chain}.json")
@@ -89,10 +100,20 @@ class TetramerSampler(BaseMCSampler):
             self.sigma = self.initialize_sigma_from_gmm()
             self.sigma_range = None  # Not used in this case
         else:
-            # Normal PairSampler initialization logic
-            self.sigma, self.sigma_range = self.initialize_sigma()  # Initialize sigma values from BaseMCSampler
-            self.base_priors = Priors("jeffreys")  # Initialize priors
-            print("Using default sigma initialization (no GMM).")
+            if sig_passed is not None:
+                self.sigma = sig_passed
+                self.sigma_range = sig_range_passed
+                print("using the passed in values of sigma and sigma range")
+            else:
+                # Normal PairSampler initialization logic
+                self.sigma, self.sigma_range = self.initialize_sigma()  # Initialize sigma values from BaseMCSampler
+                self.base_priors = Priors("jeffreys")  # Initialize priors
+                print("Using default sigma initialization (no GMM).")
+        
+        print("before pair sampler call")
+        self.ps = PairSampler(use_def_sig_pos = False, sig_passed = self.sigma, sig_range_passed = self.sigma_range,
+                              pos_passed = self.positions_ts)
+        print("after pair sampler call")
 
     def initialize_sigma_from_gmm(self):
         """
@@ -133,28 +154,41 @@ class TetramerSampler(BaseMCSampler):
         return sigma
     
     def get_positions(self) -> Dict[str, np.ndarray]:
-        """Read the positions from trajectory file and return them as a dictionary."""
-        traj_loc = "output_analysis/pairsampler_results"
-        # check files in this folder which are of the form trajectory_PairSampler_chain_1.h5
-        # and get the list of chain numbers 
+        """Read the positions from a trajectory file and return them as a dictionary,
+        selecting a random frame from the last 10% (assumed equilibrated frames)."""
+        cwd = os.getcwd()
+        # Directory where the pairsampler trajectory files are stored
+        traj_loc = os.path.join(cwd, "output_analysis/pairsampler_results")
+        # Collect chain numbers from filenames of the form "trajectory_PairSampler_chain_#.h5"
         chain_numbers = []
         for filename in os.listdir(traj_loc):
-            if filename.startswith("trajectory_PairSampler_chain_") and filename.endswith(".h5"):
+            if filename.startswith("trajectory_chain_") and filename.endswith(".h5"):
                 chain_numbers.append(int(filename.split("_")[-1].split(".")[0]))
         chain_numbers.sort()
-        # select a random chain_number 
+        # Choose a random chain
         cnum = random.choice(chain_numbers)
-        # add the proper file location 
-        filename = traj_loc + f"/trajectory_PairSampler_chain_{cnum}.h5"
-        # read the file and choose a random frame 
-        with pd.HDFStore(filename, 'r') as store:
-            keys = store.keys()
-            key = random.choice(keys)
-            df = store[key]
-        # get the positions from the dataframe
-        positions = {}
-        for part in ['A', 'B', 'C']:
-            positions[part] = df[[f'{part}_x', f'{part}_y', f'{part}_z']].values
+        print("selected chain: ", cnum)
+        # Construct full path to file
+        filename = os.path.join(traj_loc, f"trajectory_chain_{cnum}.h5")
+        
+        # Open the HDF5 file and pick a random frame from the last 10% of frames.
+        with h5py.File(filename, 'r') as f:
+            traj_grp = f['trajectory']
+            keys = list(traj_grp.keys())
+            keys.sort()  # Assumes keys are zero-padded (e.g., "state_00000")
+            n = len(keys)
+            n_equil = max(1, int(0.1 * n))  # Last 10% of frames; ensure at least one frame
+            equil_keys = keys[-n_equil:]
+            key = random.choice(equil_keys)
+            print("selected frame: ", key)
+            state_grp = traj_grp[key]
+            
+            # Build a dictionary of positions for parts A, B, C from the chosen frame
+            positions = {}
+            pos_grp = state_grp['positions']
+            for type_name in pos_grp:
+                positions[type_name] = pos_grp[type_name][:]
+        
         return positions
     
     def _calculate_gmm_log_prob(self, sigma_value: float, pair_type: str) -> float:
@@ -190,7 +224,7 @@ class TetramerSampler(BaseMCSampler):
             total_negative_log_prior += -log_prior
         return total_negative_log_prior
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp=0.80) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp=0.60) -> List[Tuple[int, ...]]:
         """Efficient and robust tetramer selection. For this systems returns 8 tetramers."""
         
         a_positions = positions['A']
@@ -238,8 +272,8 @@ class TetramerSampler(BaseMCSampler):
             prior_penalty = self.base_priors.neg_log_prior(self.sigma, self.sigma_range)
 
         # Initial score calculation
-        current_score, curr_ex, curr_pair, curr_tet  = self.neg_log_posterior(self.positions,
-                                            self.get_tetramers(self.positions),
+        current_score, curr_ex, curr_pair, curr_tet  = self.neg_log_posterior(self.positions_ts,
+                                            self.get_tetramers(self.positions_ts),
                                             prior_penalty, self.sigma)
         curr_prior = prior_penalty
         best_score = current_score  # Initialize with the initial score
@@ -269,15 +303,15 @@ class TetramerSampler(BaseMCSampler):
                                         p=[0.4, 0.1, 0.5])
 
             if move_type == 'position':
-                proposed_positions = self.propose_position_move(self.positions)
+                proposed_positions = self.propose_position_move(self.positions_ts)
                 proposed_sigma = self.sigma
             elif move_type == 'sigma':
-                proposed_positions = self.positions
+                proposed_positions = self.positions_ts
                 proposed_sigma, pair_type = self.propose_sigma_move(self.sigma)
             else:  # tetramer move
                 tet_moves += 1
                 self.tet_trans_acc_rate = tet_accepted / max(1, tet_moves)
-                proposed_positions = self.propose_tetramer_move(self.positions)
+                proposed_positions = self.propose_tetramer_move(self.positions_ts)
                 proposed_sigma = self.sigma
             
             new_prior_penalty = 0.0
@@ -294,7 +328,7 @@ class TetramerSampler(BaseMCSampler):
             delta_e = proposed_score - current_score
             acceptance = 0
             if delta_e < 0 or np.random.random() < np.exp(-delta_e / temp):
-                self.positions = proposed_positions
+                self.positions_ts = proposed_positions
                 self.sigma = proposed_sigma
                 current_score = proposed_score
                 curr_ex = prop_ex
@@ -309,7 +343,7 @@ class TetramerSampler(BaseMCSampler):
 
                 if current_score < best_score:
                     best_score = current_score
-                    best_positions = {k: v.copy() for k, v in self.positions.items()}
+                    best_positions = {k: v.copy() for k, v in self.positions_ts.items()}
             
             # Batch logging and saving trajectory
             if step % save_freq == 0:
@@ -321,7 +355,7 @@ class TetramerSampler(BaseMCSampler):
                 # Append current state with detailed score breakdown.
                 trajectory.append(
                     self.save_state(
-                        step, self.positions, self.sigma, current_score,
+                        step, self.positions_ts, self.sigma, current_score,
                         prior_score=curr_prior,
                         pair_score=curr_pair,
                         exvol_score=curr_ex,
@@ -371,7 +405,7 @@ class TetramerSampler(BaseMCSampler):
             'radial',              # Radial movement preserving symmetry
             'global_rotation',     # Rotate all tetramers around system center
             'aggressive'           # Larger steps for escaping local minima
-        ], p=[0.99, 0.0015, 0.0025, 0.0015, 0.0035])
+        ], p=[0.99, 0.0015, 0.0025, 0.0015, 0.0045])
         
         # Dynamic step sizes based on acceptance rate
         # More sophisticated adaptation - separate translation and rotation
