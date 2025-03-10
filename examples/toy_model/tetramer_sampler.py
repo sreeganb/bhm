@@ -132,6 +132,31 @@ class TetramerSampler(BaseMCSampler):
 
         return sigma
     
+    def get_positions(self) -> Dict[str, np.ndarray]:
+        """Read the positions from trajectory file and return them as a dictionary."""
+        traj_loc = "output_analysis/pairsampler_results"
+        # check files in this folder which are of the form trajectory_PairSampler_chain_1.h5
+        # and get the list of chain numbers 
+        chain_numbers = []
+        for filename in os.listdir(traj_loc):
+            if filename.startswith("trajectory_PairSampler_chain_") and filename.endswith(".h5"):
+                chain_numbers.append(int(filename.split("_")[-1].split(".")[0]))
+        chain_numbers.sort()
+        # select a random chain_number 
+        cnum = random.choice(chain_numbers)
+        # add the proper file location 
+        filename = traj_loc + f"/trajectory_PairSampler_chain_{cnum}.h5"
+        # read the file and choose a random frame 
+        with pd.HDFStore(filename, 'r') as store:
+            keys = store.keys()
+            key = random.choice(keys)
+            df = store[key]
+        # get the positions from the dataframe
+        positions = {}
+        for part in ['A', 'B', 'C']:
+            positions[part] = df[[f'{part}_x', f'{part}_y', f'{part}_z']].values
+        return positions
+    
     def _calculate_gmm_log_prob(self, sigma_value: float, pair_type: str) -> float:
         """
         Calculates the log probability density of a GMM for a *single* sigma value,
