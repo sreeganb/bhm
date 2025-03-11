@@ -10,14 +10,14 @@ from parameters import SystemParameters
 from base_sampler import BaseMCSampler
 from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
-#from octamer_sampler import OctamerSampler
+from octet_sampler import OctetSampler
 from visualization import visualize_3d_configuration, visualize_trajectory_plotly
 #from graph_results import SigmaAnalyzer
 
 SAMPLER_MAP = {
     "PairSampler": PairSampler,
     "TetramerSampler": TetramerSampler,
-#    "OctamerSampler": OctamerSampler, # Uncomment when OctamerSampler is implemented
+    "OctetSampler": OctetSampler, # Uncomment when OctamerSampler is implemented
 }
 
 def run_hierarchical_sampling(
@@ -42,8 +42,8 @@ def run_hierarchical_sampling(
         output_folder = os.path.join(output_folder, "pairsampler_results")
     elif sampler_class == TetramerSampler:
         output_folder = os.path.join(output_folder, "tetramersampler_results")
-#    elif sampler_class == OctamerSampler:
-#        output_folder = os.path.join(output_folder, "octamersampler_results")
+    elif sampler_class == OctetSampler:
+        output_folder = os.path.join(output_folder, "octetsampler_results")
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
@@ -102,19 +102,21 @@ def main():
             "save_freq": 300,
         },
         "tetramer_sampler": {
-            "run": True,
+            #"run": True,
+            "run": False,
             "n_chains": 3,
             "n_steps": 10000,
             "save_freq": 100,
             "use_sigma_dist": True, # Example of sampler-specific parameter
-        }#,
-        # "octamer_sampler": { # Example configuration for OctamerSampler
-        #     "run": True,
-        #     "n_chains": 1,
-        #     "n_steps": 500000,
-        #     "save_freq": 250,
-        #     "read_pos": False,
-        # },
+        },
+         "octet_sampler": { # Example configuration for OctamerSampler
+             "run": True,
+             "n_chains": 3,
+             "n_steps": 10000,
+             "save_freq": 100,
+             "use_sigma_dist": True #, # Example of sampler-specific parameter
+             #"read_pos": False,
+         }
     }
 
     output_folder = "output_analysis"
@@ -123,7 +125,8 @@ def main():
 
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
     #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
-    sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
 
     for sampler_key in sampler_sequence:

@@ -226,7 +226,7 @@ class OctetSampler(BaseMCSampler):
             'radial',             # Radial movement preserving symmetry
             'global_rotation',    # Rotate all octets around system center
             'aggressive'          # Larger steps for escaping local minima
-        ], p=[0.94, 0.02, 0.02, 0.01, 0.01])
+        ], p=[0.96, 0.01, 0.01, 0.01, 0.01])
         
         # Dynamic step sizes based on acceptance rate
         trans_base = self.octet_trans_step
