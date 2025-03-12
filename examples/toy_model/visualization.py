@@ -53,7 +53,7 @@ def visualize_3d_configuration(positions, radii, title="System Configuration"):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     ax.set_title(title)
-    plt.show()
+    #plt.show()
     
 def visualize_trajectory(trajectory: List[Dict], box_size: float):
     """

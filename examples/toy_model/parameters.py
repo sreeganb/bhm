@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 @dataclass
 class SystemParameters:
-    box_size: float = 300.0
+    box_size: float = 500.0
     radii: Dict[str, float] = None
     pair_distances: Dict[str, float] = None
     component_counts: Dict[str, int] = None

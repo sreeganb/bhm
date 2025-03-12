@@ -60,7 +60,6 @@ def fit_gmm(data: np.ndarray, max_components: int = 5):
 
     return best_gmm
 
-
 def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_name: str, output_dir: str, pdf: PdfPages):
     """Plots combined GMM fits for all chains of a single sigma component."""
 
@@ -87,7 +86,6 @@ def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_n
     pdf.savefig()  # Save to PDF
     plt.savefig(os.path.join(output_dir, f"gmm_combined_plot_{sigma_type}_{sampler_name}.png"))
     plt.close()
-
 
 def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3, do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
@@ -134,7 +132,6 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
                 all_scores['pair_score'][level_name].append(state['pair_score'])
                 all_scores['exvol_score'][level_name].append(state['exvol_score'])
 
-
     # --- Trace Plots and R-hat (if requested) ---
     if do_trace_plots:
         pdf_filename_trace = os.path.join(sampler_output_dir, f"{sampler_name}_report.pdf")
@@ -142,6 +139,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
             sns.set(style="darkgrid")
             palette = sns.color_palette("husl", 4)
 
+            # --- Sigma trace plots ---
             for chain_idx, chain_id in enumerate(all_sigma_histories):
                 plt.figure(figsize=(12, 8))
                 for i, sigma_type in enumerate(["AA", "AB", "BC", "CC"]):
@@ -158,6 +156,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
                 plt.savefig(os.path.join(sampler_output_dir, f'trace_sigma_combined_chain{chain_idx}_{sampler_name}.png'))
                 plt.close()
 
+            # --- Score plots ---
             for score_type in all_scores:
                 plt.figure(figsize=(12, 8))
                 for chain_id in all_scores[score_type]:
@@ -173,29 +172,54 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
                 plt.savefig(os.path.join(sampler_output_dir, f'score_vs_frame_{score_type}_{sampler_name}.png'))
                 plt.close()
 
-        print(f"\nR-hat Statistics for Sigma Components ({sampler_name}):")
-        rhat_values = {}
-        rhat_filename = os.path.join(sampler_output_dir, f"rhat_statistics_{sampler_name}.txt")
+            print(f"\nR-hat Statistics for Sigma Components ({sampler_name}):")
+            rhat_values = {}
+            rhat_filename = os.path.join(sampler_output_dir, f"rhat_statistics_{sampler_name}.txt")
 
-        combined_sigma_data = defaultdict(list)
-        for chain_data in all_sigma_histories.values():
-            for sigma_type, values in chain_data.items():
-                combined_sigma_data[sigma_type].append(values)
+            combined_sigma_data = defaultdict(list)
+            for chain_data in all_sigma_histories.values():
+                for sigma_type, values in chain_data.items():
+                    combined_sigma_data[sigma_type].append(values)
 
-        with open(rhat_filename, 'w') as f:
-            f.write(f"R-hat Statistics for Sigma Components ({sampler_name}):\n")
-            for sigma_type, histories in combined_sigma_data.items():
-                if len(histories) >= 2:
-                    r_hat = az.rhat(np.array(histories))
-                    rhat_values[sigma_type] = r_hat
-                    print(f"  {sigma_type}: {r_hat:.3f}")
-                    f.write(f"  {sigma_type}: {r_hat:.3f}\n")
-                else:
-                    print(f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s)).")
-                    f.write(f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s)).\n")
-                    rhat_values[sigma_type] = None
-        print(f"R-hat statistics saved to: {rhat_filename}")
+            with open(rhat_filename, 'w') as f:
+                f.write(f"R-hat Statistics for Sigma Components ({sampler_name}):\n")
+                for sigma_type, histories in combined_sigma_data.items():
+                    if len(histories) >= 2:
+                        r_hat = az.rhat(np.array(histories))
+                        rhat_values[sigma_type] = r_hat
+                        print(f"  {sigma_type}: {r_hat:.3f}")
+                        f.write(f"  {sigma_type}: {r_hat:.3f}\n")
+                    else:
+                        print(f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s)).")
+                        f.write(f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s)).\n")
+                        rhat_values[sigma_type] = None
+            print(f"R-hat statistics saved to: {rhat_filename}")
 
+            # --- Add R-hat table to the same PDF ---
+            fig, ax = plt.subplots(figsize=(6, 2 + 0.3*len(rhat_values)))  # Adjust figure size to fit the table
+            fig.suptitle(f"R-hat Values for Sigma Components ({sampler_name})", fontsize=14)
+            ax.axis('off')
+
+            # Build table data
+            header = ["Sigma Type", "R-hat"]
+            rows = []
+            for sigma_type, r_hat in rhat_values.items():
+                # Format r_hat as a float; handle the None case with 'N/A'
+                val_str = f"{r_hat:.3f}" if r_hat is not None else "N/A"
+                rows.append([sigma_type, val_str])
+
+            # Create table in the axes
+            table = ax.table(
+                cellText=rows,
+                colLabels=header,
+                loc='center'
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(10)
+            table.scale(1, 1.5)
+
+            pdf.savefig(fig)
+            plt.close(fig)
 
     # --- GMM Fits and Plots (if requested) ---
     if do_gmm_fits:
