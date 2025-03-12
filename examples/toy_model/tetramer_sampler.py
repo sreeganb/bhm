@@ -33,7 +33,7 @@ class TetramerSampler(BaseMCSampler):
         self.use_sigma_distribution = use_sigma_distribution
         
         # Initialize features for tetramer-specific sampling
-        self.tetramer_trans_step = 0.1
+        self.tetramer_trans_step = 0.25
         self.tetramer_rot_step = 0.1
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
@@ -268,7 +268,7 @@ class TetramerSampler(BaseMCSampler):
             
         return -np.sum(valid_priors)
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.80) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.95) -> List[Tuple[int, ...]]:
         """Optimized tetramer selection with vectorized operations and robust error handling."""
         try:
             # Ensure positions exist for all required components
@@ -330,8 +330,11 @@ class TetramerSampler(BaseMCSampler):
             print(f"Error generating tetramers: {e}")
             return []  # Return empty list on error for graceful failure
 #-----------------------------------------------------------------------  
-    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, output_dir: str = "output_analysis/tetramersampler_results/") -> Tuple:
-        """Monte Carlo sampling with tetramer moves and efficient caching."""
+    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, 
+            output_dir: str = "output_analysis/tetramersampler_results/") -> Tuple:
+        """Monte Carlo sampling with tetramer moves and efficient caching.
+        Runs until n_steps accepted moves (Markov chain steps) are completed.
+        Overlap checking has been removed."""
         # Pre-allocate memory for results & tracking
         best_positions = None
         best_score = float('inf')
@@ -341,7 +344,13 @@ class TetramerSampler(BaseMCSampler):
         # Setup output directory and file handles
         os.makedirs(output_dir, exist_ok=True)
         csv_log_file = os.path.join(output_dir, "all_info_mcmc_tetramer.csv")
+        debug_file = os.path.join(output_dir, "debug_mcmc.txt")
         csv_buffer = []  # Buffer for delayed CSV writes
+        
+        # Debug file setup 
+        with open(debug_file, "w") as f:
+            f.write("# TetramerSampler MCMC Debug Log\n")
+            f.write("# Overlap checking has been removed\n\n")
         
         # Initialize counters with pre-allocation
         moves_counts = {'position': 0, 'sigma': 0, 'tetramer': 0}
@@ -352,8 +361,9 @@ class TetramerSampler(BaseMCSampler):
             f.write("Step,Prior,Exvol_score,Pair_score,Tet_score,Score,Accepted\n")
         
         # Temperature schedule calculation (vectorized)
+        # Changed to use accepted_moves rather than total iterations
         cooling_factor = -np.log(1.0/5.0) / n_steps
-        get_temp = lambda step: 5.0 * np.exp(-cooling_factor * step)  # On-demand temp calculation
+        get_temp = lambda accepted_moves: 5.0 * np.exp(-cooling_factor * accepted_moves)
         
         # Calculate initial state with caching
         current_tetramers = self.get_tetramers(self.positions_ts)
@@ -361,6 +371,12 @@ class TetramerSampler(BaseMCSampler):
                         else self.base_priors.neg_log_prior(self.sigma, self.sigma_range))
         current_score, curr_ex, curr_pair, curr_tet = self.neg_log_posterior(
             self.positions_ts, current_tetramers, prior_penalty, self.sigma)
+        
+        # Debug initial scores
+        with open(debug_file, "a") as f:
+            f.write(f"INITIAL STATE\n")
+            f.write(f"Initial Score: {current_score:.1f}, ExVol: {curr_ex:.3f}, ")
+            f.write(f"Pair: {curr_pair:.1f}, Tet: {curr_tet:.1f}, Prior: {prior_penalty:.1f}\n\n")
         
         # Store initial sigma values
         for i, (key, value) in enumerate(self.sigma.items()):
@@ -371,13 +387,20 @@ class TetramerSampler(BaseMCSampler):
         move_types = ['position', 'sigma', 'tetramer']
         
         # Progress reporting setup
-        print_freq = max(1, min(n_steps // 20, 1000))  # Reasonable progress updates
+        print_freq = max(1, min(n_steps // 20, 1000))
         
-        for step in range(n_steps):
-            # Temperature calculation on-demand
-            temp = get_temp(step)
+        # Modified loop to run until we have n_steps accepted moves
+        accepted_moves = 0
+        total_moves = 0
+        max_iterations = n_steps * 50  # Safety cap
+        
+        while accepted_moves < n_steps and total_moves < max_iterations:
+            total_moves += 1
             
-            # Fast random move selection with pre-allocated arrays
+            # Temperature based on accepted moves, not iterations
+            temp = get_temp(accepted_moves)
+            
+            # Fast random move selection
             move_type = move_types[np.random.choice(3, p=move_probs)]
             moves_counts[move_type] += 1
             
@@ -388,8 +411,8 @@ class TetramerSampler(BaseMCSampler):
                 proposed_sigma = self.sigma  # No change, just reference
             elif move_type == 'sigma':
                 proposed_positions = self.positions_ts  # No change, just reference
-                proposed_sigma, _ = self.propose_sigma_move(self.sigma)
-                cached_tetramers = current_tetramers  # Can reuse tetramers for sigma-only moves
+                proposed_sigma, changed_pair_type = self.propose_sigma_move(self.sigma)
+                cached_tetramers = current_tetramers  # Reuse tetramers for sigma-only moves
             else:  # tetramer move
                 proposed_positions = self.propose_tetramer_move(self.positions_ts)
                 proposed_sigma = self.sigma  # No change, just reference
@@ -410,69 +433,78 @@ class TetramerSampler(BaseMCSampler):
             delta_e = proposed_score - current_score
             accept_move = delta_e < 0 or np.random.random() < np.exp(-delta_e / max(temp, 1e-10))
             
-            # Update state if accepted (minimize copying)
+            # Debug logging (simplified, overlap info removed)
+            if total_moves % 1000 == 0:
+                with open(debug_file, "a") as f:
+                    f.write(f"\nSUMMARY at move {total_moves}:\n")
+                    f.write(f"- Accepted moves: {accepted_moves}/{n_steps}\n")
+                    f.write(f"- Overall acceptance rate: {accepted_moves/max(1,total_moves):.3f}\n")
+                    f.write("-" * 50 + "\n\n")
+            
+            # Update state if accepted
             if accept_move:
                 self.positions_ts = proposed_positions
                 self.sigma = proposed_sigma
                 current_score, curr_ex, curr_pair, curr_tet = proposed_score, prop_ex, prop_pair, prop_tet
                 current_tetramers = proposed_tetramers if cached_tetramers is None else current_tetramers
                 accepts_counts[move_type] += 1
+                accepted_moves += 1
                 
                 # Track best configuration
                 if current_score < best_score:
                     best_score = current_score
-                    # Only copy when actually improving
                     best_positions = {k: v.copy() for k, v in self.positions_ts.items()}
             
-            # Efficient batch logging
-            if step % save_freq == 0:
-                # Record sigma values
-                for key in self.sigma:
-                    sigma_history[key][step // save_freq] = self.sigma[key]
-                
-                # Track state for trajectory
-                trajectory.append(
-                    self.save_state(
-                        step, self.positions_ts, self.sigma, current_score,
-                        prior_score=new_prior_penalty, pair_score=curr_pair,
-                        exvol_score=curr_ex, tet_score=curr_tet
+                # Efficient batch logging based on accepted moves
+                if accepted_moves % save_freq == 0:
+                    save_idx = accepted_moves // save_freq
+                    if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
+                        for key in self.sigma:
+                            sigma_history[key][save_idx] = self.sigma[key]
+                    
+                    trajectory.append(
+                        self.save_state(
+                            accepted_moves, self.positions_ts, self.sigma, current_score,
+                            prior_score=new_prior_penalty, pair_score=curr_pair,
+                            exvol_score=curr_ex, tet_score=curr_tet
+                        )
                     )
-                )
-                
-                # Buffer CSV data (faster than immediate writes)
-                csv_buffer.append(
-                    f"{step},{new_prior_penalty:.1f},{curr_ex:.1f},{curr_pair:.1f},"
-                    f"{curr_tet:.1f},{current_score:.1f},{1 if accept_move else 0}\n"
-                )
-                
-                # Batch CSV writes for efficiency
-                if len(csv_buffer) >= 10:  # Write in batches of 10
-                    with open(csv_log_file, "a") as f:
-                        f.writelines(csv_buffer)
-                    csv_buffer = []  # Clear buffer after writing
-
-            # Print progress less frequently
-            if step % print_freq == 0 or step == n_steps - 1:
-                overall_accept = sum(accepts_counts.values()) / max(1, sum(moves_counts.values()))
-                print(f"Step {step}/{n_steps} ({step/n_steps*100:.1f}%), "
-                    f"Score: {current_score:.1f}, Temp: {temp:.2f}, "
-                    f"Accept: {overall_accept:.2f}")
+                    
+                    csv_buffer.append(
+                        f"{accepted_moves},{new_prior_penalty:.1f},{curr_ex:.1f},{curr_pair:.1f},"
+                        f"{curr_tet:.1f},{current_score:.1f},1\n"
+                    )
+                    
+                    if len(csv_buffer) >= 10:
+                        with open(csv_log_file, "a") as f:
+                            f.writelines(csv_buffer)
+                        csv_buffer = []
+            
+                if accepted_moves % print_freq == 0:
+                    overall_accept = accepted_moves / total_moves
+                    print(f"Accepted move {accepted_moves}/{n_steps} ({accepted_moves/n_steps*100:.1f}%), "
+                        f"Score: {current_score:.1f}, Temp: {temp:.2f}, "
+                        f"Accept: {overall_accept:.2f}")
         
-        # Write any remaining CSV data
         if csv_buffer:
             with open(csv_log_file, "a") as f:
                 f.writelines(csv_buffer)
         
-        # Convert sigma history to DataFrame once, outside the loop
         sigma_history_df = pd.DataFrame({k: v[:n_steps//save_freq+1] for k, v in sigma_history.items()})
         sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
         
-        # Save trajectory file
         trajectory_file = os.path.join(output_dir, "trajectory.h5")
         final_file = self.save_trajectory(trajectory, trajectory_file)
         
-        # Print final statistics
-        print(f"\nSampling complete: {n_steps} steps")
+        with open(debug_file, "a") as f:
+            f.write("\nFINAL SUMMARY:\n")
+            f.write(f"- Total iterations: {total_moves}\n")
+            f.write(f"- Accepted moves: {accepted_moves}\n")
+            f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n")
+            f.write(f"- Final score: {current_score:.2f}\n")
+            f.write(f"- Best score: {best_score:.2f}\n")
+        
+        print(f"\nSampling complete: {accepted_moves} accepted moves out of {total_moves} iterations")
         for move_type in moves_counts:
             rate = accepts_counts[move_type] / max(1, moves_counts[move_type])
             print(f"{move_type.capitalize()} moves: {rate*100:.1f}% acceptance ({accepts_counts[move_type]}/{moves_counts[move_type]})")
@@ -485,7 +517,7 @@ class TetramerSampler(BaseMCSampler):
         new_pos = {k: v.copy() for k, v in positions.items()}
         
         # Get tetramers with temperature parameter that encourages exploration
-        tetramers = self.get_tetramers(positions, temp=0.80)
+        tetramers = self.get_tetramers(positions, temp=0.95)
         
         if not tetramers:
             return new_pos

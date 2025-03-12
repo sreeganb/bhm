@@ -44,7 +44,7 @@ class BaseMCSampler:
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.01 * sum_radii
+            lower_bound = 0.025 * sum_radii
             upper_bound = 0.25 * sum_radii
             # Propose sigma in log-space for a uniform proposal in that space.
             sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
@@ -68,59 +68,126 @@ class BaseMCSampler:
         return positions
 
     def excluded_volume_nll(self, positions: Dict[str, np.ndarray], step: int = 0, 
-                        log_file: str = None) -> float:
+                        log_file: str = None, debug: bool = False) -> float:
         """
-        Compute the negative log likelihood of the excluded volume penalty.
-        Uses vectorized operations over distance matrices.
+        Compute the negative log likelihood of the excluded volume penalty with improved debugging.
+        Debug information is written to a file instead of printed to console.
         
         Args:
             positions: Dictionary of particle positions by type
             step: Current MCMC step number (for logging)
             log_file: Path to log file for overlap details
+            debug: Whether to write detailed debugging information
+        
+        Returns:
+            float: The excluded volume penalty score
         """
         score = 0.0
-        exvol_sigma = 0.00001  # Excluded volume sigma penalty strength
+        exvol_sigma = 0.001  # Excluded volume sigma penalty strength
+        overlap_count = 0
+        max_overlap = 0.0
+        overlap_details = []
         
-        # Open log file only if needed
+        # Open log files
         log_file_handle = None
-        if log_file:
-            # Determine if we need to write a header (if file doesn't exist or is empty)
-            write_header = not os.path.exists(log_file) or os.path.getsize(log_file) == 0
-            log_file_handle = open(log_file, 'a')
-            
-            if write_header:
-                log_file_handle.write("step,type1,type2,idx1,idx2,distance,min_dist,overlap\n")
+        debug_file_handle = None
+        debug_file = "debug_exvol.txt"
         
         try:
+            if log_file:
+                # Determine if we need to write a header
+                write_header = not os.path.exists(log_file) or os.path.getsize(log_file) == 0
+                log_file_handle = open(log_file, 'a')
+                
+                if write_header:
+                    log_file_handle.write("step,type1,type2,idx1,idx2,distance,min_dist,overlap,score_contribution\n")
+            
+            # Open debug file if debug is True or if there are overlaps
+            if debug:
+                debug_file_handle = open(debug_file, 'a')
+            
+            # Process each pair of particle types
             for type1, pos1 in positions.items():
                 for type2, pos2 in positions.items():
-                    # Only compute once for each unordered pair
+                    # Only compute once for each unordered pair to avoid double-counting
                     if type1 <= type2:
                         min_dist = self.params.radii[type1] + self.params.radii[type2]
                         distances = cdist(pos1, pos2)
                         
+                        # Handle same-type particles (avoid self-interactions)
                         if type1 == type2:
+                            # Use upper triangle mask to avoid counting same particle twice
                             mask = np.triu(np.ones_like(distances), k=1)
                             viol_mask = (distances < min_dist) & (mask > 0)
                         else:
                             viol_mask = distances < min_dist
                         
+                        # Calculate overlap penalties if any exist
                         if np.any(viol_mask):
-                            overlap = (min_dist - distances[viol_mask]) ** 2
-                            score += np.sum(overlap / (exvol_sigma ** 2))
-                            
-                            # Log the overlaps if requested
-                            if log_file_handle:
-                                # Get indices where violations occur
-                                viol_indices = np.where(viol_mask)
-                                for i, j in zip(viol_indices[0], viol_indices[1]):
-                                    distance = distances[i, j]
-                                    current_overlap = min_dist - distance
-                                    log_file_handle.write(f"{step},{type1},{type2},{i},{j},{distance:.6f},{min_dist:.6f},{current_overlap:.6f}\n")
+                            viol_indices = np.where(viol_mask)
+                            for i, j in zip(viol_indices[0], viol_indices[1]):
+                                distance = distances[i, j]
+                                current_overlap = min_dist - distance
+                                
+                                if current_overlap > 0:  # Explicit check for overlap
+                                    overlap_count += 1
+                                    max_overlap = max(max_overlap, current_overlap)
+                                    
+                                    # Calculate score contribution for this pair
+                                    contrib = (current_overlap ** 2) / (exvol_sigma ** 2)
+                                    score += contrib
+                                    
+                                    # Store details for debugging
+                                    overlap_details.append({
+                                        'type1': type1, 'idx1': i, 
+                                        'type2': type2, 'idx2': j,
+                                        'distance': distance, 
+                                        'min_dist': min_dist,
+                                        'overlap': current_overlap,
+                                        'contrib': contrib
+                                    })
+                                    
+                                    # Log overlap if requested
+                                    if log_file_handle:
+                                        log_file_handle.write(
+                                            f"{step},{type1},{type2},{i},{j},"
+                                            f"{distance:.6f},{min_dist:.6f},"
+                                            f"{current_overlap:.6f},{contrib:.6f}\n"
+                                        )
+            
+            # Write debug information to file if there are overlaps or debug is true
+            if (overlap_count > 0 or debug) and debug_file_handle is None:
+                debug_file_handle = open(debug_file, 'a')
+                
+            if debug_file_handle:
+                debug_file_handle.write(f"Step {step}: Found {overlap_count} overlaps, max_overlap={max_overlap:.4f}, score={score:.4f}\n")
+                if overlap_count > 0:
+                    for i, details in enumerate(overlap_details[:5]):  # Show first 5 overlaps
+                        debug_file_handle.write(
+                            f"  Overlap {i+1}: {details['type1']}{details['idx1']} - "
+                            f"{details['type2']}{details['idx2']}, "
+                            f"dist={details['distance']:.4f}, "
+                            f"min_dist={details['min_dist']:.4f}, "
+                            f"overlap={details['overlap']:.4f}\n"
+                        )
+                    
+                    if len(overlap_details) > 5:
+                        debug_file_handle.write(f"  ... and {len(overlap_details)-5} more overlaps\n")
+                    
+                    # Add a separator line for readability
+                    debug_file_handle.write("-" * 60 + "\n")
+                                
         finally:
-            # Make sure to close the file
+            # Make sure to close the files
             if log_file_handle:
                 log_file_handle.close()
+            if debug_file_handle:
+                debug_file_handle.close()
+        
+        # Important: Attach debug information to the instance for later inspection
+        self._last_overlap_count = overlap_count
+        self._last_max_overlap = max_overlap
+        self._last_overlap_details = overlap_details
                 
         return score
 
@@ -147,7 +214,7 @@ class BaseMCSampler:
         
         # Cache physical bounds for the selected pair type.
         sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-        min_sigma, max_sigma = 0.01 * sum_radii, 0.25 * sum_radii
+        min_sigma, max_sigma = 0.025 * sum_radii, 0.25 * sum_radii # changed from 0.25 to 0.35 also 0.01 to 0.1
         log_min, log_max = np.log(min_sigma), np.log(max_sigma)
         
         current_val = sigma[pair_type]

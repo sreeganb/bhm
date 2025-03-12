@@ -441,8 +441,8 @@ def create_trajectory_movie(
     
     # Set up default particle configuration
     default_colors = {'A': 'red', 'B': 'blue', 'C': 'green'}
-    default_radii = {'A': 5.0, 'B': 4.0, 'C': 4.5}
-    default_opacity = {'A': 0.8, 'B': 0.8, 'C': 0.8}
+    default_radii = {'A': 20.0, 'B': 16.0, 'C': 18.0}
+    default_opacity = {'A': 0.9, 'B': 0.9, 'C': 0.9}
     
     # Apply custom settings if provided
     if custom_colors:
