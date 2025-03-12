@@ -9,6 +9,7 @@ import seaborn as sns
 from sklearn.mixture import GaussianMixture
 import json
 
+
 def load_trajectory_from_hdf5(filename: str) -> list:
     """Loads MCMC trajectory data from an HDF5 file."""
     trajectory = []
@@ -43,6 +44,36 @@ def load_trajectory_from_hdf5(filename: str) -> list:
             trajectory.append(state)
     return trajectory
 
+# Add this import at the top with your other imports
+from statsmodels.tsa.stattools import acf
+
+# Add this function after load_trajectory_from_hdf5 function
+def calculate_autocorrelation(data, nlags=50):
+    """Calculate autocorrelation function for time series data."""
+    try:
+        # Use statsmodels acf function to calculate autocorrelation
+        acf_values = acf(data, nlags=min(nlags, len(data)//3), fft=True)
+        return acf_values
+    except Exception as e:
+        print(f"Error calculating autocorrelation: {e}")
+        return None
+
+def calculate_effective_sample_size(data):
+    """Estimate effective sample size using autocorrelation."""
+    try:
+        acf_values = acf(data, nlags=min(100, len(data)//3), fft=True)
+        # Find first negative autocorrelation or stop at acf_values < 0.05
+        tau = 1  # Default correlation time
+        for i, acf_val in enumerate(acf_values[1:], 1):  # Skip lag 0
+            if acf_val < 0.05:
+                tau = i
+                break
+        # ESS = N / (1 + 2 * sum(ACF))
+        ess = len(data) / (1 + 2 * np.sum(acf_values[1:tau]))
+        return max(1, ess)  # Ensure ESS is at least 1
+    except Exception as e:
+        print(f"Error calculating effective sample size: {e}")
+        return None
 
 def fit_gmm(data: np.ndarray, max_components: int = 5):
     """Fits a Gaussian Mixture Model to the data."""
@@ -220,6 +251,112 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
 
             pdf.savefig(fig)
             plt.close(fig)
+            
+            # --- Add autocorrelation plots to PDF ---
+            print("\nCalculating autocorrelation and effective sample sizes...")
+            ess_values = {}
+            
+            # Analyze each sigma parameter across chains
+            for sigma_type in combined_sigma_data:
+                # Process each chain separately
+                plt.figure(figsize=(12, 8))
+                max_lag = min(50, int(len(trajectory_data) / 10))  # Use reasonable max lag
+                
+                for chain_idx, chain_values in enumerate(combined_sigma_data[sigma_type]):
+                    if len(chain_values) > 10:  # Need sufficient data points
+                        autocorr = calculate_autocorrelation(chain_values, nlags=max_lag)
+                        if autocorr is not None:
+                            plt.plot(autocorr, label=f'Chain {chain_idx}', alpha=0.7)
+                            
+                            # Calculate ESS
+                            ess = calculate_effective_sample_size(chain_values)
+                            if ess is not None:
+                                if sigma_type not in ess_values:
+                                    ess_values[sigma_type] = []
+                                ess_values[sigma_type].append(ess)
+                
+                plt.axhline(y=0, color='r', linestyle='--')
+                plt.title(f'Autocorrelation for {sigma_type} ({sampler_name})', fontsize=16)
+                plt.xlabel('Lag', fontsize=14)
+                plt.ylabel('Autocorrelation', fontsize=14)
+                plt.xticks(fontsize=12)
+                plt.yticks(fontsize=12)
+                plt.legend(fontsize=12)
+                plt.tight_layout()
+                pdf.savefig()
+                plt.savefig(os.path.join(sampler_output_dir, f'autocorr_{sigma_type}_{sampler_name}.png'))
+                plt.close()
+                
+            # --- Add ESS table to PDF ---
+            if ess_values:
+                fig, ax = plt.subplots(figsize=(8, 2 + 0.3*len(ess_values)))
+                fig.suptitle(f"Effective Sample Size (ESS) for Sigma Components ({sampler_name})", fontsize=14)
+                ax.axis('off')
+                
+                # Build table data
+                header = ["Sigma Type", "Mean ESS", "Min ESS", "Max ESS", "N Chains"]
+                rows = []
+                
+                for sigma_type, ess_list in ess_values.items():
+                    if ess_list:
+                        rows.append([
+                            sigma_type,
+                            f"{np.mean(ess_list):.1f}",
+                            f"{np.min(ess_list):.1f}",
+                            f"{np.max(ess_list):.1f}",
+                            f"{len(ess_list)}"
+                        ])
+                    else:
+                        rows.append([sigma_type, "N/A", "N/A", "N/A", "0"])
+                
+                # Create table in the axes
+                table = ax.table(
+                    cellText=rows,
+                    colLabels=header,
+                    loc='center'
+                )
+                table.auto_set_font_size(False)
+                table.set_fontsize(10)
+                table.scale(1, 1.5)
+                
+                pdf.savefig(fig)
+                plt.close(fig)
+                
+                # Save ESS values to file
+                ess_filename = os.path.join(sampler_output_dir, f"ess_statistics_{sampler_name}.txt")
+                with open(ess_filename, 'w') as f:
+                    f.write(f"Effective Sample Size (ESS) for Sigma Components ({sampler_name}):\n")
+                    for sigma_type, ess_list in ess_values.items():
+                        if ess_list:
+                            f.write(f"{sigma_type}: Mean={np.mean(ess_list):.1f}, Min={np.min(ess_list):.1f}, " 
+                                   f"Max={np.max(ess_list):.1f}, Chains={len(ess_list)}\n")
+                        else:
+                            f.write(f"{sigma_type}: No valid ESS values\n")
+                print(f"ESS statistics saved to: {ess_filename}")
+            
+            # --- Also add autocorrelation for score components ---
+            if all_scores:
+                for score_type in all_scores:
+                    plt.figure(figsize=(12, 8))
+                    max_lag = min(50, int(len(trajectory_data) / 10))
+                    
+                    for chain_id, score_values in all_scores[score_type].items():
+                        if len(score_values) > 10:
+                            autocorr = calculate_autocorrelation(score_values, nlags=max_lag)
+                            if autocorr is not None:
+                                plt.plot(autocorr, label=f'Chain {chain_id}', alpha=0.7)
+                    
+                    plt.axhline(y=0, color='r', linestyle='--')
+                    plt.title(f'Autocorrelation for {score_type} ({sampler_name})', fontsize=16)
+                    plt.xlabel('Lag', fontsize=14)
+                    plt.ylabel('Autocorrelation', fontsize=14)
+                    plt.xticks(fontsize=12)
+                    plt.yticks(fontsize=12)
+                    plt.legend(fontsize=12)
+                    plt.tight_layout()
+                    pdf.savefig()
+                    plt.savefig(os.path.join(sampler_output_dir, f'autocorr_{score_type}_{sampler_name}.png'))
+                    plt.close()
 
     # --- GMM Fits and Plots (if requested) ---
     if do_gmm_fits:
@@ -256,8 +393,8 @@ def main():
     output_folder = "output_analysis"
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-    #sampler_sequence = ["pair_sampler"]
-    sampler_sequence = ["tetramer_sampler"]
+    sampler_sequence = ["pair_sampler"]
+    #sampler_sequence = ["tetramer_sampler"]
     #sampler_sequence = ["octet_sampler"]
     burnin = 0.4
     do_trace_plots = True  # Set to False to disable trace plots

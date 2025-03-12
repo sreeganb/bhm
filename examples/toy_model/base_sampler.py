@@ -5,6 +5,7 @@ from scipy.spatial.distance import cdist
 import random
 from parameters import SystemParameters
 import h5py
+import os
 #---------------------------------------------------------------------------
 class Priors:
     '''Defines different priors for the sigma parameter.'''
@@ -66,29 +67,61 @@ class BaseMCSampler:
 
         return positions
 
-    def excluded_volume_nll(self, positions: Dict[str, np.ndarray], step: int = 0) -> float:
+    def excluded_volume_nll(self, positions: Dict[str, np.ndarray], step: int = 0, 
+                        log_file: str = None) -> float:
         """
         Compute the negative log likelihood of the excluded volume penalty.
         Uses vectorized operations over distance matrices.
+        
+        Args:
+            positions: Dictionary of particle positions by type
+            step: Current MCMC step number (for logging)
+            log_file: Path to log file for overlap details
         """
         score = 0.0
-        exvol_sigma = 0.1  # Excluded volume sigma penalty strength
-
-        for type1, pos1 in positions.items():
-            for type2, pos2 in positions.items():
-                # Only compute once for each unordered pair
-                if type1 <= type2:
-                    min_dist = self.params.radii[type1] + self.params.radii[type2]
-                    distances = cdist(pos1, pos2)
-                    if type1 == type2:
-                        mask = np.triu(np.ones_like(distances), k=1)
-                        viol_mask = (distances < min_dist) & (mask > 0)
-                    else:
-                        viol_mask = distances < min_dist
-
-                    if np.any(viol_mask):
-                        overlap = (min_dist - distances[viol_mask]) ** 2
-                        score += np.sum(overlap / (exvol_sigma ** 2))
+        exvol_sigma = 0.00001  # Excluded volume sigma penalty strength
+        
+        # Open log file only if needed
+        log_file_handle = None
+        if log_file:
+            # Determine if we need to write a header (if file doesn't exist or is empty)
+            write_header = not os.path.exists(log_file) or os.path.getsize(log_file) == 0
+            log_file_handle = open(log_file, 'a')
+            
+            if write_header:
+                log_file_handle.write("step,type1,type2,idx1,idx2,distance,min_dist,overlap\n")
+        
+        try:
+            for type1, pos1 in positions.items():
+                for type2, pos2 in positions.items():
+                    # Only compute once for each unordered pair
+                    if type1 <= type2:
+                        min_dist = self.params.radii[type1] + self.params.radii[type2]
+                        distances = cdist(pos1, pos2)
+                        
+                        if type1 == type2:
+                            mask = np.triu(np.ones_like(distances), k=1)
+                            viol_mask = (distances < min_dist) & (mask > 0)
+                        else:
+                            viol_mask = distances < min_dist
+                        
+                        if np.any(viol_mask):
+                            overlap = (min_dist - distances[viol_mask]) ** 2
+                            score += np.sum(overlap / (exvol_sigma ** 2))
+                            
+                            # Log the overlaps if requested
+                            if log_file_handle:
+                                # Get indices where violations occur
+                                viol_indices = np.where(viol_mask)
+                                for i, j in zip(viol_indices[0], viol_indices[1]):
+                                    distance = distances[i, j]
+                                    current_overlap = min_dist - distance
+                                    log_file_handle.write(f"{step},{type1},{type2},{i},{j},{distance:.6f},{min_dist:.6f},{current_overlap:.6f}\n")
+        finally:
+            # Make sure to close the file
+            if log_file_handle:
+                log_file_handle.close()
+                
         return score
 
     def pair_score_nll(self, pos1: np.ndarray, pos2: np.ndarray, target_dist: float, sigma: float) -> float:
@@ -144,7 +177,7 @@ class BaseMCSampler:
         type_names = list(self.params.component_counts.keys())
         type_name = random.choice(type_names)
         
-        base_step = self.params.radii[type_name] * 0.1
+        base_step = self.params.radii[type_name] * 0.2
         adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.5, 2.0)
         step_size = base_step * adjustment
         

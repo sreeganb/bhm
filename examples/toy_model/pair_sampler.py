@@ -53,7 +53,7 @@ class PairSampler(BaseMCSampler):
     ) -> Tuple[float, float, float, float]:
         """Calculate the log posterior for the pair-level interactions."""
         # 1) Excluded volume contribution
-        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
+        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos, log_file="excluded_vol_log.csv")
         
         # 2) Pairwise negative log-likelihood
         pairwise_score = 0.0
@@ -75,16 +75,15 @@ class PairSampler(BaseMCSampler):
                 
                 # Mask diagonal (for same-type pairs)
                 if type1 == type2:
-                    #mask = np.triu(np.ones_like(score_matrix), k=1)
-                    #score_matrix *= mask
-                    np.fill_diagonal(score_matrix, 99999999.0)  # large value
+                    np.fill_diagonal(score_matrix, np.inf)  # Use inf for clearer intent
                 
-                # Exclude certain pairs
+                # Exclude certain pairs - more efficient implementation
                 if excluded_pairs:
-                    for i in range(len(pos[type1])):
-                        for j in range(len(pos[type2])):
-                            if (type1, i, type2, j) in excluded_pairs:
-                                score_matrix[i, j] = 99999999.0  # large value
+                    relevant_pairs = [(p[1], p[3]) for p in excluded_pairs 
+                                    if p[0] == type1 and p[2] == type2]
+                    for i, j in relevant_pairs:
+                        if i < len(pos[type1]) and j < len(pos[type2]):
+                            score_matrix[i, j] = np.inf
                 
                 # Identify minimal row/column pairs
                 row_indices = np.argmin(score_matrix, axis=1)
@@ -106,108 +105,112 @@ class PairSampler(BaseMCSampler):
         
         total_score = exclusion_score + pairwise_score + prior_penalty
         
-        # ------------------------------
-        # Write the chosen pairs to a local file, no arguments passed
-        # ------------------------------
-        with open("pairs_log.txt", "a") as log_file:
-            log_file.write("Chosen pairs:\n")
-            for cpair in chosen_pairs_log:
-                log_file.write(f"{cpair}\n")
-            log_file.write("\n")  # Blank line between scoring steps
+        # Avoid opening/closing the file in every call by making this optional
+        # or passing a file handle instead
+        if hasattr(self, 'pairs_log_file') and self.pairs_log_file:
+            with open(self.pairs_log_file, "a") as log_file:
+                log_file.write("Chosen pairs:\n")
+                for cpair in chosen_pairs_log:
+                    log_file.write(f"{cpair}\n")
+                log_file.write("\n")  # Blank line between scoring steps
         
         return total_score, exclusion_score, pairwise_score, prior_penalty
 
-    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, 
-               output_dir : str = "output_analysis/pairsampler_results/") -> Tuple[Dict[str, np.ndarray], List[Dict], str]:
-        best_positions = None  # Will set on first improvement
+    def run_mc(self, n_steps: int = 50000, save_freq: int = 100,
+            output_dir: str = "output_analysis/pairsampler_results/",
+            position_move_prob: float = 0.9) -> Tuple[Dict[str, np.ndarray], List[Dict], str]:
+        best_positions = None
+        final_positions = None  # Also track final positions
         trajectory = []
-        sigma_history = {key: [] for key in self.sigma}  # Pre-allocate sigma history
+        sigma_history = {key: [] for key in self.sigma}
 
-        # Initial score calculation
         current_score, _, _, _ = self.calculate_score(self.positions_ps, self.sigma, self.sigma_range)
-        best_score = float('inf')  # Initialize high to ensure first improvement updates
+        best_score = current_score  # Start with current as best
 
-        # Pre-calculate temperature schedule
         initial_temp = 5.0
         final_temp = 1.0
         cooling_factor = -np.log(final_temp / initial_temp) / n_steps
-        temperatures = initial_temp * np.exp(-cooling_factor * np.arange(n_steps))
+        temperatures = initial_temp * np.exp(-cooling_factor * np.arange(n_steps * 50))
 
-        # Prepare output directories and files
-        #output_dir = os.path.join("output_analysis", "pairsampler_results")
         os.makedirs(output_dir, exist_ok=True)
         csv_log_file = os.path.join(output_dir, "all_info_mcmc.csv")
+        
+        # Reset the pairs log file at the start of each run
+        self.pairs_log_file = os.path.join(output_dir, "pairs_log.txt")
+        with open(self.pairs_log_file, "w") as f:
+            f.write("# MCMC Pair Selection Log\n")
 
-        # Write CSV header
         with open(csv_log_file, "w") as f:
-            f.write("Step,Prior,Exvol_score,Pair_score,Score,Accepted\n")
+            f.write("Step,Prior,Exvol_score,Pair_score,Score\n")
 
         accepted_moves = 0
+        total_moves = 0
+        temp_index = 0  # Only increment on accepted moves
 
-        # Main MCMC loop
-        for step in range(n_steps):
-            temp = temperatures[step]
-            move_type_is_position = (np.random.random() < 0.9)
+        while accepted_moves < n_steps and total_moves < (n_steps * 50):
+            total_moves += 1
+            # Always use safe temperature access to prevent index errors
+            temp = temperatures[min(temp_index, len(temperatures)-1)]
+            move_type_is_position = (np.random.random() < position_move_prob)
 
-            # Propose move: position move or sigma move
             if move_type_is_position:
                 proposed_positions = self.propose_position_move(self.positions_ps)
-                proposed_sigma = self.sigma  # use current sigma (by reference)
+                proposed_sigma = self.sigma
             else:
-                proposed_positions = self.positions_ps  # positions remain unchanged
+                proposed_positions = self.positions_ps
                 proposed_sigma, pair_type = self.propose_sigma_move(self.sigma)
 
-            # Calculate proposed score
             proposed_score, curr_excl, curr_pair, curr_prior = self.calculate_score(
                 proposed_positions, proposed_sigma, self.sigma_range
             )
             delta_e = proposed_score - current_score
 
-            # Metropolis criterion
-            acceptance = 0
             if delta_e < 0 or np.random.random() < np.exp(-delta_e / temp):
+                # Move accepted - update state and increment temp_index
                 self.positions_ps = proposed_positions
                 self.sigma = proposed_sigma
                 current_score = proposed_score
                 accepted_moves += 1
-                acceptance = 1
+                temp_index += 1  # Only increment temperature on accepted moves
+
                 if current_score < best_score:
                     best_score = current_score
                     best_positions = {k: v.copy() for k, v in self.positions_ps.items()}
 
-            # Batch logging and saving trajectory
-            if step % save_freq == 0:
-                accept_rate = accepted_moves / (step + 1)
-                # Update sigma history
-                for key in sigma_history:
-                    sigma_history[key].append(self.sigma[key])
+                if accepted_moves % save_freq == 0:
+                    for key in sigma_history:
+                        sigma_history[key].append(self.sigma[key])
 
-                # Append current state with detailed score breakdown.
-                trajectory.append(
-                    self.save_state(
-                        step, self.positions_ps, self.sigma, current_score,
-                        prior_score=curr_prior,
-                        pair_score=curr_pair,
-                        exvol_score=curr_excl
+                    trajectory.append(
+                        self.save_state(
+                            accepted_moves, self.positions_ps, self.sigma, current_score,
+                            prior_score=curr_prior,
+                            pair_score=curr_pair,
+                            exvol_score=curr_excl
+                        )
                     )
-                )
 
-                # Write progress to CSV log
-                with open(csv_log_file, "a") as f:
-                    f.write(f"{step},{curr_prior:.3f},{curr_excl:.3f},"
-                            f"{curr_pair:.3f},{current_score:.3f},{acceptance:.1f}\n")
-                
-                print(f"Step {step}, Score: {current_score:.2f}, T: {temp:.4f}, AcceptRate: {accept_rate:.2f}")
+                    with open(csv_log_file, "a") as f:
+                        f.write(f"{accepted_moves},{curr_prior:.3f},{curr_excl:.3f},"
+                                f"{curr_pair:.3f},{current_score:.3f}\n")
 
-        # Save sigma history as CSV in the output directory.
+                    accept_rate = accepted_moves / total_moves
+                    print(f"Accepted Step {accepted_moves}, Score: {current_score:.2f}, T: {temp:.4f}, AcceptRate: {accept_rate:.2f}")
+
+        # Store final positions
+        final_positions = {k: v.copy() for k, v in self.positions_ps.items()}
+
+        # Clean up
+        self.pairs_log_file = None  # Clear the file handle reference
+
         sigma_history_df = pd.DataFrame(sigma_history)
         sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
 
-        # Save the trajectory in HDF5 format in the output folder.
         trajectory_file = os.path.join(output_dir, "trajectory.h5")
         final_file = self.save_trajectory(trajectory, trajectory_file)
-        
-        return best_positions, trajectory, final_file
+
+        # Return both best and final positions for better analysis
+        return final_positions, trajectory, final_file
 #----------------------------------------------------------------------
 if __name__ == "__main__":
     pair_samp = PairSampler()
