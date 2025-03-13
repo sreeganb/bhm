@@ -99,8 +99,8 @@ def main():
             #"run": False,
             "run": True,
             "n_chains": 1,
-            "n_steps": 300000,
-            "save_freq": 1000,
+            "n_steps": 100000,
+            "save_freq": 500,
             "use_sigma_dist": False, # Example of sampler-specific parameter
         },
         "tetramer_sampler": {

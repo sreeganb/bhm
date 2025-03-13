@@ -44,7 +44,7 @@ class BaseMCSampler:
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.025 * sum_radii
+            lower_bound = 0.035 * sum_radii
             upper_bound = 0.25 * sum_radii
             # Propose sigma in log-space for a uniform proposal in that space.
             sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
@@ -214,7 +214,7 @@ class BaseMCSampler:
         
         # Cache physical bounds for the selected pair type.
         sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-        min_sigma, max_sigma = 0.025 * sum_radii, 0.25 * sum_radii # changed from 0.25 to 0.35 also 0.01 to 0.1
+        min_sigma, max_sigma = 0.035 * sum_radii, 0.25 * sum_radii # changed from 0.25 to 0.35 also 0.01 to 0.1
         log_min, log_max = np.log(min_sigma), np.log(max_sigma)
         
         current_val = sigma[pair_type]

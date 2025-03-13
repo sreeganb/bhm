@@ -142,7 +142,7 @@ def visualize_trajectory_plotly(
     
     # Add particles for each type to initial view
     for type_name in initial_state['positions'].keys():
-        config = particle_config.get(type_name, {'radius': 0.5, 'color': 'gray', 'opacity': 0.8})
+        config = particle_config.get(type_name, {'radius': 0.5, 'color': 'gray', 'opacity': 0.9})
         
         frame_data.append(go.Scatter3d(
             x=initial_state['positions'][type_name][:, 0],
@@ -227,7 +227,7 @@ def visualize_trajectory_plotly(
         
         # Add particles
         for type_name in state['positions'].keys():
-            config = particle_config.get(type_name, {'radius': 0.5, 'color': 'gray', 'opacity': 0.8})
+            config = particle_config.get(type_name, {'radius': 0.5, 'color': 'gray', 'opacity': 0.9})
             
             frame_data.append(go.Scatter3d(
                 x=state['positions'][type_name][:, 0],

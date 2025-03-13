@@ -141,7 +141,7 @@ def visualize_trajectory_plotly(trajectory: List[Dict], box_size: float, radii: 
                 z=z_flat,
                 mode='markers',
                 marker=dict(
-                    size=radii[type_name] * 0.9,  # Scale radii for visualization
+                    size=radii[type_name] * 1.0,  # Scale radii for visualization
                     color=colors.get(type_name, 'gray')  # Use default gray if type_name not in colors
                 ),
                 name=type_name
