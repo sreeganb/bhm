@@ -102,8 +102,6 @@ if __name__ == "__main__":
 
     sf = scoring_function(system, output_objects, parts)
     sf.add_excluded_volume_restraint()
-    
-    
 
 
 #for j in range(len(counts)):

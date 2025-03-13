@@ -83,7 +83,7 @@ class BaseMCSampler:
             float: The excluded volume penalty score
         """
         score = 0.0
-        exvol_sigma = 0.001  # Excluded volume sigma penalty strength
+        exvol_sigma = 0.00001  # Excluded volume sigma penalty strength
         overlap_count = 0
         max_overlap = 0.0
         overlap_details = []
