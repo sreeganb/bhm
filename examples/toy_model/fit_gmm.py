@@ -212,19 +212,35 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
                 for sigma_type, values in chain_data.items():
                     combined_sigma_data[sigma_type].append(values)
 
+            # Replace the R-hat calculation section with this more robust version
             with open(rhat_filename, 'w') as f:
                 f.write(f"R-hat Statistics for Sigma Components ({sampler_name}):\n")
                 for sigma_type, histories in combined_sigma_data.items():
                     if len(histories) >= 2:
-                        r_hat = az.rhat(np.array(histories))
-                        rhat_values[sigma_type] = r_hat
-                        print(f"  {sigma_type}: {r_hat:.3f}")
-                        f.write(f"  {sigma_type}: {r_hat:.3f}\n")
+                        try:
+                            # Check if chains have same length
+                            chain_lengths = [len(chain) for chain in histories]
+                            if len(set(chain_lengths)) > 1:
+                                message = f"  {sigma_type}: R-hat not calculated - chains have different lengths {chain_lengths}"
+                                print(message)
+                                f.write(f"{message}\n")
+                                rhat_values[sigma_type] = None
+                            else:
+                                # All chains have same length, safe to calculate R-hat
+                                r_hat = az.rhat(np.array(histories))
+                                rhat_values[sigma_type] = r_hat
+                                print(f"  {sigma_type}: {r_hat:.3f}")
+                                f.write(f"  {sigma_type}: {r_hat:.3f}\n")
+                        except Exception as e:
+                            message = f"  {sigma_type}: R-hat calculation failed - {str(e)}"
+                            print(message)
+                            f.write(f"{message}\n")
+                            rhat_values[sigma_type] = None
                     else:
-                        print(f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s)).")
-                        f.write(f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s)).\n")
+                        message = f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s))."
+                        print(message)
+                        f.write(f"{message}\n")
                         rhat_values[sigma_type] = None
-            print(f"R-hat statistics saved to: {rhat_filename}")
 
             # --- Add R-hat table to the same PDF ---
             fig, ax = plt.subplots(figsize=(6, 2 + 0.3*len(rhat_values)))  # Adjust figure size to fit the table
