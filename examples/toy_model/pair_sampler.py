@@ -58,7 +58,7 @@ class PairSampler(BaseMCSampler):
         # 1) Excluded volume contribution
         exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos, step, 
                                                                            log_file="excluded_vol_log.csv", 
-                                                                           debug = True)
+                                                                           debug = False)
         
         # 2) Pairwise negative log-likelihood
         pairwise_score = 0.0
