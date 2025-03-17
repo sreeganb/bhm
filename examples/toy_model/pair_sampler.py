@@ -11,6 +11,7 @@ from base_sampler import BaseMCSampler, Priors  # Import BaseMCSampler and relat
 from parameters import SystemParameters
 from visualization import visualize_3d_configuration
 from scipy.spatial.distance import cdist
+import h5py
 #----------------------------------------------------------------------
 
 class PairSampler(BaseMCSampler):
@@ -120,13 +121,101 @@ class PairSampler(BaseMCSampler):
                 log_file.write("\n")  # Blank line between scoring steps
         
         return total_score, exclusion_score, pairwise_score, prior_penalty
+    
+    def save_state_to_disk(self, step, positions, sigmas, score, 
+                        prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
+                        types=None, bead_numbers=None, traj_file=None):
+        """
+        Save state directly to an HDF5 file in a memory-efficient manner.
+        This version writes the same information as the previous in-memory trajectory:
+        - Attributes: step, total_score, prior_score, pair_score, exvol_score, tet_score, oct_score.
+        - A subgroup 'sigma' with sigma values stored as attributes.
+        - A subgroup 'positions' with each component saved as a dataset (gzip-compressed).
+        - Datasets 'types_keys', 'types_vals', 'bead_keys', and 'bead_vals'.
+        
+        Parameters:
+        step: The current step number.
+        positions: Dictionary mapping component names to position arrays.
+        sigmas: Dictionary of sigma values.
+        score: The total score (will be stored as 'total_score').
+        prior_score, pair_score, exvol_score, tet_score, oct_score: Additional scores.
+        types: Dictionary mapping bead indices to type names.
+        bead_numbers: Dictionary mapping bead indices to bead numbers.
+        traj_file: Path to the HDF5 file to write to.
+        """
+        # If types or bead_numbers are not provided, default to empty dictionaries.
+        if types is None:
+            types = {}
+        if bead_numbers is None:
+            bead_numbers = {}
+        if traj_file is None:
+            return
+
+        try:
+            import numpy as np
+            import h5py
+
+            with h5py.File(traj_file, 'a') as f:
+                # Create or get the trajectory group.
+                if 'trajectory' not in f:
+                    traj_grp = f.create_group('trajectory')
+                else:
+                    traj_grp = f['trajectory']
+                
+                # Create a new state group named "state_XXXXX" where XXXXX is the step number zero-padded.
+                state_name = f"state_{step:05d}"
+                state_grp = traj_grp.create_group(state_name)
+                
+                # Save state attributes (same keys as before).
+                state_grp.attrs["step"] = step
+                state_grp.attrs["total_score"] = float(score)
+                state_grp.attrs["prior_score"] = float(prior_score)
+                state_grp.attrs["pair_score"] = float(pair_score)
+                state_grp.attrs["exvol_score"] = float(exvol_score)
+                state_grp.attrs["tet_score"] = float(tet_score)
+                state_grp.attrs["oct_score"] = float(oct_score)
+                
+                # Save sigma as a subgroup.
+                sigma_grp = state_grp.create_group("sigma")
+                for key, value in sigmas.items():
+                    sigma_grp.attrs[key] = float(value)
+                
+                # Save positions as datasets (with gzip compression).
+                pos_grp = state_grp.create_group("positions")
+                for comp, coords in positions.items():
+                    pos_grp.create_dataset(comp, data=coords.astype(np.float32), compression="gzip")
+                
+                # Save types and bead_numbers as datasets.
+                types_keys = list(types.keys())
+                types_vals = [types[k] for k in types_keys]
+                state_grp.create_dataset("types_keys", data=np.array(types_keys, dtype="S"))
+                state_grp.create_dataset("types_vals", data=np.array(types_vals, dtype="S"))
+                
+                bead_keys = list(bead_numbers.keys())
+                bead_vals = [bead_numbers[k] for k in bead_keys]
+                state_grp.create_dataset("bead_keys", data=np.array(bead_keys))
+                state_grp.create_dataset("bead_vals", data=np.array(bead_vals))
+        
+        except Exception as e:
+            print(f"Warning: Failed to save state to HDF5: {e}")
+    #----------------------------------------------------------------------
 
     def run_mc(self, n_steps: int = 50000, save_freq: int = 100,
                 output_dir: str = "output_analysis/pairsampler_results/",
                 position_move_prob: float = 0.9) -> Tuple[Dict[str, np.ndarray], List[Dict], str]:
+            import gc
             best_positions = None
             final_positions = None  # Also track final positions
-            trajectory = []
+            
+            #trajectory = []
+            
+            # Set up output directory and file handles
+            os.makedirs(output_dir, exist_ok=True)
+            trajectory_file = os.path.join(output_dir, "trajectory.h5")
+            # Create empty file initially
+            with h5py.File(trajectory_file, 'w') as f:
+                pass
+    
             sigma_history = {key: [] for key in self.sigma}
 
             # Initialize debug file
@@ -158,7 +247,7 @@ class PairSampler(BaseMCSampler):
 
             os.makedirs(output_dir, exist_ok=True)
             csv_log_file = os.path.join(output_dir, "all_info_mcmc.csv")
-            all_log_file = os.path.join(output_dir, "all_steps_scores.csv")
+            #all_log_file = os.path.join(output_dir, "all_steps_scores.csv")
             
             # Reset the pairs log file at the start of each run
             self.pairs_log_file = os.path.join(output_dir, "pairs_log.txt")
@@ -168,8 +257,8 @@ class PairSampler(BaseMCSampler):
             with open(csv_log_file, "w") as f:
                 f.write("Step,Prior,Exvol_score,Pair_score,Score\n")
             
-            with open(all_log_file, "w") as f:
-                f.write("Step,Proposed_Score,Proposed_Exvol,Proposed_Pair,Proposed_Prior,Delta_E,accepted\n")
+            #with open(all_log_file, "w") as f:
+            #    f.write("Step,Proposed_Score,Proposed_Exvol,Proposed_Pair,Proposed_Prior,Delta_E,accepted\n")
 
             accepted_moves = 0
             total_moves = 0
@@ -226,15 +315,25 @@ class PairSampler(BaseMCSampler):
                     if accepted_moves % save_freq == 0:
                         for key in sigma_history:
                             sigma_history[key].append(self.sigma[key])
-
-                        trajectory.append(
-                            self.save_state(
-                                accepted_moves, self.positions_ps, self.sigma, current_score,
-                                prior_score=curr_prior,
-                                pair_score=curr_pair,
-                                exvol_score=curr_excl
-                            )
+                            
+                        # Save the state to the trajectory_file directly 
+                        self.save_state_to_disk(
+                            accepted_moves, self.positions_ps, self.sigma, current_score,
+                            prior_score=curr_prior, pair_score=curr_pair, exvol_score=curr_excl,
+                            traj_file=trajectory_file
                         )
+                        
+                        if accepted_moves % (save_freq * 10) == 0:
+                            gc.collect()
+
+                        #trajectory.append(
+                        #    self.save_state(
+                        #        accepted_moves, self.positions_ps, self.sigma, current_score,
+                        #        prior_score=curr_prior,
+                        #        pair_score=curr_pair,
+                        #        exvol_score=curr_excl
+                        #    )
+                        #)
 
                         with open(csv_log_file, "a") as f:
                             f.write(f"{accepted_moves},{curr_prior:.3f},{curr_excl:.3f},"
@@ -257,8 +356,8 @@ class PairSampler(BaseMCSampler):
                     #        f.write(f"OVERLAP STATE {'ACCEPTED' if accepted else 'REJECTED'}\n\n")
                 
                 # Log all steps to all_log_file
-                with open(all_log_file, "a") as f:
-                    f.write(f"{total_moves},{proposed_score:.1f},{curr_excl:.1f},{curr_pair:.1f},{curr_prior:.1f},{delta_e:.1f},{accepted_moves:.1f}\n")
+                #with open(all_log_file, "a") as f:
+                #    f.write(f"{total_moves},{proposed_score:.1f},{curr_excl:.1f},{curr_pair:.1f},{curr_prior:.1f},{delta_e:.1f},{accepted_moves:.1f}\n")
                 
                 # Periodically write summary statistics
 #                if total_moves % 1000 == 0:
@@ -299,11 +398,11 @@ class PairSampler(BaseMCSampler):
             sigma_history_df = pd.DataFrame(sigma_history)
             sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
 
-            trajectory_file = os.path.join(output_dir, "trajectory.h5")
-            final_file = self.save_trajectory(trajectory, trajectory_file)
+            #trajectory_file = os.path.join(output_dir, "trajectory.h5")
+            #final_file = self.save_trajectory(trajectory, trajectory_file)
 
             # Return both best and final positions for better analysis
-            return final_positions, trajectory, final_file
+            return final_positions, trajectory_file
             
     def _check_overlaps(self, positions):
         """Check if there are any overlaps in the given positions."""

@@ -334,20 +334,105 @@ class TetramerSampler(BaseMCSampler):
         except Exception as e:
             print(f"Error generating tetramers: {e}")
             return [] # Return empty list on error for graceful failure
+        
+    def save_state_to_disk(self, step, positions, sigmas, score, 
+                        prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
+                        types=None, bead_numbers=None, traj_file=None):
+        """
+        Save state directly to an HDF5 file in a memory-efficient manner.
+        This version writes the same information as the previous in-memory trajectory:
+        - Attributes: step, total_score, prior_score, pair_score, exvol_score, tet_score, oct_score.
+        - A subgroup 'sigma' with sigma values stored as attributes.
+        - A subgroup 'positions' with each component saved as a dataset (gzip-compressed).
+        - Datasets 'types_keys', 'types_vals', 'bead_keys', and 'bead_vals'.
+        
+        Parameters:
+        step: The current step number.
+        positions: Dictionary mapping component names to position arrays.
+        sigmas: Dictionary of sigma values.
+        score: The total score (will be stored as 'total_score').
+        prior_score, pair_score, exvol_score, tet_score, oct_score: Additional scores.
+        types: Dictionary mapping bead indices to type names.
+        bead_numbers: Dictionary mapping bead indices to bead numbers.
+        traj_file: Path to the HDF5 file to write to.
+        """
+        # If types or bead_numbers are not provided, default to empty dictionaries.
+        if types is None:
+            types = {}
+        if bead_numbers is None:
+            bead_numbers = {}
+        if traj_file is None:
+            return
+
+        try:
+            import numpy as np
+            import h5py
+
+            with h5py.File(traj_file, 'a') as f:
+                # Create or get the trajectory group.
+                if 'trajectory' not in f:
+                    traj_grp = f.create_group('trajectory')
+                else:
+                    traj_grp = f['trajectory']
+                
+                # Create a new state group named "state_XXXXX" where XXXXX is the step number zero-padded.
+                state_name = f"state_{step:05d}"
+                state_grp = traj_grp.create_group(state_name)
+                
+                # Save state attributes (same keys as before).
+                state_grp.attrs["step"] = step
+                state_grp.attrs["total_score"] = float(score)
+                state_grp.attrs["prior_score"] = float(prior_score)
+                state_grp.attrs["pair_score"] = float(pair_score)
+                state_grp.attrs["exvol_score"] = float(exvol_score)
+                state_grp.attrs["tet_score"] = float(tet_score)
+                state_grp.attrs["oct_score"] = float(oct_score)
+                
+                # Save sigma as a subgroup.
+                sigma_grp = state_grp.create_group("sigma")
+                for key, value in sigmas.items():
+                    sigma_grp.attrs[key] = float(value)
+                
+                # Save positions as datasets (with gzip compression).
+                pos_grp = state_grp.create_group("positions")
+                for comp, coords in positions.items():
+                    pos_grp.create_dataset(comp, data=coords.astype(np.float32), compression="gzip")
+                
+                # Save types and bead_numbers as datasets.
+                types_keys = list(types.keys())
+                types_vals = [types[k] for k in types_keys]
+                state_grp.create_dataset("types_keys", data=np.array(types_keys, dtype="S"))
+                state_grp.create_dataset("types_vals", data=np.array(types_vals, dtype="S"))
+                
+                bead_keys = list(bead_numbers.keys())
+                bead_vals = [bead_numbers[k] for k in bead_keys]
+                state_grp.create_dataset("bead_keys", data=np.array(bead_keys))
+                state_grp.create_dataset("bead_vals", data=np.array(bead_vals))
+        
+        except Exception as e:
+            print(f"Warning: Failed to save state to HDF5: {e}")
+
 #-----------------------------------------------------------------------  
     def run_mc(self, n_steps: int = 50000, save_freq: int = 100, 
             output_dir: str = "output_analysis/tetramersampler_results/") -> Tuple:
         """Monte Carlo sampling with tetramer moves and efficient caching.
         Runs until n_steps accepted moves (Markov chain steps) are completed.
         Overlap checking has been removed."""
+        import gc
+        
         # Pre-allocate memory for results & tracking
         best_positions = None
         best_score = float('inf')
-        trajectory = []
+        #trajectory = []
         sigma_history = {key: np.zeros(n_steps // save_freq + 1, dtype=np.float32) for key in self.sigma}
-        
-        # Setup output directory and file handles
+
+        # Set up output directory and file handles
         os.makedirs(output_dir, exist_ok=True)
+        trajectory_file = os.path.join(output_dir, "trajectory.h5")
+        # Create empty file initially
+        with h5py.File(trajectory_file, 'w') as f:
+            pass
+        
         csv_log_file = os.path.join(output_dir, "all_info_mcmc_tetramer.csv")
         #debug_file = os.path.join(output_dir, "debug_mcmc.txt")
         csv_buffer = []  # Buffer for delayed CSV writes
@@ -466,13 +551,23 @@ class TetramerSampler(BaseMCSampler):
                         for key in self.sigma:
                             sigma_history[key][save_idx] = self.sigma[key]
                     
-                    trajectory.append(
-                        self.save_state(
-                            accepted_moves, self.positions_ts, self.sigma, current_score,
-                            prior_score=new_prior_penalty, pair_score=curr_pair,
-                            exvol_score=curr_ex, tet_score=curr_tet
-                        )
+                    # Direct save instead of using a list
+                    self.save_state_to_disk(
+                        accepted_moves, self.positions_ts, self.sigma, current_score,
+                        prior_score=new_prior_penalty, pair_score=curr_pair,
+                        exvol_score=curr_ex, tet_score=curr_tet,
+                        traj_file=trajectory_file
                     )
+                    # run garbage collection periodically to avoid memory issues
+                    if accepted_moves % (save_freq * 10) == 0:
+                        gc.collect()
+                    #trajectory.append(
+                    #    self.save_state(
+                    #        accepted_moves, self.positions_ts, self.sigma, current_score,
+                    #        prior_score=new_prior_penalty, pair_score=curr_pair,
+                    #        exvol_score=curr_ex, tet_score=curr_tet
+                    #    )
+                    #)
                     
                     csv_buffer.append(
                         f"{accepted_moves},{new_prior_penalty:.1f},{curr_ex:.1f},{curr_pair:.1f},"
@@ -497,8 +592,9 @@ class TetramerSampler(BaseMCSampler):
         sigma_history_df = pd.DataFrame({k: v[:n_steps//save_freq+1] for k, v in sigma_history.items()})
         sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
         
-        trajectory_file = os.path.join(output_dir, "trajectory.h5")
-        final_file = self.save_trajectory(trajectory, trajectory_file)
+        #trajectory_file = os.path.join(output_dir, "trajectory.h5")
+        #final_file = self.save_trajectory(trajectory, trajectory_file)
+        
         
 #        with open(debug_file, "a") as f:
 #            f.write("\nFINAL SUMMARY:\n")
@@ -513,7 +609,7 @@ class TetramerSampler(BaseMCSampler):
             rate = accepts_counts[move_type] / max(1, moves_counts[move_type])
             print(f"{move_type.capitalize()} moves: {rate*100:.1f}% acceptance ({accepts_counts[move_type]}/{moves_counts[move_type]})")
         
-        return best_positions, trajectory, final_file
+        return best_positions, trajectory_file
 #-----------------------------------------------------------------------
     def propose_tetramer_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """Optimized proposal generation for tetramer moves with multiple strategies."""
