@@ -351,7 +351,10 @@ class TetramerSampler(BaseMCSampler):
         csv_log_file = os.path.join(output_dir, "all_info_mcmc_tetramer.csv")
         #debug_file = os.path.join(output_dir, "debug_mcmc.txt")
         csv_buffer = []  # Buffer for delayed CSV writes
-        
+        # Write CSV header once
+        with open(csv_log_file, "w") as f:
+            f.write("Step,Prior,Exvol_score,Pair_score,Tet_score,Score,Accepted\n")
+            
         # Debug file setup 
 #        with open(debug_file, "w") as f:
 #            f.write("# TetramerSampler MCMC Debug Log\n")
@@ -360,11 +363,7 @@ class TetramerSampler(BaseMCSampler):
         # Initialize counters with pre-allocation
         moves_counts = {'position': 0, 'sigma': 0, 'tetramer': 0}
         accepts_counts = {'position': 0, 'sigma': 0, 'tetramer': 0}
-        
-        # Write CSV header once
-        with open(csv_log_file, "w") as f:
-            f.write("Step,Prior,Exvol_score,Pair_score,Tet_score,Score,Accepted\n")
-        
+                
         # Temperature schedule calculation (vectorized)
         # Changed to use accepted_moves rather than total iterations
         cooling_factor = -np.log(1.0/5.0) / n_steps
@@ -480,7 +479,7 @@ class TetramerSampler(BaseMCSampler):
                         f"{curr_tet:.1f},{current_score:.1f},1\n"
                     )
                     
-                    if len(csv_buffer) >= 10:
+                    if len(csv_buffer) >= 100:
                         with open(csv_log_file, "a") as f:
                             f.writelines(csv_buffer)
                         csv_buffer = []
