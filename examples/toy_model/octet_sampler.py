@@ -30,7 +30,7 @@ class OctetSampler(BaseMCSampler):
         super().__init__()  # Call BaseMCSampler constructor
         self.use_sigma_distribution = use_sigma_distribution
         self.params = SystemParameters()  # Initialize system parameters
-        self.positions = self.initialize_positions() # Initialize positions
+
         self.ps = PairSampler() # Initialize PairSampler
         self.ts = TetramerSampler() # Initialize TetramerSampler
 
@@ -43,7 +43,9 @@ class OctetSampler(BaseMCSampler):
         self.octet_trans_acc_rate = 0.5
         self.target_acceptance = 0.5
         #-------------------------------------
-
+        # Initialize 
+        self.positions = self.initialize_positions() # Initialize positions
+        
         required_pairs = {"AA", "AB", "BC", "CC"}
         if not required_pairs.issubset(self.params.pair_distances.keys()):
             raise ValueError("Missing required pair types for tetramer sampling.")

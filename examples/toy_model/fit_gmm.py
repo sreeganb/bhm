@@ -211,36 +211,40 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
             for chain_data in all_sigma_histories.values():
                 for sigma_type, values in chain_data.items():
                     combined_sigma_data[sigma_type].append(values)
-
-            # Replace the R-hat calculation section with this more robust version
+            
+            # Replace the R-hat calculation section with this version:
             with open(rhat_filename, 'w') as f:
                 f.write(f"R-hat Statistics for Sigma Components ({sampler_name}):\n")
+                rhat_values = {}
                 for sigma_type, histories in combined_sigma_data.items():
-                    if len(histories) >= 2:
+                    chain_lengths = [len(chain) for chain in histories]
+                    max_length = max(chain_lengths)
+                    # Filter out trajectories that are shorter than the maximum length.
+                    filtered_histories = [chain for chain in histories if len(chain) == max_length]
+                    dropped = len(histories) - len(filtered_histories)
+                    
+                    if len(filtered_histories) < 2:
+                        message = (f"  {sigma_type}: R-hat not calculated - only "
+                                   f"{len(filtered_histories)} chain(s) available after filtering "
+                                   f"(dropped {dropped} chain(s) out of {len(histories)})")
+                        print(message)
+                        f.write(message + "\n")
+                        rhat_values[sigma_type] = None
+                    else:
                         try:
-                            # Check if chains have same length
-                            chain_lengths = [len(chain) for chain in histories]
-                            if len(set(chain_lengths)) > 1:
-                                message = f"  {sigma_type}: R-hat not calculated - chains have different lengths {chain_lengths}"
-                                print(message)
-                                f.write(f"{message}\n")
-                                rhat_values[sigma_type] = None
-                            else:
-                                # All chains have same length, safe to calculate R-hat
-                                r_hat = az.rhat(np.array(histories))
-                                rhat_values[sigma_type] = r_hat
-                                print(f"  {sigma_type}: {r_hat:.3f}")
-                                f.write(f"  {sigma_type}: {r_hat:.3f}\n")
+                            # All filtered chains have the same length (== max_length)
+                            r_hat = az.rhat(np.array(filtered_histories))
+                            rhat_values[sigma_type] = r_hat
+                            message = (f"  {sigma_type}: {r_hat:.3f} calculated using "
+                                       f"{len(filtered_histories)} chains (max_length = {max_length}, "
+                                       f"dropped {dropped} chain(s) out of {len(histories)})")
+                            print(message)
+                            f.write(message + "\n")
                         except Exception as e:
                             message = f"  {sigma_type}: R-hat calculation failed - {str(e)}"
                             print(message)
-                            f.write(f"{message}\n")
+                            f.write(message + "\n")
                             rhat_values[sigma_type] = None
-                    else:
-                        message = f"  {sigma_type}: R-hat not calculated (only {len(histories)} chain(s))."
-                        print(message)
-                        f.write(f"{message}\n")
-                        rhat_values[sigma_type] = None
 
             # --- Add R-hat table to the same PDF ---
             fig, ax = plt.subplots(figsize=(6, 2 + 0.3*len(rhat_values)))  # Adjust figure size to fit the table

@@ -1,371 +1,107 @@
-%% 
-%% Copyright 2007-2025 Elsevier Ltd
-%% 
-%% This file is part of the 'Elsarticle Bundle'.
-%% ---------------------------------------------
-%% 
-%% It may be distributed under the conditions of the LaTeX Project Public
-%% License, either version 1.3 of this license or (at your option) any
-%% later version.  The latest version of this license is in
-%%    http://www.latex-project.org/lppl.txt
-%% and version 1.3 or later is part of all distributions of LaTeX
-%% version 1999/12/01 or later.
-%% 
-%% The list of all files belonging to the 'Elsarticle Bundle' is
-%% given in the file `manifest.txt'.
-%% 
-%% Template article for Elsevier's document class `elsarticle'
-%% with harvard style bibliographic references
+\documentclass{article}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{bm} % For bold math symbols
 
-\documentclass[preprint,12pt]{elsarticle}
-
-%% Use the option review to obtain double line spacing
-%% \documentclass[preprint,review,12pt]{elsarticle}
-
-%% Use the options 1p,twocolumn; 3p; 3p,twocolumn; 5p; or 5p,twocolumn
-%% for a journal layout:
-%% \documentclass[final,1p,times]{elsarticle}
-%% \documentclass[final,1p,times,twocolumn]{elsarticle}
-%% \documentclass[final,3p,times]{elsarticle}
-%% \documentclass[final,3p,times,twocolumn]{elsarticle}
-%% \documentclass[final,5p,times]{elsarticle}
-%% \documentclass[final,5p,times,twocolumn]{elsarticle}
-
-%% For including figures, graphicx.sty has been loaded in
-%% elsarticle.cls. If you prefer to use the old commands
-%% please give \usepackage{epsfig}
-
-%% The amssymb package provides various useful mathematical symbols
-\usepackage{amssymb}
-%% The amsmath package provides various useful equation environments.
-\usepackage{amsmath}
-%% The amsthm package provides extended theorem environments
-%% \usepackage{amsthm}
-
-%% The lineno packages adds line numbers. Start line numbering with
-%% \begin{linenumbers}, end it with \end{linenumbers}. Or switch it on
-%% for the whole article with \linenumbers.
-%% \usepackage{lineno}
-
-\journal{Journal of Molecular Biology}
+\title{Bayesian Hierarchical Modeling for Inferring Dynamic and Structurally Heterogeneous Protein Complex Structures}
+\author{Assistant}
+\date{\today}
 
 \begin{document}
 
-\begin{frontmatter}
+\maketitle
 
-%% Title, authors and addresses
-
-%% use the tnoteref command within \title for footnotes;
-%% use the tnotetext command for theassociated footnote;
-%% use the fnref command within \author or \affiliation for footnotes;
-%% use the fntext command for theassociated footnote;
-%% use the corref command within \author for corresponding author footnotes;
-%% use the cortext command for theassociated footnote;
-%% use the ead command for the email address,
-%% and the form \ead[url] for the home page:
-%% \title{Title\tnoteref{label1}}
-%% \tnotetext[label1]{}
-%% \author{Name\corref{cor1}\fnref{label2}}
-%% \ead{email address}
-%% \ead[url]{home page}
-%% \fntext[label2]{}
-%% \cortext[cor1]{}
-%% \affiliation{organization={},
-%%             addressline={},
-%%             city={},
-%%             postcode={},
-%%             state={},
-%%             country={}}
-%% \fntext[label3]{}
-
-\title{Bayesian Hierarchical Modeling for Protein Complex Assembly} %% Article title
-
-%% use optional labels to link authors explicitly to addresses:
-%% \author[label1,label2]{}
-%% \affiliation[label1]{organization={},
-%%             addressline={},
-%%             city={},
-%%             postcode={},
-%%             state={},
-%%             country={}}
-%%
-%% \affiliation[label2]{organization={},
-%%             addressline={},
-%%             city={},
-%%             postcode={},
-%%             state={},
-%%             country={}}
-
-\author[l1,l2]{Sree ganesh Balasubramani, Ignacia Echeverria} %% Author name
-%% Author affiliation
-\affiliation[l1]{organization={Quantitative Biosciences Institute},%Department and Organization
-            addressline={}, 
-            city={San Francisco},
-            postcode={}, 
-            state={California},
-            country={USA}}
-            \affiliation[l2]{organization={Quantitative Biosciences Institute},%Department and Organization
-            addressline={}, 
-            city={San Francisco},
-            postcode={}, 
-            state={California},
-            country={USA}}
-
-%% Abstract
 \begin{abstract}
-%% Text of abstract
-In this document, we describe a Bayesian hierarchical modeling framework to assemble protein 
-complexes using experimental data, such as crosslinking mass spectrometry and cryo-electron 
-microscopy (cryo-EM). This approach exploits the hierarchical nature of protein complex assembly 
-and integrates multiple data sources to infer the spatial structure of the complex. 
-We elaborate on the mathematical formulation with additional equations and illustrate the method 
-with a toy model problem based on distance restraints.
+This document presents a Bayesian hierarchical modeling framework for inferring the structures of dynamic and structurally heterogeneous protein complexes. We model the assembly hierarchically: dimers form the basic units, pairs of dimers assemble into tetramers, and multiple units combine into a non-symmetrical super structure. Experimental data (e.g., FRET, SAXS, cryo-EM) is available at each level, varying in type, resolution, and sparsity. We formulate a rigorous probabilistic model that integrates all data, propagates uncertainties across levels, and infers the full structure starting from any level. This version includes detailed mathematical derivations, likelihood formulations, and inference challenges.
 \end{abstract}
 
-%%Graphical abstract
-\begin{graphicalabstract}
-%\includegraphics{grabs}
-\end{graphicalabstract}
-
-%%Research highlights
-\begin{highlights}
-\end{highlights}
-
-%% Keywords
-\begin{keyword}
-Bayesian modeling, Protein complex assembly, Crosslinking mass spectrometry, Cryo-electron microscopy, 
-Structural inference % Suggesting keywords, please refine based on JMB guidelines and your content
-
-%% keywords here, in the form: keyword \sep keyword
-
-%% PACS codes here, in the form: \PACS code \sep code
-
-%% MSC codes here, in the form: \MSC code \sep code
-%% or \MSC[2008] code \sep code (2000 is the default)
-
-\end{keyword}
-
-\end{frontmatter}
-
-%% Add \usepackage{lineno} before \begin{document} and uncomment 
-%% following line to enable line numbers
-%% \linenumbers
-
-%% main text
-%%
 \section{Introduction}
-\label{sec:introduction}
+Protein complexes often exhibit dynamic behavior and structural heterogeneity, complicating their structural elucidation. Experimental data, such as Förster Resonance Energy Transfer (FRET) distances, Small-Angle X-ray Scattering (SAXS) profiles, and cryo-Electron Microscopy (cryo-EM) density maps, provide partial insights at different scales. We propose a Bayesian hierarchical model to integrate these diverse data sources, capturing the hierarchical assembly from dimers to tetramers to the full complex. Our approach accounts for data uncertainties, sparsity, and dependencies between structural levels, aiming to infer the complete structure with quantified uncertainties.
 
-In this document, we describe a Bayesian hierarchical modeling framework to assemble protein complexes 
-using experimental data, such as crosslinking mass spectrometry and cryo-electron microscopy (cryo-EM). 
-This approach exploits the hierarchical nature of protein complex assembly and integrates multiple data sources 
-to infer the spatial structure of the complex. We elaborate on the mathematical formulation with additional equations 
-and illustrate the method with a toy model problem based on distance restraints.
+\section{Hierarchical Structure and Parameters}
+The protein complex is assembled in a three-level hierarchy:
+\begin{enumerate}
+    \item \textbf{Dimer Level}: Two proteins form a dimer, the fundamental structural unit.
+    \item \textbf{Tetramer Level}: Two dimers combine into a tetramer.
+    \item \textbf{Super Structure Level}: Multiple units (e.g., tetramers) form a large, non-symmetrical complex.
+\end{enumerate}
 
-\section{Hierarchical Assembly Structure}
-\label{sec:hierarchical_assembly}
-
-Protein complex assembly can be represented as a tree:
+\subsection{Parameter Definitions}
+We define parameters at each level:
 \begin{itemize}
-    \item \textbf{Leaves}: Individual proteins (e.g., $P_1, P_2, \ldots, P_n$).
-    \item \textbf{Internal Nodes}: Subcomplexes formed by combining their children (e.g., $C_1$ formed by $P_1$ and $P_2$).
-    \item \textbf{Root}: The fully assembled complex.
+    \item \textbf{Dimer Parameters}, \(\theta_d = \{\mathbf{r}_{d,i}, \mathbf{\Omega}_{d,i}\}_{i=1}^{N_d}\):
+    \begin{itemize}
+        \item \(\mathbf{r}_{d,i} \in \mathbb{R}^3\): Atomic coordinates of protein \(i\) in the dimer.
+        \item \(\mathbf{\Omega}_{d,i} \in SO(3)\): Orientation of protein \(i\) (represented as a rotation matrix).
+        \item \(N_d\): Number of dimers (e.g., if modeling multiple dimer instances).
+    \end{itemize}
+    \item \textbf{Tetramer Parameters}, \(\theta_t = \{\mathbf{r}_{t,j}, \mathbf{\Omega}_{t,j}, \phi_{t,j}\}_{j=1}^{N_t}\):
+    \begin{itemize}
+        \item \(\mathbf{r}_{t,j} \in \mathbb{R}^3\): Center-of-mass position of tetramer \(j\).
+        \item \(\mathbf{\Omega}_{t,j} \in SO(3)\): Orientation of tetramer \(j\).
+        \item \(\phi_{t,j} \in \mathbb{R}^k\): Internal degrees of freedom (e.g., angles between dimers).
+        \item \(N_t\): Number of tetramers.
+    \end{itemize}
+    \item \textbf{Super Structure Parameters}, \(\theta_s = \{\mathbf{r}_{s,k}, \mathbf{\Omega}_{s,k}, \psi_{s,k}\}_{k=1}^{N_s}\):
+    \begin{itemize}
+        \item \(\mathbf{r}_{s,k} \in \mathbb{R}^3\): Position of unit \(k\) (e.g., tetramer or other subunit).
+        \item \(\mathbf{\Omega}_{s,k} \in SO(3)\): Orientation of unit \(k\).
+        \item \(\psi_{s,k} \in \mathbb{R}^m\): Parameters for higher-order interactions or deformations.
+        \item \(N_s\): Number of units in the super structure.
+    \end{itemize}
 \end{itemize}
 
-For example, a complex $C$ might consist of a subcomplex $C_1$ (formed by $P_1$ and $P_2$) and protein $P_3$, depicted as:
-\[
-\begin{array}{c}
-C \\
-/ \quad \backslash \\
-C_1 \quad P_3 \\
-/ \backslash \\
-P_1 \quad P_2
-\end{array}
-\]
-
-\section{Parameterization with Transformations}
-\label{sec:parameterization}
-
-The spatial configuration is parameterized using rigid transformations (rotations and translations):
+\subsection{Hierarchical Dependencies}
+Parameters are linked via conditional priors:
 \begin{itemize}
-    \item For each edge from a parent to a child node, define a relative transformation $T_{\text{child}|\text{parent}}$.
-    \item The absolute transformation of a node is the composition of relative transformations from the root to that node.
+    \item \(p(\theta_t \mid \theta_d)\): Tetramer structure depends on dimer structures. For example, \(\mathbf{r}_{t,j}\) and \(\mathbf{\Omega}_{t,j}\) are functions of the positions and orientations of the constituent dimers.
+    \item \(p(\theta_s \mid \theta_t, \theta_d)\): Super structure depends on tetramers and, indirectly, dimers. This reflects the physical assembly process.
 \end{itemize}
 
-For the example above:
+These dependencies propagate uncertainties: errors in \(\theta_d\) affect \(\theta_t\), which in turn affect \(\theta_s\).
+
+\section{Incorporating Experimental Data}
+Experimental data informs each level:
 \begin{itemize}
-    \item $T_{C_1|C}$: Positions $C_1$ relative to $C$.
-    \item $T_{P_3|C}$: Positions $P_3$ relative to $C$.
-    \item $T_{P_1|C_1}$ and $T_{P_2|C_1}$: Position $P_1$ and $P_2$ within $C_1$.
-    \item Absolute transformation of $P_2$: $T_{P_2} = T_{C_1|C} \cdot T_{P_2|C_1}$.
+    \item \(D_d\): Dimer-specific data (e.g., FRET distances between residues).
+    \item \(D_t\): Tetramer-specific data (e.g., SAXS scattering profiles).
+    \item \(D_s\): Super structure data (e.g., cryo-EM density maps).
 \end{itemize}
 
-A transformation $T$ can be represented as a rotation matrix $R \in SO(3)$ and a translation vector $\mathbf{t} 
-\in \mathbb{R}^3$, applied to a point $\mathbf{x}$ as:
-\[
-\mathbf{x}' = R \mathbf{x} + \mathbf{t}
-\]
-
-\section{Prior Distributions}
-\label{sec:priors}
-
-Priors encode prior knowledge about transformations:
+\subsection{Likelihood Functions}
+Likelihoods connect data to parameters:
 \begin{itemize}
-    \item \textbf{Rotations}: Use a von Mises-Fisher distribution on $SO(3)$:
-    \[
-    p(R) \propto \exp(\kappa \cdot \text{tr}(R_0^T R))
-    \]
-    where $R_0$ is the mean orientation, $\kappa$ is the concentration parameter, and $\text{tr}$ is the trace.
-    \item \textbf{Translations}: Use a multivariate normal distribution:
-    \[
-    p(\mathbf{t}) = \frac{1}{(2\pi)^{3/2} |\Sigma|^{1/2}} \exp\left(-\frac{1}{2} (\mathbf{t} - \mathbf{t}_0)^T \Sigma^{-1} (\mathbf{t} - \mathbf{t}_0)\right)
-    \]
-    where $\mathbf{t}_0$ is the mean translation and $\Sigma$ is the covariance matrix.
+    \item \(p(D_d \mid \theta_d)\): Probability of dimer data given dimer parameters.
+    \item \(p(D_t \mid \theta_t, \theta_d)\): Tetramer data likelihood, potentially depending on dimer details.
+    \item \(p(D_s \mid \theta_s, \theta_t, \theta_d)\): Super structure likelihood, integrating all levels.
 \end{itemize}
 
-For tight subcomplexes, $\kappa$ is large and $\Sigma$ has small variances; for looser associations, they are broader.
-
-\section{Likelihood Based on Experimental Data}
-\label{sec:likelihood}
-
-The likelihood quantifies how well the model fits the data:
+\subsubsection{Detailed Likelihood Examples}
+\paragraph{FRET Data (\(D_d\))}:
 \begin{itemize}
-    \item \textbf{Crosslinking Mass Spectrometry}: Provides distance restraints. For a crosslink between residues $i$ and $j$ with positions $\mathbf{x}_i$ and $\mathbf{x}_j$, the distance is:
+    \item Data: Distance \(d_{ij}\) between residues \(i\) and \(j\) with uncertainty \(\sigma_{ij}\).
+    \item Model: Distance computed from \(\theta_d\) as \(\text{dist}(\theta_d, i, j) = \|\mathbf{r}_{d,i} - \mathbf{r}_{d,j}\|\).
+    \item Likelihood:
     \[
-    d_{ij} = \|\mathbf{x}_i - \mathbf{x}_j\|_2
-    \]
-    The likelihood is:
-    \[
-    P(\text{crosslink}_{ij} | T) = \frac{1}{\sqrt{2\pi} \sigma} \exp\left(-\frac{(d_{ij} - d_0)^2}{2\sigma^2}\right)
-    \]
-    where $d_0$ is the expected distance and $\sigma$ is the uncertainty.
-    \item \textbf{Cryo-EM}: Provides a density map $\rho_{\text{obs}}$. The predicted density $\rho_{\text{pred}}(T)$ depends on the transformations. The likelihood can use cross-correlation (CC):
-    \[
-    \text{CC} = \frac{\int \rho_{\text{obs}}(\mathbf{r}) \rho_{\text{pred}}(\mathbf{r}) d\mathbf{r}}{\sqrt{\int \rho_{\text{obs}}^2(\mathbf{r}) d\mathbf{r} \int \rho_{\text{pred}}^2(\mathbf{r}) d\mathbf{r}}}
-    \]
-    \[
-    P(\text{density} | T) \propto \exp\left(-\frac{(1 - \text{CC})^2}{2\sigma_{\text{EM}}^2}\right)
+    p(d_{ij} \mid \theta_d) = \frac{1}{\sqrt{2\pi \sigma_{ij}^2}} \exp\left( -\frac{1}{2\sigma_{ij}^2} \left[ d_{ij} - \text{dist}(\theta_d, i, j) \right]^2 \right).
     \]
 \end{itemize}
 
-Total likelihood:
-\[
-P(\text{data} | T) = \prod_{\text{crosslinks}} P(\text{crosslink}_{ij} | T) \cdot P(\text{density} | T)
-\]
-
-\section{Bayesian Inference}
-\label{sec:bayesian_inference}
-
-The posterior distribution combines the likelihood and prior:
-\[
-P(T | \text{data}) = \frac{P(\text{data} | T) P(T)}{P(\text{data})}
-\]
-Since $P(\text{data})$ is a normalizing constant, we sample from:
-\[
-P(T | \text{data}) \propto P(\text{data} | T) P(T)
-\]
-using methods like Markov Chain Monte Carlo (MCMC).
-
-The log-posterior, useful for optimization, is:
-\[
-\log P(T | \text{data}) = \log P(\text{data} | T) + \log P(T) + \text{constant}
-\]
-
-\section{Toy Model Problem}
-\label{sec:toy_model}
-
-Consider a complex with three proteins: $P_1$, $P_2$, and $P_3$, where $P_1$ and $P_2$ form subcomplex $C_1$, and $C_1$ joins $P_3$ to form $C$:
-\[
-\begin{array}{c}
-C \\
-/ \quad \backslash \\
-C_1 \quad P_3 \\
-/ \backslash \\
-P_1 \quad P_2
-\end{array}
-\]
-
-\subsection{Experimental Data}
-\label{subsec:experimental_data}
-Distance restraints from crosslinking:
+\paragraph{SAXS Data (\(D_t\) or \(D_s\))}:
 \begin{itemize}
-    \item $P_1$ (residue at $\mathbf{x}_{P_1}$) to $P_2$ (residue at $\mathbf{x}_{P_2}$): $d_1 = 10$ \AA, $\sigma_1 = 1$ \AA.
-    \item $P_2$ (residue at $\mathbf{x}_{P_2}$) to $P_3$ (residue at $\mathbf{x}_{P_3}$): $d_2 = 15$ \AA, $\sigma_2 = 1.5$ \AA.
-\end{itemize}
-
-\subsection{Parameterization}
-\label{subsec:toy_parameterization}
-Define transformations:
-\begin{itemize}
-    \item $T_{C_1|C} = (R_{C_1|C}, \mathbf{t}_{C_1|C})$: $C_1$ relative to $C$.
-    \item $T_{P_3|C} = (R_{P_3|C}, \mathbf{t}_{P_3|C})$: $P_3$ relative to $C$.
-    \item $T_{P_1|C_1} = (R_{P_1|C_1}, \mathbf{t}_{P_1|C_1})$: $P_1$ relative to $C_1$.
-    \item $T_{P_2|C_1} = (R_{P_2|C_1}, \mathbf{t}_{P_2|C_1})$: $P_2$ relative to $C_1$.
-\end{itemize}
-
-Absolute positions:
-\begin{itemize}
-    \item $\mathbf{x}_{P_1} = T_{C_1|C} T_{P_1|C_1} \mathbf{x}_{P_1}^0$.
-    \item $\mathbf{x}_{P_2} = T_{C_1|C} T_{P_2|C_1} \mathbf{x}_{P_2}^0$.
-    \item $\mathbf{x}_{P_3} = T_{P_3|C} \mathbf{x}_{P_3}^0$.
-\end{itemize}
-where $\mathbf{x}^0$ are coordinates in the protein’s reference frame.
-
-\subsection{Priors}
-\label{subsec:toy_priors}
-\begin{itemize}
-    \item $R_{P_1|C_1}$, $R_{P_2|C_1}$: von Mises-Fisher with $\kappa = 10$, centered at identity.
-    \item $\mathbf{t}_{P_1|C_1}$, $\mathbf{t}_{P_2|C_1}$: $\mathcal{N}(\mathbf{0}, \sigma_t^2 I)$, $\sigma_t = 2$ \AA.
-    \item $T_{C_1|C}$, $T_{P_3|C}$: Broader priors (e.g., $\kappa = 1$, $\sigma_t = 5$ \AA).
+    \item Data: Scattering intensity \(I(q)\) at momentum transfer \(q\), with noise covariance \(\Sigma\).
+    \item Model: Forward model \(I(q; \theta)\) computes intensity from structure (e.g., Debye formula for \(\theta_t\)).
+    \item Likelihood:
+    \[
+    p(I(q) \mid \theta) = (2\pi)^{-M/2} |\Sigma|^{-1/2} \exp\left( -\frac{1}{2} [I(q) - I(q; \theta)]^\top \Sigma^{-1} [I(q) - I(q; \theta)] \right),
+    \]
+    where \(M\) is the number of \(q\)-points.
 \end{itemize}
 
 \section{Conclusion}
-\label{sec:conclusion}
+This model integrates multi-level data, propagates uncertainties, and provides a flexible framework for protein complex inference. Its complexity demands advanced computational methods, but it offers a robust solution for structural biology challenges.
 
-This framework provides a robust method for protein complex assembly, integrating hierarchical modeling with experimental data. The toy model demonstrates its application to simple systems, extensible to larger complexes with additional data.
-
-%% The Appendices part is started with the command \appendix;
-%% appendix sections are then done as normal sections
-\appendix
-\section{Example Appendix Section}
-\label{app1}
-
-Appendix text.
-
-%% For citations use: 
-%%       \citet{<label>} ==> Lamport [21]
-%%       \citep{<label>} ==> [21]
-%%
-Example citation, See \citet{lamport94}.
-
-%% If you have bib database file and want bibtex to generate the
-%% bibitems, please use
-%%
-%%  \bibliographystyle{elsarticle-num-names} 
-%%  \bibliography{<your bibdatabase>}
-
-%% else use the following coding to input the bibitems directly in the
-%% TeX file.
-
-%% Refer following link for more details about bibliography and citations.
-%% https://en.wikibooks.org/wiki/LaTeX/Bibliography_Management
-
-\begin{thebibliography}{00}
-
-%% For authoryear reference style
-%% \bibitem[Author(year)]{label}
-%% Text of bibliographic item
-
-\bibitem[Lamport(1994)]{lamport94}
-  Leslie Lamport,
-  \textit{\LaTeX: a document preparation system},
-  Addison Wesley, Massachusetts,
-  2nd edition,
-  1994.
-
-\end{thebibliography}
 \end{document}
-
-\endinput
-%%
-%% End of file `elsarticle-template-num-names.tex'.
