@@ -1,13 +1,10 @@
 import os
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 
 from typing import Dict, List, Type
 from collections import defaultdict
 
 from parameters import SystemParameters
-from base_sampler import BaseMCSampler
+#from base_sampler import BaseMCSampler
 from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
 from octet_sampler import OctetSampler
@@ -25,7 +22,7 @@ SAMPLER_MAP = {
 }
 
 def run_hierarchical_sampling(
-    sampler_class: Type[BaseMCSampler],
+    sampler_class: Type[PairSampler],
     n_chains: int = 1,
     n_steps: int = 300000,
     save_freq: int = 300,
@@ -111,8 +108,8 @@ def main():
             "run": True,
             #"run": False,
             "n_chains": 1,
-            "n_steps": 30000,
-            "save_freq": 300,
+            "n_steps": 1000,
+            "save_freq": 10,
             "use_sigma_dist": True, # Example of sampler-specific parameter
         },
          "octet_sampler": { # Example configuration for OctamerSampler
