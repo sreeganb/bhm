@@ -130,11 +130,11 @@ class PairSampler(BaseMCSampler):
             sigma_history = {key: [] for key in self.sigma}
 
             # Initialize debug file
-            debug_file = os.path.join(output_dir, "debug_mcmc.txt")
-            with open(debug_file, "w") as f:
-                f.write("# MCMC Debugging Information\n")
-                f.write("# This file tracks excluded volume violations and acceptance decisions\n")
-                f.write("-" * 80 + "\n\n")
+            #debug_file = os.path.join(output_dir, "debug_mcmc.txt")
+            #with open(debug_file, "w") as f:
+            #    f.write("# MCMC Debugging Information\n")
+            #    f.write("# This file tracks excluded volume violations and acceptance decisions\n")
+            #    f.write("-" * 80 + "\n\n")
 
             current_score, curr_excl_initial, curr_pair_initial, curr_prior_initial = self.calculate_score(
                 self.positions_ps, self.sigma, self.sigma_range, step=0
@@ -142,13 +142,13 @@ class PairSampler(BaseMCSampler):
             best_score = current_score  # Start with current as best
 
             # Log initial state
-            with open(debug_file, "a") as f:
-                f.write(f"INITIAL STATE\n")
-                f.write(f"Initial Score: {current_score:.3f}, ExVol: {curr_excl_initial:.3f}, "
-                        f"Pair: {curr_pair_initial:.3f}, Prior: {curr_prior_initial:.3f}\n\n")
-                
-                # Check for overlaps in initial state
-                self._log_overlaps(f, self.positions_ps, "Initial")
+            #with open(debug_file, "a") as f:
+            #    f.write(f"INITIAL STATE\n")
+            #    f.write(f"Initial Score: {current_score:.3f}, ExVol: {curr_excl_initial:.3f}, "
+            #            f"Pair: {curr_pair_initial:.3f}, Prior: {curr_prior_initial:.3f}\n\n")
+            #    
+            #    # Check for overlaps in initial state
+            #    self._log_overlaps(f, self.positions_ps, "Initial")
 
             # Rest of setup is unchanged
             initial_temp = 5.0
@@ -244,54 +244,54 @@ class PairSampler(BaseMCSampler):
                         print(f"Accepted Step {accepted_moves}, Score: {current_score:.2f}, T: {temp:.4f}, AcceptRate: {accept_rate:.2f}")
                 
                 # Write debug information for all steps with overlaps, and periodic summaries
-                if has_overlaps or total_moves % 1000 == 0:
-                    with open(debug_file, "a") as f:
-                        f.write(f"Move {total_moves} ({move_description}): ")
-                        f.write(f"Proposed Score={proposed_score:.1f}, ExVol={curr_excl:.3f}, ")
-                        f.write(f"Pair={curr_pair:.1f}, Prior={curr_prior:.3f}, ")
-                        f.write(f"Delta={delta_e:.1f}, Temp={temp:.3f}, ")
-                        f.write(f"Accepted: {accepted}\n")
-                        
-                        if has_overlaps:
-                            self._log_overlaps(f, proposed_positions, "Proposed")
-                            f.write(f"OVERLAP STATE {'ACCEPTED' if accepted else 'REJECTED'}\n\n")
+                #if has_overlaps or total_moves % 1000 == 0:
+                    #with open(debug_file, "a") as f:
+                    #    f.write(f"Move {total_moves} ({move_description}): ")
+                    #    f.write(f"Proposed Score={proposed_score:.1f}, ExVol={curr_excl:.3f}, ")
+                    #    f.write(f"Pair={curr_pair:.1f}, Prior={curr_prior:.3f}, ")
+                    #    f.write(f"Delta={delta_e:.1f}, Temp={temp:.3f}, ")
+                    #    f.write(f"Accepted: {accepted}\n")
+                    #    
+                    #    if has_overlaps:
+                    #        self._log_overlaps(f, proposed_positions, "Proposed")
+                    #        f.write(f"OVERLAP STATE {'ACCEPTED' if accepted else 'REJECTED'}\n\n")
                 
                 # Log all steps to all_log_file
                 with open(all_log_file, "a") as f:
                     f.write(f"{total_moves},{proposed_score:.1f},{curr_excl:.1f},{curr_pair:.1f},{curr_prior:.1f},{delta_e:.1f},{accepted_moves:.1f}\n")
                 
                 # Periodically write summary statistics
-                if total_moves % 1000 == 0:
-                    with open(debug_file, "a") as f:
-                        overlap_rate = total_with_overlaps / total_moves * 100
-                        if total_with_overlaps > 0:
-                            overlap_accept_rate = accepted_with_overlaps / total_with_overlaps * 100
-                        else:
-                            overlap_accept_rate = 0
-                            
-                        f.write(f"\nSUMMARY at move {total_moves}:\n")
-                        f.write(f"- Total moves with overlaps: {total_with_overlaps}/{total_moves} ({overlap_rate:.1f}%)\n")
-                        f.write(f"- Moves with overlaps that were accepted: {accepted_with_overlaps}/{total_with_overlaps} ({overlap_accept_rate:.1f}%)\n")
-                        f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n\n")
-                        f.write("-" * 50 + "\n\n")
+#                if total_moves % 1000 == 0:
+#                    with open(debug_file, "a") as f:
+#                        overlap_rate = total_with_overlaps / total_moves * 100
+#                        if total_with_overlaps > 0:
+#                            overlap_accept_rate = accepted_with_overlaps / total_with_overlaps * 100
+#                        else:
+#                            overlap_accept_rate = 0
+#                            
+#                        f.write(f"\nSUMMARY at move {total_moves}:\n")
+#                        f.write(f"- Total moves with overlaps: {total_with_overlaps}/{total_moves} ({overlap_rate:.1f}%)\n")
+#                        f.write(f"- Moves with overlaps that were accepted: {accepted_with_overlaps}/{total_with_overlaps} ({overlap_accept_rate:.1f}%)\n")
+#                        f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n\n")
+#                        f.write("-" * 50 + "\n\n")
                         
             # Store final positions
             final_positions = {k: v.copy() for k, v in self.positions_ps.items()}
 
             # Write final debug summary
-            with open(debug_file, "a") as f:
-                f.write("\nFINAL SUMMARY:\n")
-                f.write(f"- Total moves: {total_moves}\n")
-                f.write(f"- Accepted moves: {accepted_moves}\n")
-                f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n")
-                f.write(f"- Total moves with overlaps: {total_with_overlaps}/{total_moves} ({total_with_overlaps/total_moves*100:.1f}%)\n")
-                if total_with_overlaps > 0:
-                    f.write(f"- Acceptance rate for moves with overlaps: {accepted_with_overlaps}/{total_with_overlaps} ({accepted_with_overlaps/total_with_overlaps*100:.1f}%)\n")
-                f.write(f"- Final score: {current_score:.2f}\n")
-                f.write(f"- Best score: {best_score:.2f}\n")
-                
-                # Check final state for overlaps
-                self._log_overlaps(f, final_positions, "Final")
+#            with open(debug_file, "a") as f:
+#                f.write("\nFINAL SUMMARY:\n")
+#                f.write(f"- Total moves: {total_moves}\n")
+#                f.write(f"- Accepted moves: {accepted_moves}\n")
+#                f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n")
+#                f.write(f"- Total moves with overlaps: {total_with_overlaps}/{total_moves} ({total_with_overlaps/total_moves*100:.1f}%)\n")
+#                if total_with_overlaps > 0:
+#                    f.write(f"- Acceptance rate for moves with overlaps: {accepted_with_overlaps}/{total_with_overlaps} ({accepted_with_overlaps/total_with_overlaps*100:.1f}%)\n")
+#                f.write(f"- Final score: {current_score:.2f}\n")
+#                f.write(f"- Best score: {best_score:.2f}\n")
+#                
+#                # Check final state for overlaps
+#                self._log_overlaps(f, final_positions, "Final")
             
             # Clean up
             self.pairs_log_file = None  # Clear the file handle reference

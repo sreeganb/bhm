@@ -20,6 +20,10 @@ from scipy.spatial.distance import cdist
 from typing import Dict, List, Tuple
 from scipy.stats import multivariate_normal
 from pair_sampler import PairSampler
+import cProfile
+import pstats
+import io
+import numba as nb
 #-----------------------------------------------------------------------
 class TetramerSampler(BaseMCSampler):
     """
@@ -33,7 +37,7 @@ class TetramerSampler(BaseMCSampler):
         self.use_sigma_distribution = use_sigma_distribution
         
         # Initialize features for tetramer-specific sampling
-        self.tetramer_trans_step = 0.25
+        self.tetramer_trans_step = 0.1
         self.tetramer_rot_step = 0.1
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
@@ -268,67 +272,68 @@ class TetramerSampler(BaseMCSampler):
             
         return -np.sum(valid_priors)
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.95) -> List[Tuple[int, ...]]:
-        """Optimized tetramer selection with vectorized operations and robust error handling."""
+    def _compute_probabilities(self, dist_matrix: np.ndarray) -> np.ndarray:
+        """
+        Given a distance matrix, subtract the minimum distance along each row,
+        exponentiate, and then normalize to get probability vectors.
+        """
+        min_vals = dist_matrix.min(axis=1, keepdims=True)
+        exp_terms = np.exp(-(dist_matrix - min_vals))
+        row_sums = exp_terms.sum(axis=1, keepdims=True) + 1e-10
+        return exp_terms / row_sums
+
+    def _random_indices_from_probs(self, prob_matrix: np.ndarray) -> np.ndarray:
+        """
+        For each row of prob_matrix, randomly sample a single index 
+        according to the probabilities in that row.
+        """
+        n_rows, n_cols = prob_matrix.shape
+        indices = np.empty(n_rows, dtype=int)
+        for i in range(n_rows):
+            indices[i] = np.random.choice(n_cols, p=prob_matrix[i])
+        return indices
+
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
+        """Simplified tetramer selection with clear helper routines."""
         try:
-            # Ensure positions exist for all required components
+            # Basic checks
             for comp in ['A', 'B', 'C']:
                 if comp not in positions or len(positions[comp]) == 0:
-                    return []  # Cannot form tetramers with missing components
+                    return []
             
             a_positions = positions['A']
-            b_positions = positions['B'] 
+            b_positions = positions['B']
             c_positions = positions['C']
             
             n_a, n_b, n_c = len(a_positions), len(b_positions), len(c_positions)
             if n_a == 0 or n_b == 0 or n_c < 2:
-                return []  # Not enough particles to form tetramers
-                
-            # Pre-allocate results array for better memory efficiency
-            tetramers = []
+                return []
             
-            # Use SciPy's optimized distance calculation
-            dist_AB = cdist(a_positions, b_positions) / max(0.1, temp)  # Prevent division by zero
-            
-            # Efficiently compute probabilities with numerical stability
-            # First subtract minimum to prevent underflow
-            min_dist_AB = np.min(dist_AB, axis=1, keepdims=True)
-            exp_terms = np.exp(-(dist_AB - min_dist_AB))
-            probs_B = exp_terms / np.sum(exp_terms, axis=1, keepdims=True)
-            
-            # Handle edge case of zero probabilities
+            # Distance from A to B
+            dist_AB = cdist(a_positions, b_positions) / max(0.1, temp)
+            probs_B = self._compute_probabilities(dist_AB)
             probs_B = np.nan_to_num(probs_B, nan=1.0/n_b)
+            b_indices = self._random_indices_from_probs(probs_B)
             
-            # Vectorized B index selection (still using loop for random choice)
-            b_indices = np.empty(n_a, dtype=int)
-            for i in range(n_a):
-                b_indices[i] = np.random.choice(n_b, p=probs_B[i])
-            
-            # Compute distances from selected B positions to all C positions
+            # Distance from chosen B to all C
             dist_BC = cdist(b_positions[b_indices], c_positions) / max(0.1, temp)
+            probs_C = self._compute_probabilities(dist_BC)
             
-            # Optimize probability calculation
-            min_dist_BC = np.min(dist_BC, axis=1, keepdims=True)
-            exp_terms = np.exp(-(dist_BC - min_dist_BC))
-            probs_C = exp_terms / (np.sum(exp_terms, axis=1, keepdims=True) + 1e-10)
-            
-            # Vectorized tetramer formation
+            # Build the tetramers
+            tetramers = []
             for a_idx in range(n_a):
                 if np.sum(probs_C[a_idx]) < 1e-10 or n_c < 2:
-                    # Random selection for degenerate cases
                     c_indices = np.random.choice(n_c, size=2, replace=(n_c < 2))
                 else:
-                    # Normalize probabilities for numerical stability
-                    p_norm = probs_C[a_idx] / (np.sum(probs_C[a_idx]) + 1e-10)
+                    p_norm = probs_C[a_idx] / (probs_C[a_idx].sum() + 1e-10)
                     c_indices = np.random.choice(n_c, size=2, replace=False, p=p_norm)
-                    
                 tetramers.append((a_idx, b_indices[a_idx], c_indices[0], c_indices[1]))
-                
+
             return tetramers
-            
+
         except Exception as e:
             print(f"Error generating tetramers: {e}")
-            return []  # Return empty list on error for graceful failure
+            return [] # Return empty list on error for graceful failure
 #-----------------------------------------------------------------------  
     def run_mc(self, n_steps: int = 50000, save_freq: int = 100, 
             output_dir: str = "output_analysis/tetramersampler_results/") -> Tuple:
@@ -344,13 +349,13 @@ class TetramerSampler(BaseMCSampler):
         # Setup output directory and file handles
         os.makedirs(output_dir, exist_ok=True)
         csv_log_file = os.path.join(output_dir, "all_info_mcmc_tetramer.csv")
-        debug_file = os.path.join(output_dir, "debug_mcmc.txt")
+        #debug_file = os.path.join(output_dir, "debug_mcmc.txt")
         csv_buffer = []  # Buffer for delayed CSV writes
         
         # Debug file setup 
-        with open(debug_file, "w") as f:
-            f.write("# TetramerSampler MCMC Debug Log\n")
-            f.write("# Overlap checking has been removed\n\n")
+#        with open(debug_file, "w") as f:
+#            f.write("# TetramerSampler MCMC Debug Log\n")
+#            f.write("# Overlap checking has been removed\n\n")
         
         # Initialize counters with pre-allocation
         moves_counts = {'position': 0, 'sigma': 0, 'tetramer': 0}
@@ -373,10 +378,10 @@ class TetramerSampler(BaseMCSampler):
             self.positions_ts, current_tetramers, prior_penalty, self.sigma)
         
         # Debug initial scores
-        with open(debug_file, "a") as f:
-            f.write(f"INITIAL STATE\n")
-            f.write(f"Initial Score: {current_score:.1f}, ExVol: {curr_ex:.3f}, ")
-            f.write(f"Pair: {curr_pair:.1f}, Tet: {curr_tet:.1f}, Prior: {prior_penalty:.1f}\n\n")
+#        with open(debug_file, "a") as f:
+#            f.write(f"INITIAL STATE\n")
+#            f.write(f"Initial Score: {current_score:.1f}, ExVol: {curr_ex:.3f}, ")
+#            f.write(f"Pair: {curr_pair:.1f}, Tet: {curr_tet:.1f}, Prior: {prior_penalty:.1f}\n\n")
         
         # Store initial sigma values
         for i, (key, value) in enumerate(self.sigma.items()):
@@ -434,12 +439,12 @@ class TetramerSampler(BaseMCSampler):
             accept_move = delta_e < 0 or np.random.random() < np.exp(-delta_e / max(temp, 1e-10))
             
             # Debug logging (simplified, overlap info removed)
-            if total_moves % 1000 == 0:
-                with open(debug_file, "a") as f:
-                    f.write(f"\nSUMMARY at move {total_moves}:\n")
-                    f.write(f"- Accepted moves: {accepted_moves}/{n_steps}\n")
-                    f.write(f"- Overall acceptance rate: {accepted_moves/max(1,total_moves):.3f}\n")
-                    f.write("-" * 50 + "\n\n")
+#            if total_moves % 1000 == 0:
+#                with open(debug_file, "a") as f:
+#                    f.write(f"\nSUMMARY at move {total_moves}:\n")
+#                    f.write(f"- Accepted moves: {accepted_moves}/{n_steps}\n")
+#                    f.write(f"- Overall acceptance rate: {accepted_moves/max(1,total_moves):.3f}\n")
+#                    f.write("-" * 50 + "\n\n")
             
             # Update state if accepted
             if accept_move:
@@ -496,13 +501,13 @@ class TetramerSampler(BaseMCSampler):
         trajectory_file = os.path.join(output_dir, "trajectory.h5")
         final_file = self.save_trajectory(trajectory, trajectory_file)
         
-        with open(debug_file, "a") as f:
-            f.write("\nFINAL SUMMARY:\n")
-            f.write(f"- Total iterations: {total_moves}\n")
-            f.write(f"- Accepted moves: {accepted_moves}\n")
-            f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n")
-            f.write(f"- Final score: {current_score:.2f}\n")
-            f.write(f"- Best score: {best_score:.2f}\n")
+#        with open(debug_file, "a") as f:
+#            f.write("\nFINAL SUMMARY:\n")
+#            f.write(f"- Total iterations: {total_moves}\n")
+#            f.write(f"- Accepted moves: {accepted_moves}\n")
+#            f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n")
+#            f.write(f"- Final score: {current_score:.2f}\n")
+#            f.write(f"- Best score: {best_score:.2f}\n")
         
         print(f"\nSampling complete: {accepted_moves} accepted moves out of {total_moves} iterations")
         for move_type in moves_counts:
@@ -517,7 +522,7 @@ class TetramerSampler(BaseMCSampler):
         new_pos = {k: v.copy() for k, v in positions.items()}
         
         # Get tetramers with temperature parameter that encourages exploration
-        tetramers = self.get_tetramers(positions, temp=0.95)
+        tetramers = self.get_tetramers(positions, temp=0.9)
         
         if not tetramers:
             return new_pos
@@ -525,7 +530,7 @@ class TetramerSampler(BaseMCSampler):
         # Define move types and normalized probabilities (ensuring they sum to exactly 1.0)
         move_types = ['single_tetramer', 'coordinated_pair', 'radial', 'global_rotation', 'aggressive']
         #probs = np.array([0.99, 0.0015, 0.0025, 0.0015, 0.0045])
-        probs = np.array([1.0, 0.0, 0.0, 0.0, 0.0])
+        probs = np.array([0.89, 0.0, 0.03, 0.07, 0.01])
         probs /= np.sum(probs)  # Normalize to ensure sum is exactly 1.0
         
         # Choose a move type with probability
@@ -567,7 +572,7 @@ class TetramerSampler(BaseMCSampler):
         coords_array = np.array([new_pos[part][idx] for part, idx in particles])
         
         # Generate a single 3D displacement vector for all particles
-        trans_step = trans_base * trans_adjust * np.random.uniform(0.7, 1.3)
+        trans_step = trans_base * trans_adjust * np.random.uniform(0.5, 1.5)
         displacement = np.random.normal(0, trans_step, 3)  # Fixed: Generate a 3D vector
             
         # Apply the same displacement to all particles
@@ -575,7 +580,7 @@ class TetramerSampler(BaseMCSampler):
             new_pos[part][idx] = self._apply_boundary_conditions(coords_array[i] + displacement)
         
         # Apply rotation with probability
-        if np.random.random() < 0.95:
+        if np.random.random() < 0.9:
             # Use pre-calculated centroid
             centroid = np.mean(coords_array, axis=0)
             

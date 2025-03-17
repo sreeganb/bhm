@@ -12,6 +12,10 @@ from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
 from octet_sampler import OctetSampler
 from visualization import visualize_3d_configuration, visualize_trajectory_plotly
+import cProfile
+import pstats
+import io
+
 #from graph_results import SigmaAnalyzer
 
 SAMPLER_MAP = {
@@ -96,19 +100,19 @@ def run_hierarchical_sampling(
 def main():
     run_config = {
         "pair_sampler": {
-            #"run": False,
-            "run": True,
+            "run": False,
+            #"run": True,
             "n_chains": 1,
-            "n_steps": 100000,
-            "save_freq": 500,
+            "n_steps": 1000,
+            "save_freq": 100,
             "use_sigma_dist": False, # Example of sampler-specific parameter
         },
         "tetramer_sampler": {
-            #"run": True,
-            "run": False,
+            "run": True,
+            #"run": False,
             "n_chains": 1,
-            "n_steps": 20000,
-            "save_freq": 10,
+            "n_steps": 30000,
+            "save_freq": 300,
             "use_sigma_dist": True, # Example of sampler-specific parameter
         },
          "octet_sampler": { # Example configuration for OctamerSampler
@@ -127,11 +131,15 @@ def main():
     last_sigma = None # To hold sigma from previous level if hierarchical
 
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
-    sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
-    #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
+    sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
 
+    # Profile the output 
+    profil = True
+    if profil == True:
+        profile_output = "profile_output.prof"
     for sampler_key in sampler_sequence:
         config = run_config[sampler_key]
         if config["run"]:
@@ -140,20 +148,33 @@ def main():
             sampler_class = SAMPLER_MAP[sampler_name]
 
             print(f"\nStarting sampling with {sampler_name}...")
-            results = run_hierarchical_sampling(
-                sampler_class=sampler_class,
-                n_chains=config["n_chains"],
-                n_steps=config["n_steps"],
-                save_freq=config["save_freq"],
-                use_sigma_distribution=config["use_sigma_dist"], 
-                output_folder=output_folder
-            )
-            sampler_results[sampler_key] = results
+            if profil == True:
+                # Use runctx instead of run to properly access local variables
+                statement = 'results = run_hierarchical_sampling(sampler_class=sampler_class, n_chains=config["n_chains"], n_steps=config["n_steps"], save_freq=config["save_freq"], use_sigma_distribution=config["use_sigma_dist"], output_folder=output_folder)'
+                cProfile.runctx(statement, globals(), locals(), profile_output)
+            else:
+                results = run_hierarchical_sampling(
+                    sampler_class=sampler_class,
+                    n_chains=config["n_chains"],
+                    n_steps=config["n_steps"],
+                    save_freq=config["save_freq"],
+                    use_sigma_distribution=config["use_sigma_dist"], 
+                    output_folder=output_folder
+                )
+                sampler_results[sampler_key] = results
 
-            print(f"{sampler_name} hierarchical sampling complete.")
+                print(f"{sampler_name} hierarchical sampling complete.")
         else:
             print(f"{sampler_key} run is skipped as per configuration.")
 
+    if profil == True:
+        # Print sorted stats to a readable file
+        with open("profiled_output.txt", "w") as f:
+            p = pstats.Stats(profile_output, stream=f)
+            p.sort_stats('cumulative').print_stats(50)  # Top 50 functions by cumulative time
+            f.write("\n\n")
+            p.sort_stats('time').print_stats(50)  # Top 50 functions by internal time
+    
     print("\nNext steps:")
     print(f"• Check '{output_folder}/sigma_history_*' CSV files for sigma evolution.")
     print("• Now call the SigmaAnalyzer for post-processing...")

@@ -244,7 +244,7 @@ class BaseMCSampler:
         type_names = list(self.params.component_counts.keys())
         type_name = random.choice(type_names)
         
-        base_step = self.params.radii[type_name] * 0.2
+        base_step = self.params.radii[type_name] * 0.1
         adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.5, 2.0)
         step_size = base_step * adjustment
         
