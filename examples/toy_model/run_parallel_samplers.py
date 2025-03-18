@@ -4,8 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import multiprocessing as mp
 from datetime import datetime
-from typing import Dict, List, Type, Tuple
-from collections import defaultdict
+from typing import Dict, Type
 from functools import partial
 from tqdm import tqdm
 
@@ -13,7 +12,7 @@ from parameters import SystemParameters
 from base_sampler import BaseMCSampler
 from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
-from visualization import visualize_3d_configuration, visualize_trajectory_plotly
+from visualization import visualize_3d_configuration
 
 SAMPLER_MAP = {
     "PairSampler": PairSampler,
@@ -221,9 +220,9 @@ def main():
         "tetramer_sampler": {
             "run": True,
             #"run": False,
-            "n_chains": 50,
-            "n_steps": 500000,
-            "save_freq": 250,
+            "n_chains": 8,
+            "n_steps": 100000,
+            "save_freq": 500,
             "use_sigma_dist": True,
         }
     }

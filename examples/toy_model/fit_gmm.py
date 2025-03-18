@@ -8,7 +8,8 @@ from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 from sklearn.mixture import GaussianMixture
 import json
-
+import argparse
+import sys
 
 def load_trajectory_from_hdf5(filename: str) -> list:
     """Loads MCMC trajectory data from an HDF5 file."""
@@ -408,23 +409,75 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
                     plot_combined_gmm(all_data_for_type, all_gmms_for_type, sigma_type, sampler_name, sampler_output_dir, pdf)
                     print(f"Combined GMM plot for {sigma_type} saved.")
 
-
-def main():
-    output_folder = "output_analysis"
+def analyze_sampler(sampler_key, output_folder="output_analysis", burnin=0.4, 
+                   do_trace_plots=True, do_gmm_fits=True):
+    """
+    Analyze a specific sampler's MCMC results.
+    
+    Args:
+        sampler_key (str): Name of the sampler ('pair_sampler', 'tetramer_sampler', or 'octet_sampler')
+        output_folder (str): Base directory for output files
+        burnin (float): Fraction of initial samples to discard
+        do_trace_plots (bool): Whether to generate trace plots
+        do_gmm_fits (bool): Whether to perform GMM fitting
+    
+    Returns:
+        bool: True if analysis was successful, False otherwise
+    """
+    valid_samplers = ["pair_sampler", "tetramer_sampler", "octet_sampler"]
+    
+    if sampler_key not in valid_samplers:
+        print(f"Error: Invalid sampler '{sampler_key}'. Must be one of {valid_samplers}")
+        return False
+    
+    # Create output folder if it doesn't exist
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-    #sampler_sequence = ["pair_sampler"]
-    sampler_sequence = ["tetramer_sampler"]
-    #sampler_sequence = ["octet_sampler"]
-    burnin = 0.4
-    do_trace_plots = True  # Set to False to disable trace plots
-    do_gmm_fits = True     # Set to False to disable GMM fitting
-
-    for sampler_key in sampler_sequence:
-        sampler_name = sampler_key.replace("_sampler", "").capitalize() + "Sampler"
-        print(f"\nAnalyzing data for {sampler_name} with burn-in fraction: {burnin}...")
+        
+    # Convert sampler_key to class name (e.g., "pair_sampler" -> "PairSampler")
+    sampler_name = sampler_key.replace("_sampler", "").capitalize() + "Sampler"
+    
+    print(f"\nAnalyzing data for {sampler_name} with burn-in fraction: {burnin}...")
+    
+    # Run the analysis
+    try:
         analyze_mcmc_data(output_folder, sampler_name, burnin, do_trace_plots, do_gmm_fits)
         print(f"Analysis for {sampler_name} complete.")
+        return True
+    except Exception as e:
+        print(f"Error analyzing {sampler_name}: {str(e)}")
+        return False
+
+def main():
+    """Process command line arguments and run analysis."""
+    parser = argparse.ArgumentParser(description='Analyze MCMC results and fit GMM models.')
+    
+    parser.add_argument('sampler', type=str, choices=['pair_sampler', 'tetramer_sampler', 'octet_sampler'],
+                        help='Sampler to analyze (pair_sampler, tetramer_sampler, or octet_sampler)')
+    
+    parser.add_argument('--output', '-o', type=str, default='output_analysis',
+                        help='Output folder for analysis results (default: output_analysis)')
+    
+    parser.add_argument('--burnin', '-b', type=float, default=0.4,
+                        help='Burn-in fraction (default: 0.4)')
+    
+    parser.add_argument('--no-traces', action='store_true',
+                        help='Disable trace plots')
+    
+    parser.add_argument('--no-gmm', action='store_true',
+                        help='Disable GMM fitting')
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
+    # Run analysis with specified parameters
+    analyze_sampler(
+        args.sampler, 
+        output_folder=args.output, 
+        burnin=args.burnin,
+        do_trace_plots=not args.no_traces,
+        do_gmm_fits=not args.no_gmm
+    )
 
 if __name__ == "__main__":
     main()
