@@ -121,90 +121,12 @@ class PairSampler(BaseMCSampler):
                 log_file.write("\n")  # Blank line between scoring steps
         
         return total_score, exclusion_score, pairwise_score, prior_penalty
-    
-    def save_state_to_disk(self, step, positions, sigmas, score, 
-                        prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
-                        types=None, bead_numbers=None, traj_file=None):
-        """
-        Save state directly to an HDF5 file in a memory-efficient manner.
-        This version writes the same information as the previous in-memory trajectory:
-        - Attributes: step, total_score, prior_score, pair_score, exvol_score, tet_score, oct_score.
-        - A subgroup 'sigma' with sigma values stored as attributes.
-        - A subgroup 'positions' with each component saved as a dataset (gzip-compressed).
-        - Datasets 'types_keys', 'types_vals', 'bead_keys', and 'bead_vals'.
-        
-        Parameters:
-        step: The current step number.
-        positions: Dictionary mapping component names to position arrays.
-        sigmas: Dictionary of sigma values.
-        score: The total score (will be stored as 'total_score').
-        prior_score, pair_score, exvol_score, tet_score, oct_score: Additional scores.
-        types: Dictionary mapping bead indices to type names.
-        bead_numbers: Dictionary mapping bead indices to bead numbers.
-        traj_file: Path to the HDF5 file to write to.
-        """
-        # If types or bead_numbers are not provided, default to empty dictionaries.
-        if types is None:
-            types = {}
-        if bead_numbers is None:
-            bead_numbers = {}
-        if traj_file is None:
-            return
-
-        try:
-            import numpy as np
-            import h5py
-
-            with h5py.File(traj_file, 'a') as f:
-                # Create or get the trajectory group.
-                if 'trajectory' not in f:
-                    traj_grp = f.create_group('trajectory')
-                else:
-                    traj_grp = f['trajectory']
-                
-                # Create a new state group named "state_XXXXX" where XXXXX is the step number zero-padded.
-                state_name = f"state_{step:05d}"
-                state_grp = traj_grp.create_group(state_name)
-                
-                # Save state attributes (same keys as before).
-                state_grp.attrs["step"] = step
-                state_grp.attrs["total_score"] = float(score)
-                state_grp.attrs["prior_score"] = float(prior_score)
-                state_grp.attrs["pair_score"] = float(pair_score)
-                state_grp.attrs["exvol_score"] = float(exvol_score)
-                state_grp.attrs["tet_score"] = float(tet_score)
-                state_grp.attrs["oct_score"] = float(oct_score)
-                
-                # Save sigma as a subgroup.
-                sigma_grp = state_grp.create_group("sigma")
-                for key, value in sigmas.items():
-                    sigma_grp.attrs[key] = float(value)
-                
-                # Save positions as datasets (with gzip compression).
-                pos_grp = state_grp.create_group("positions")
-                for comp, coords in positions.items():
-                    pos_grp.create_dataset(comp, data=coords.astype(np.float32), compression="gzip")
-                
-                # Save types and bead_numbers as datasets.
-                types_keys = list(types.keys())
-                types_vals = [types[k] for k in types_keys]
-                state_grp.create_dataset("types_keys", data=np.array(types_keys, dtype="S"))
-                state_grp.create_dataset("types_vals", data=np.array(types_vals, dtype="S"))
-                
-                bead_keys = list(bead_numbers.keys())
-                bead_vals = [bead_numbers[k] for k in bead_keys]
-                state_grp.create_dataset("bead_keys", data=np.array(bead_keys))
-                state_grp.create_dataset("bead_vals", data=np.array(bead_vals))
-        
-        except Exception as e:
-            print(f"Warning: Failed to save state to HDF5: {e}")
     #----------------------------------------------------------------------
-
     def run_mc(self, n_steps: int = 50000, save_freq: int = 100,
                 output_dir: str = "output_analysis/pairsampler_results/",
                 position_move_prob: float = 0.9) -> Tuple[Dict[str, np.ndarray], List[Dict], str]:
             import gc
-            best_positions = None
+#            best_positions = None
             final_positions = None  # Also track final positions
             
             #trajectory = []
@@ -218,26 +140,10 @@ class PairSampler(BaseMCSampler):
     
             sigma_history = {key: [] for key in self.sigma}
 
-            # Initialize debug file
-            #debug_file = os.path.join(output_dir, "debug_mcmc.txt")
-            #with open(debug_file, "w") as f:
-            #    f.write("# MCMC Debugging Information\n")
-            #    f.write("# This file tracks excluded volume violations and acceptance decisions\n")
-            #    f.write("-" * 80 + "\n\n")
-
             current_score, curr_excl_initial, curr_pair_initial, curr_prior_initial = self.calculate_score(
                 self.positions_ps, self.sigma, self.sigma_range, step=0
             )
             best_score = current_score  # Start with current as best
-
-            # Log initial state
-            #with open(debug_file, "a") as f:
-            #    f.write(f"INITIAL STATE\n")
-            #    f.write(f"Initial Score: {current_score:.3f}, ExVol: {curr_excl_initial:.3f}, "
-            #            f"Pair: {curr_pair_initial:.3f}, Prior: {curr_prior_initial:.3f}\n\n")
-            #    
-            #    # Check for overlaps in initial state
-            #    self._log_overlaps(f, self.positions_ps, "Initial")
 
             # Rest of setup is unchanged
             initial_temp = 5.0
@@ -257,16 +163,13 @@ class PairSampler(BaseMCSampler):
             with open(csv_log_file, "w") as f:
                 f.write("Step,Prior,Exvol_score,Pair_score,Score\n")
             
-            #with open(all_log_file, "w") as f:
-            #    f.write("Step,Proposed_Score,Proposed_Exvol,Proposed_Pair,Proposed_Prior,Delta_E,accepted\n")
-
             accepted_moves = 0
             total_moves = 0
             temp_index = 0  # Only increment on accepted moves
             
             # Track statistics for debugging
-            total_with_overlaps = 0
-            accepted_with_overlaps = 0
+#            total_with_overlaps = 0
+#            accepted_with_overlaps = 0
 
             while accepted_moves < n_steps and total_moves < (n_steps * 50):
                 total_moves += 1
@@ -290,9 +193,9 @@ class PairSampler(BaseMCSampler):
                 delta_e = proposed_score - current_score
                 
                 # Check for overlaps before Metropolis decision
-                has_overlaps = self._check_overlaps(proposed_positions)
-                if has_overlaps:
-                    total_with_overlaps += 1
+#                has_overlaps = self._check_overlaps(proposed_positions)
+#                if has_overlaps:
+#                    total_with_overlaps += 1
 
                 # Metropolis acceptance criterion
                 accepted = False
@@ -305,12 +208,12 @@ class PairSampler(BaseMCSampler):
                     accepted_moves += 1
                     temp_index += 1  # Only increment temperature on accepted moves
                     
-                    if has_overlaps:
-                        accepted_with_overlaps += 1
+#                    if has_overlaps:
+#                        accepted_with_overlaps += 1
 
                     if current_score < best_score:
                         best_score = current_score
-                        best_positions = {k: v.copy() for k, v in self.positions_ps.items()}
+#                        best_positions = {k: v.copy() for k, v in self.positions_ps.items()}
 
                     if accepted_moves % save_freq == 0:
                         for key in sigma_history:
@@ -326,80 +229,21 @@ class PairSampler(BaseMCSampler):
                         if accepted_moves % (save_freq * 10) == 0:
                             gc.collect()
 
-                        #trajectory.append(
-                        #    self.save_state(
-                        #        accepted_moves, self.positions_ps, self.sigma, current_score,
-                        #        prior_score=curr_prior,
-                        #        pair_score=curr_pair,
-                        #        exvol_score=curr_excl
-                        #    )
-                        #)
-
                         with open(csv_log_file, "a") as f:
                             f.write(f"{accepted_moves},{curr_prior:.3f},{curr_excl:.3f},"
                                     f"{curr_pair:.3f},{current_score:.3f}\n")
 
                         accept_rate = accepted_moves / total_moves
                         print(f"Accepted Step {accepted_moves}, Score: {current_score:.2f}, T: {temp:.4f}, AcceptRate: {accept_rate:.2f}")
-                
-                # Write debug information for all steps with overlaps, and periodic summaries
-                #if has_overlaps or total_moves % 1000 == 0:
-                    #with open(debug_file, "a") as f:
-                    #    f.write(f"Move {total_moves} ({move_description}): ")
-                    #    f.write(f"Proposed Score={proposed_score:.1f}, ExVol={curr_excl:.3f}, ")
-                    #    f.write(f"Pair={curr_pair:.1f}, Prior={curr_prior:.3f}, ")
-                    #    f.write(f"Delta={delta_e:.1f}, Temp={temp:.3f}, ")
-                    #    f.write(f"Accepted: {accepted}\n")
-                    #    
-                    #    if has_overlaps:
-                    #        self._log_overlaps(f, proposed_positions, "Proposed")
-                    #        f.write(f"OVERLAP STATE {'ACCEPTED' if accepted else 'REJECTED'}\n\n")
-                
-                # Log all steps to all_log_file
-                #with open(all_log_file, "a") as f:
-                #    f.write(f"{total_moves},{proposed_score:.1f},{curr_excl:.1f},{curr_pair:.1f},{curr_prior:.1f},{delta_e:.1f},{accepted_moves:.1f}\n")
-                
-                # Periodically write summary statistics
-#                if total_moves % 1000 == 0:
-#                    with open(debug_file, "a") as f:
-#                        overlap_rate = total_with_overlaps / total_moves * 100
-#                        if total_with_overlaps > 0:
-#                            overlap_accept_rate = accepted_with_overlaps / total_with_overlaps * 100
-#                        else:
-#                            overlap_accept_rate = 0
-#                            
-#                        f.write(f"\nSUMMARY at move {total_moves}:\n")
-#                        f.write(f"- Total moves with overlaps: {total_with_overlaps}/{total_moves} ({overlap_rate:.1f}%)\n")
-#                        f.write(f"- Moves with overlaps that were accepted: {accepted_with_overlaps}/{total_with_overlaps} ({overlap_accept_rate:.1f}%)\n")
-#                        f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n\n")
-#                        f.write("-" * 50 + "\n\n")
-                        
+                                                
             # Store final positions
             final_positions = {k: v.copy() for k, v in self.positions_ps.items()}
 
-            # Write final debug summary
-#            with open(debug_file, "a") as f:
-#                f.write("\nFINAL SUMMARY:\n")
-#                f.write(f"- Total moves: {total_moves}\n")
-#                f.write(f"- Accepted moves: {accepted_moves}\n")
-#                f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n")
-#                f.write(f"- Total moves with overlaps: {total_with_overlaps}/{total_moves} ({total_with_overlaps/total_moves*100:.1f}%)\n")
-#                if total_with_overlaps > 0:
-#                    f.write(f"- Acceptance rate for moves with overlaps: {accepted_with_overlaps}/{total_with_overlaps} ({accepted_with_overlaps/total_with_overlaps*100:.1f}%)\n")
-#                f.write(f"- Final score: {current_score:.2f}\n")
-#                f.write(f"- Best score: {best_score:.2f}\n")
-#                
-#                # Check final state for overlaps
-#                self._log_overlaps(f, final_positions, "Final")
-            
             # Clean up
             self.pairs_log_file = None  # Clear the file handle reference
 
             sigma_history_df = pd.DataFrame(sigma_history)
             sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
-
-            #trajectory_file = os.path.join(output_dir, "trajectory.h5")
-            #final_file = self.save_trajectory(trajectory, trajectory_file)
 
             # Return both best and final positions for better analysis
             return final_positions, trajectory_file
@@ -427,42 +271,6 @@ class PairSampler(BaseMCSampler):
                 break
         return has_overlaps
         
-    def _log_overlaps(self, file_handle, positions, state_name):
-        """Log detailed overlap information to the given file handle."""
-        file_handle.write(f"{state_name} State Overlaps:\n")
-        
-        total_overlaps = 0
-        for type1, pos1 in positions.items():
-            for type2, pos2 in positions.items():
-                if type1 <= type2:  # Only check unique pairs
-                    min_dist = self.params.radii[type1] + self.params.radii[type2]
-                    distances = cdist(pos1, pos2)
-                    
-                    # Handle same-type particles
-                    if type1 == type2:
-                        mask = np.triu(np.ones_like(distances), k=1)
-                        viol_mask = (distances < min_dist) & (mask > 0)
-                    else:
-                        viol_mask = distances < min_dist
-                    
-                    if np.any(viol_mask):
-                        viol_indices = np.where(viol_mask)
-                        for i, j in zip(viol_indices[0], viol_indices[1]):
-                            distance = distances[i, j]
-                            overlap = min_dist - distance
-                            if overlap > 0:
-                                total_overlaps += 1
-                                file_handle.write(f"  {type1}{i}-{type2}{j}: dist={distance:.3f}, "
-                                                f"min_dist={min_dist:.3f}, overlap={overlap:.3f}\n")
-                                
-                                # Limit output to avoid huge files
-                                if total_overlaps >= 20:
-                                    file_handle.write(f"  ... additional overlaps not shown\n")
-                                    return
-        
-        if total_overlaps == 0:
-            file_handle.write("  No overlaps detected\n")
-        file_handle.write("\n")
 #----------------------------------------------------------------------
 if __name__ == "__main__":
     pair_samp = PairSampler()

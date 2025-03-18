@@ -334,84 +334,6 @@ class TetramerSampler(BaseMCSampler):
         except Exception as e:
             print(f"Error generating tetramers: {e}")
             return [] # Return empty list on error for graceful failure
-        
-    def save_state_to_disk(self, step, positions, sigmas, score, 
-                        prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
-                        types=None, bead_numbers=None, traj_file=None):
-        """
-        Save state directly to an HDF5 file in a memory-efficient manner.
-        This version writes the same information as the previous in-memory trajectory:
-        - Attributes: step, total_score, prior_score, pair_score, exvol_score, tet_score, oct_score.
-        - A subgroup 'sigma' with sigma values stored as attributes.
-        - A subgroup 'positions' with each component saved as a dataset (gzip-compressed).
-        - Datasets 'types_keys', 'types_vals', 'bead_keys', and 'bead_vals'.
-        
-        Parameters:
-        step: The current step number.
-        positions: Dictionary mapping component names to position arrays.
-        sigmas: Dictionary of sigma values.
-        score: The total score (will be stored as 'total_score').
-        prior_score, pair_score, exvol_score, tet_score, oct_score: Additional scores.
-        types: Dictionary mapping bead indices to type names.
-        bead_numbers: Dictionary mapping bead indices to bead numbers.
-        traj_file: Path to the HDF5 file to write to.
-        """
-        # If types or bead_numbers are not provided, default to empty dictionaries.
-        if types is None:
-            types = {}
-        if bead_numbers is None:
-            bead_numbers = {}
-        if traj_file is None:
-            return
-
-        try:
-            import numpy as np
-            import h5py
-
-            with h5py.File(traj_file, 'a') as f:
-                # Create or get the trajectory group.
-                if 'trajectory' not in f:
-                    traj_grp = f.create_group('trajectory')
-                else:
-                    traj_grp = f['trajectory']
-                
-                # Create a new state group named "state_XXXXX" where XXXXX is the step number zero-padded.
-                state_name = f"state_{step:05d}"
-                state_grp = traj_grp.create_group(state_name)
-                
-                # Save state attributes (same keys as before).
-                state_grp.attrs["step"] = step
-                state_grp.attrs["total_score"] = float(score)
-                state_grp.attrs["prior_score"] = float(prior_score)
-                state_grp.attrs["pair_score"] = float(pair_score)
-                state_grp.attrs["exvol_score"] = float(exvol_score)
-                state_grp.attrs["tet_score"] = float(tet_score)
-                state_grp.attrs["oct_score"] = float(oct_score)
-                
-                # Save sigma as a subgroup.
-                sigma_grp = state_grp.create_group("sigma")
-                for key, value in sigmas.items():
-                    sigma_grp.attrs[key] = float(value)
-                
-                # Save positions as datasets (with gzip compression).
-                pos_grp = state_grp.create_group("positions")
-                for comp, coords in positions.items():
-                    pos_grp.create_dataset(comp, data=coords.astype(np.float32), compression="gzip")
-                
-                # Save types and bead_numbers as datasets.
-                types_keys = list(types.keys())
-                types_vals = [types[k] for k in types_keys]
-                state_grp.create_dataset("types_keys", data=np.array(types_keys, dtype="S"))
-                state_grp.create_dataset("types_vals", data=np.array(types_vals, dtype="S"))
-                
-                bead_keys = list(bead_numbers.keys())
-                bead_vals = [bead_numbers[k] for k in bead_keys]
-                state_grp.create_dataset("bead_keys", data=np.array(bead_keys))
-                state_grp.create_dataset("bead_vals", data=np.array(bead_vals))
-        
-        except Exception as e:
-            print(f"Warning: Failed to save state to HDF5: {e}")
-
 #-----------------------------------------------------------------------  
     def run_mc(self, n_steps: int = 50000, save_freq: int = 100, 
             output_dir: str = "output_analysis/tetramersampler_results/") -> Tuple:
@@ -561,13 +483,6 @@ class TetramerSampler(BaseMCSampler):
                     # run garbage collection periodically to avoid memory issues
                     if accepted_moves % (save_freq * 10) == 0:
                         gc.collect()
-                    #trajectory.append(
-                    #    self.save_state(
-                    #        accepted_moves, self.positions_ts, self.sigma, current_score,
-                    #        prior_score=new_prior_penalty, pair_score=curr_pair,
-                    #        exvol_score=curr_ex, tet_score=curr_tet
-                    #    )
-                    #)
                     
                     csv_buffer.append(
                         f"{accepted_moves},{new_prior_penalty:.1f},{curr_ex:.1f},{curr_pair:.1f},"
@@ -591,10 +506,6 @@ class TetramerSampler(BaseMCSampler):
         
         sigma_history_df = pd.DataFrame({k: v[:n_steps//save_freq+1] for k, v in sigma_history.items()})
         sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
-        
-        #trajectory_file = os.path.join(output_dir, "trajectory.h5")
-        #final_file = self.save_trajectory(trajectory, trajectory_file)
-        
         
 #        with open(debug_file, "a") as f:
 #            f.write("\nFINAL SUMMARY:\n")
@@ -789,26 +700,44 @@ class TetramerSampler(BaseMCSampler):
             [2*(q[1]*q[2]+q[0]*q[3]), 1-2*(q[1]**2+q[3]**2), 2*(q[2]*q[3]-q[0]*q[1])],
             [2*(q[1]*q[3]-q[0]*q[2]), 2*(q[2]*q[3]+q[0]*q[1]), 1-2*(q[1]**2+q[2]**2)]
         ])
+
+    def calculate_tetramer_scores_batch(self, positions, tetramers, sig):
+        """Calculate scores for all tetramers in a single vectorized operation."""
+        if not tetramers:
+            return np.array([], dtype=np.float32)
+            
+        n_tetramers = len(tetramers)
         
-    def calculate_tetramer_score(self, positions: Dict[str, np.ndarray], 
-                                tetramer: Tuple[int, ...], sig: Dict[str, float] = None) -> float:
-        """Calculate score for a single tetramer with vectorized operations."""
-        # Extract indices once
-        a_idx, b_idx, c1_idx, c2_idx = tetramer
+        # Extract all tetramer indices efficiently
+        a_indices = np.array([t[0] for t in tetramers], dtype=np.int32)
+        b_indices = np.array([t[1] for t in tetramers], dtype=np.int32)
+        c1_indices = np.array([t[2] for t in tetramers], dtype=np.int32)
+        c2_indices = np.array([t[3] for t in tetramers], dtype=np.int32)
         
-        # Pre-extract positions to avoid dict lookups in calculations
-        pos_a = positions['A'][a_idx]
-        pos_b = positions['B'][b_idx]
-        pos_c1 = positions['C'][c1_idx]
-        pos_c2 = positions['C'][c2_idx]
+        # Get all positions in single vectorized operations
+        pos_a = positions['A'][a_indices]
+        pos_b = positions['B'][b_indices]
+        pos_c1 = positions['C'][c1_indices]
+        pos_c2 = positions['C'][c2_indices]
         
-        # Calculate all scores in one batch
-        score = self.pair_score_nll(pos_a, pos_b, self.params.pair_distances['AB'], sig['AB'])
-        score += self.pair_score_nll(pos_b, pos_c1, self.params.pair_distances['BC'], sig['BC'])
-        score += self.pair_score_nll(pos_b, pos_c2, self.params.pair_distances['BC'], sig['BC']) 
-        score += self.pair_score_nll(pos_c1, pos_c2, self.params.pair_distances['CC'], sig['CC'])
+        # Calculate all distances at once
+        ab_dists = np.sqrt(np.sum((pos_a - pos_b)**2, axis=1))
+        bc1_dists = np.sqrt(np.sum((pos_b - pos_c1)**2, axis=1))
+        bc2_dists = np.sqrt(np.sum((pos_b - pos_c2)**2, axis=1))
+        cc_dists = np.sqrt(np.sum((pos_c1 - pos_c2)**2, axis=1))
         
-        return score
+        # Cache target distances for performance
+        ab_target = self.params.pair_distances['AB']
+        bc_target = self.params.pair_distances['BC']
+        cc_target = self.params.pair_distances['CC']
+        
+        # Calculate scores in vectorized form (much faster than loop)
+        scores = ((ab_dists - ab_target)**2)/(2*sig['AB']**2) + np.log(2 * np.pi *sig['AB'])
+        scores += ((bc1_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
+        scores += ((bc2_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
+        scores += ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
+        
+        return scores
 
     def neg_log_posterior(
         self,
@@ -840,8 +769,6 @@ class TetramerSampler(BaseMCSampler):
             return score, ex_score, pair_score, 0.0
         
         # 1) Efficiently build set of tetramer pairs
-        # Pre-allocate with expected size (4 pairs per tetramer)
-        n_tetramers = len(tetramers)
         tetramer_pairs = set()
         tetramer_pairs_add = tetramer_pairs.add  # Local reference for faster calls
         
@@ -859,13 +786,9 @@ class TetramerSampler(BaseMCSampler):
             prior_penalty_from_distribution
         )
 
-        # 3) Calculate tetramer score - using a comprehension for better performance
-        if not tetramers:
-            return score, ex_score, pair_score, 0.0
-            
-        # Calculate all tetramer scores in one go
-        total_tet_score = sum(self.calculate_tetramer_score(positions, tetramer, sigma) 
-                            for tetramer in tetramers)
+        # 3) Calculate tetramer score using the vectorized batch method
+        scores_array = self.calculate_tetramer_scores_batch(positions, tetramers, sigma)
+        total_tet_score = scores_array.sum()
         
         # Apply weighting and return all score components
         weighted_tet_score = tetramer_weight * total_tet_score
