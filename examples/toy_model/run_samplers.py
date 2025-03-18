@@ -60,7 +60,11 @@ def run_hierarchical_sampling(
 
         sampler = sampler_class(use_sigma_distribution) # Initialize the sampler with default parameters
         
-        best_positions, trajectory, traj_file = sampler.run_mc(
+        #best_positions, trajectory, traj_file = sampler.run_mc(
+        #    n_steps=n_steps,
+        #    save_freq=save_freq,
+        #)
+        best_positions, traj_file = sampler.run_mc(
             n_steps=n_steps,
             save_freq=save_freq,
         )
@@ -84,7 +88,7 @@ def run_hierarchical_sampling(
         print(f"Final sigma values: {sampler.sigma}")
 
         visualize_3d_configuration(best_positions, params.radii, f"Final {level} configuration")
-        visualize_trajectory_plotly(trajectory, params.box_size, params.radii)
+        #visualize_trajectory_plotly(trajectory, params.box_size, params.radii)
 
         results[level] = {
             'best_positions': best_positions,
@@ -97,16 +101,16 @@ def run_hierarchical_sampling(
 def main():
     run_config = {
         "pair_sampler": {
-            "run": False,
-            #"run": True,
+            #"run": False,
+            "run": True,
             "n_chains": 1,
             "n_steps": 1000,
             "save_freq": 100,
             "use_sigma_dist": False, # Example of sampler-specific parameter
         },
         "tetramer_sampler": {
-            "run": True,
-            #"run": False,
+            #"run": True,
+            "run": False,
             "n_chains": 1,
             "n_steps": 1000,
             "save_freq": 10,
@@ -128,8 +132,8 @@ def main():
     last_sigma = None # To hold sigma from previous level if hierarchical
 
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
-    #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
-    sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
+    #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
 

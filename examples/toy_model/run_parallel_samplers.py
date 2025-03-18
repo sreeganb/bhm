@@ -40,7 +40,12 @@ def run_single_chain(
     sampler = sampler_class(config.get("use_sigma_dist", True))
     
     # Run the chain with chain-specific output directory
-    best_positions, trajectory, traj_file = sampler.run_mc(
+    #best_positions, trajectory, traj_file = sampler.run_mc(
+    #    n_steps=config["n_steps"],
+    #    save_freq=config["save_freq"],
+    #    output_dir=chain_dir  # Pass unique directory for each chain
+    #)
+    best_positions, traj_file = sampler.run_mc(
         n_steps=config["n_steps"],
         save_freq=config["save_freq"],
         output_dir=chain_dir  # Pass unique directory for each chain
