@@ -202,7 +202,7 @@ def main():
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "pair_sampler"]
     #mcmc_steps = [10000, 5000, 10000]
     sampler_sequence = ["pair_sampler", "tetramer_sampler"]
-    mcmc_steps = [50000, 10000]
+    mcmc_steps = [100000, 50000]
     
     # Setup
     output_folder = "output_analysis"
@@ -216,7 +216,7 @@ def main():
         config = {
             **base_config,
             "run": True,
-            "n_chains": 8 if sampler_key == "pair_sampler" else 4,
+            "n_chains": 16 if sampler_key == "pair_sampler" else 8,
             "n_steps": mcmc_steps[idx],
             "save_freq": 100,
             "use_sigma_dist": False if is_first else True
