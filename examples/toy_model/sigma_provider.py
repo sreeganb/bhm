@@ -24,8 +24,15 @@ class GMMSigmaProvider:
         
         # Set output directory
         if output_dir is None:
-            source_sampler = "pairsampler" if sampler_name.lower() != "tetramersample" else "pairsampler"
+            if sampler_name.lower() == "tetramersampler":
+                source_sampler = "pairsampler"
+            elif sampler_name.lower() == "octetsampler":
+                source_sampler = "tetramersampler"
+            else:
+                source_sampler = "pairsampler"
+            #source_sampler = "pairsampler" if sampler_name.lower() == "tetramersampler" else "pairsampler"
             self.output_dir = os.path.join(os.getcwd(), f"output_analysis/{source_sampler}_results")
+            #self.output_dir = os.path.join(os.getcwd(), "output_analysis")
         else:
             self.output_dir = output_dir
             
@@ -47,9 +54,11 @@ class GMMSigmaProvider:
         if not os.path.exists(self.output_dir):
             print(f"Output directory not found: {self.output_dir}")
             return gmm_params
+        else:
+            print("output_directory is: ", self.output_dir)
         
         # Find all GMM files for the sampler
-        pattern = re.compile(f"gmm_fit_(AA|AB|BC|CC)_{re.escape(self.sampler_name)}_chain_(\\d+)\\.json")
+        pattern = re.compile(f"gmm_fit_(AA|AB|BC|CC)_chain_(\\d+)\\.json")
         matches = []
         
         for filename in os.listdir(self.output_dir):
@@ -72,7 +81,7 @@ class GMMSigmaProvider:
         
         # Load GMM files for the selected chain
         file_paths = {
-            sigma_type: os.path.join(self.output_dir, f"gmm_fit_{sigma_type}_{self.sampler_name}_chain_{selected_chain}.json")
+            sigma_type: os.path.join(self.output_dir, f"gmm_fit_{sigma_type}_chain_{selected_chain}.json")
             for sigma_type in gmm_params
         }
         
@@ -182,7 +191,8 @@ class GMMSigmaProvider:
         if not os.path.exists(self.output_dir):
             return []
             
-        pattern = re.compile(f"gmm_fit_AA_{re.escape(self.sampler_name)}_chain_(\\d+)\\.json")
+        # Change the pattern to match any sigma type (AA, AB, BC, or CC)
+        pattern = re.compile(r"gmm_fit_.*_chain_(\d+)\.json")
         chain_numbers = []
         
         for filename in os.listdir(self.output_dir):
@@ -190,7 +200,7 @@ class GMMSigmaProvider:
             if match:
                 chain_numbers.append(int(match.group(1)))
                 
-        return sorted(chain_numbers)
+        return sorted(set(chain_numbers))
 
 # Example usage function
 def sample_sigmas_from_gmm(sampler_name="PairSampler", output_dir=None, chain=None):

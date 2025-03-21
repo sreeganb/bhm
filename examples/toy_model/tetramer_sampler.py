@@ -23,6 +23,7 @@ from pair_sampler import PairSampler
 import cProfile
 import pstats
 import io
+from sigma_provider import GMMSigmaProvider
 #import numba as nb
 #-----------------------------------------------------------------------
 class TetramerSampler(BaseMCSampler):
@@ -42,6 +43,7 @@ class TetramerSampler(BaseMCSampler):
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
         self.sigma_prior_dist = {}
+        self.sig_provider = GMMSigmaProvider('TetramerSampler')
         
         # Validate required pair types
         required_pairs = {"AA", "AB", "BC", "CC"}
@@ -73,8 +75,9 @@ class TetramerSampler(BaseMCSampler):
         """Initialize sigma values correctly, ensuring GMM data is actually used if available."""
         if use_sigma_distribution:
             print("using sigma distribution now")
-            self.gmm_params = self._load_gmm_parameters()
-            self.sigma = self.initialize_sigma_from_gmm()
+            #self.gmm_params = self._load_gmm_parameters()
+            #self.sigma = self.initialize_sigma_from_gmm()
+            self.sigma = self.sig_provider.sample_sigma_values()
             self.sigma_range = None
         elif sig_passed is not None:
             self.sigma = sig_passed
@@ -85,107 +88,14 @@ class TetramerSampler(BaseMCSampler):
             self.base_priors = Priors("jeffreys")
             print("Using default sigma initialization")
 
-
-    def _load_gmm_parameters(self):
-        """Load GMM parameters from JSON files without discarding valid data."""
-        gmm_params = {sigma_type: None for sigma_type in ["AA", "AB", "BC", "CC"]}
-        output_dir = os.path.join(os.getcwd(), "output_analysis/pairsampler_results")
-        sampler_name = "PairSampler"
-        
-        if not os.path.exists(output_dir):
-            print(f"Output directory not found: {output_dir}")
-            return gmm_params
-        
-        pattern = re.compile(f"gmm_fit_(AA|AB|BC|CC)_{re.escape(sampler_name)}_chain_(\\d+)\\.json")
-        matches = []
-        for filename in os.listdir(output_dir):
-            match = pattern.match(filename)
-            if match:
-                matches.append((match.group(1), int(match.group(2))))
-        
-        if not matches:
-            print(f"No GMM fit files found in {output_dir}")
-            return gmm_params
-        
-        chain_numbers = set(chain_num for _, chain_num in matches)
-        if not chain_numbers:
-            return gmm_params
-        
-        selected_chain = random.choice(list(chain_numbers))
-        self.sel_chain_number = selected_chain
-        
-        file_paths = {
-            sigma_type: os.path.join(output_dir, f"gmm_fit_{sigma_type}_{sampler_name}_chain_{selected_chain}.json")
-            for sigma_type in gmm_params
-        }
-        
-        for sigma_type, file_path in file_paths.items():
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, 'r') as f:
-                        gmm_params[sigma_type] = json.load(f)
-                except Exception as e:
-                    print(f"Error loading {file_path}: {e}")
-        
-        print("the chosen gmm params are ", gmm_params)
-        return gmm_params
-
-
-    def initialize_sigma_from_gmm(self) -> Dict[str, float]:
-        """Sample sigma values from the loaded GMMs if valid; otherwise use defaults."""
-        sigma = {}
-        defaults = self.params.pair_distances
-        
-        for pair_type in defaults:
-            gmm_info = self.gmm_params.get(pair_type)
-            
-            # Only use GMM data if it exists and has the needed keys
-            if (
-                gmm_info
-                and all(k in gmm_info for k in ['n_components', 'means', 'covariances', 'weights'])
-            ):
-                try:
-                    n_components = gmm_info['n_components']
-                    means = np.asarray(gmm_info['means']).reshape(n_components, 1)
-                    covariances = np.asarray(gmm_info['covariances'])
-                    weights = np.asarray(gmm_info['weights'])
-                    
-                    # Normalize weights if needed
-                    wsum = np.sum(weights)
-                    if abs(wsum - 1.0) > 1e-6:
-                        weights = weights / wsum
-                    
-                    # Randomly pick a GMM component
-                    component = np.random.choice(n_components, p=weights)
-                    
-                    # Reshape mean to (1,) and covariance to (1,1)
-                    # so multivariate_normal sees a 2D, square covariance matrix
-                    mean_value = means[component].flatten()
-                    cov_value = float(covariances[component])
-                    cov_matrix = np.array([[cov_value]])
-                    
-                    # Sample from the 1D GMM
-                    sampled_value = np.random.multivariate_normal(mean=mean_value, cov=cov_matrix, size=1)
-                    sigma[pair_type] = float(sampled_value)
-                except (KeyError, ValueError, np.linalg.LinAlgError) as e:
-                    print(f"Error sampling GMM for {pair_type}: {e}. Using default.")
-                    sigma[pair_type] = defaults[pair_type]
-            else:
-                # No valid GMM data for this pair type
-                sigma[pair_type] = defaults[pair_type]
-        
-        print("Final sigma values from GMM or defaults:", sigma)
-        return sigma
-
     def get_positions(self) -> Dict[str, np.ndarray]:
-        """Efficiently load positions from trajectory files with robust error handling."""
-        # Use pathlib for more modern path handling
+        """Simply load positions from the last frame of a trajectory file."""
         import pathlib
         
         traj_dir = pathlib.Path(os.getcwd()) / "output_analysis/pairsampler_results"
         
         try:
-            # Fast file matching using glob pattern
+            # Get first trajectory file
             trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
             
             if not trajectory_files:
@@ -195,7 +105,7 @@ class TetramerSampler(BaseMCSampler):
             filepath = random.choice(trajectory_files)
             chain_num = int(filepath.stem.split('_')[-1])
             print(f"Selected chain: {chain_num}")
-            
+                
             with h5py.File(filepath, 'r') as f:
                 if 'trajectory' not in f:
                     raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
@@ -206,500 +116,267 @@ class TetramerSampler(BaseMCSampler):
                 if not keys:
                     raise ValueError("Empty trajectory file")
                     
-                # Get last 10% of frames, ensuring at least one
-                n_equil = max(1, int(len(keys) * 0.1))
-                key = random.choice(keys[-n_equil:])
-                print(f"Selected frame: {key}")
+                # Get last frame
+                last_key = keys[-1]
+                print(f"Using last frame: {last_key}")
                 
-                # Efficiently extract position data directly using HDF5 dataset access
+                # Read positions
                 positions = {}
-                pos_grp = traj_grp[key]['positions']
+                pos_grp = traj_grp[last_key]['positions']
                 
-                # Direct array copy is faster than iterative building
                 for type_name in pos_grp:
                     positions[type_name] = pos_grp[type_name][:].copy()
                 
             return positions
             
-        except (FileNotFoundError, KeyError, ValueError, OSError) as e:
+        except Exception as e:
             print(f"Error loading trajectory: {e}")
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def _calculate_gmm_log_prob(self, sigma_value: float, pair_type: str) -> float:
-        """Vectorized GMM log probability calculation with numerical stability."""
-        if not self.gmm_params or pair_type not in self.gmm_params or not self.gmm_params[pair_type]:
-            return -np.inf
-            
-        gmm_info = self.gmm_params[pair_type]
-        
-        try:
-            n_components = gmm_info['n_components']
-            means = np.asarray(gmm_info['means']).reshape(n_components, 1)
-            covariances = np.asarray(gmm_info['covariances']).reshape(n_components, 1, 1) 
-            weights = np.asarray(gmm_info['weights'])
-            
-            # Ensure numerical stability
-            covariances = np.maximum(covariances, 1e-10)
-            
-            # Vectorized component log probability calculation
-            x = np.array(sigma_value).reshape(1)
-            diff = x - means.flatten()
-            exponents = -0.5 * (diff**2 / covariances.flatten())
-            norms = np.log(weights) - 0.5 * np.log(2 * np.pi * covariances.flatten())
-            component_log_probs = norms + exponents
-            
-            # Numerically stable log-sum-exp
-            max_log_prob = np.max(component_log_probs)
-            return max_log_prob + np.log(np.sum(np.exp(component_log_probs - max_log_prob)))
-            
-        except (KeyError, ValueError, np.linalg.LinAlgError) as e:
-            return -np.inf
-
-    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Calculate negative log prior across all sigma values efficiently."""
-        if not sigma:
-            return np.inf
-            
-        log_priors = [self._calculate_gmm_log_prob(value, pair_type) 
-                    for pair_type, value in sigma.items()]
-        
-        # Filter out -inf values to avoid returning inf unnecessarily
-        valid_priors = [lp for lp in log_priors if lp > -np.inf]
-        
-        if not valid_priors:
-            return 1000.0  # Large but finite penalty for all invalid priors
-            
-        return -np.sum(valid_priors)
-
-    def _compute_probabilities(self, dist_matrix: np.ndarray) -> np.ndarray:
-        """
-        Given a distance matrix, subtract the minimum distance along each row,
-        exponentiate, and then normalize to get probability vectors.
-        """
-        min_vals = dist_matrix.min(axis=1, keepdims=True)
-        exp_terms = np.exp(-(dist_matrix - min_vals))
-        row_sums = exp_terms.sum(axis=1, keepdims=True) + 1e-10
-        return exp_terms / row_sums
-
-    def _random_indices_from_probs(self, prob_matrix: np.ndarray) -> np.ndarray:
-        """
-        For each row of prob_matrix, randomly sample a single index 
-        according to the probabilities in that row.
-        """
-        n_rows, n_cols = prob_matrix.shape
-        indices = np.empty(n_rows, dtype=int)
-        for i in range(n_rows):
-            indices[i] = np.random.choice(n_cols, p=prob_matrix[i])
-        return indices
-
     def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
-        """Simplified tetramer selection with clear helper routines."""
+        """Generate tetramers based on distance-weighted probabilities."""
         try:
-            # Basic checks
-            for comp in ['A', 'B', 'C']:
-                if comp not in positions or len(positions[comp]) == 0:
-                    return []
-            
-            a_positions = positions['A']
-            b_positions = positions['B']
-            c_positions = positions['C']
-            
-            n_a, n_b, n_c = len(a_positions), len(b_positions), len(c_positions)
-            if n_a == 0 or n_b == 0 or n_c < 2:
+            # Check if we have required components
+            if not all(comp in positions and len(positions[comp]) > 0 for comp in ['A', 'B', 'C']):
                 return []
             
-            # Distance from A to B
-            dist_AB = cdist(a_positions, b_positions) / max(0.1, temp)
-            probs_B = self._compute_probabilities(dist_AB)
-            probs_B = np.nan_to_num(probs_B, nan=1.0/n_b)
-            b_indices = self._random_indices_from_probs(probs_B)
+            # Get positions
+            a_pos = positions['A']
+            b_pos = positions['B']
+            c_pos = positions['C']
             
-            # Distance from chosen B to all C
-            dist_BC = cdist(b_positions[b_indices], c_positions) / max(0.1, temp)
-            probs_C = self._compute_probabilities(dist_BC)
+            # Check we have enough particles
+            if len(c_pos) < 2:
+                return []
             
-            # Build the tetramers
+            # A-B connections
+            dist_AB = cdist(a_pos, b_pos) / max(0.1, temp)
+            exp_terms = np.exp(-(dist_AB - dist_AB.min(axis=1, keepdims=True)))
+            probs_B = exp_terms / (exp_terms.sum(axis=1, keepdims=True) + 1e-10)
+            
+            # Select B indices for each A
+            b_indices = np.zeros(len(a_pos), dtype=int)
+            for i in range(len(a_pos)):
+                b_indices[i] = np.random.choice(len(b_pos), p=probs_B[i])
+            
+            # B-C connections
+            dist_BC = cdist(b_pos[b_indices], c_pos) / max(0.1, temp)
+            exp_terms = np.exp(-(dist_BC - dist_BC.min(axis=1, keepdims=True)))
+            probs_C = exp_terms / (exp_terms.sum(axis=1, keepdims=True) + 1e-10)
+            
+            # Build tetramers
             tetramers = []
-            for a_idx in range(n_a):
-                if np.sum(probs_C[a_idx]) < 1e-10 or n_c < 2:
-                    c_indices = np.random.choice(n_c, size=2, replace=(n_c < 2))
+            for a_idx in range(len(a_pos)):
+                # Select two C particles based on probability
+                if probs_C[a_idx].sum() < 1e-10:
+                    c_indices = np.random.choice(len(c_pos), size=2, replace=(len(c_pos) < 2))
                 else:
-                    p_norm = probs_C[a_idx] / (probs_C[a_idx].sum() + 1e-10)
-                    c_indices = np.random.choice(n_c, size=2, replace=False, p=p_norm)
+                    p_norm = probs_C[a_idx] / probs_C[a_idx].sum()
+                    c_indices = np.random.choice(len(c_pos), size=2, replace=False, p=p_norm)
+                
                 tetramers.append((a_idx, b_indices[a_idx], c_indices[0], c_indices[1]))
-
+                
             return tetramers
-
+            
         except Exception as e:
-            print(f"Error generating tetramers: {e}")
-            return [] # Return empty list on error for graceful failure
+            print(f"Error in tetramer generation: {e}")
+            return []
 #-----------------------------------------------------------------------  
-    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, 
-            output_dir: str = "output_analysis/tetramersampler_results/") -> Tuple:
-        """Monte Carlo sampling with tetramer moves and efficient caching.
-        Runs until n_steps accepted moves (Markov chain steps) are completed.
-        Overlap checking has been removed."""
-        import gc
-        
-        # Pre-allocate memory for results & tracking
-        best_positions = None
-        best_score = float('inf')
-        #trajectory = []
-        sigma_history = {key: np.zeros(n_steps // save_freq + 1, dtype=np.float32) for key in self.sigma}
-
-        # Set up output directory and file handles
+    def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/tetramersampler_results/"):
+        """
+        Monte Carlo sampling with position, sigma, and tetramer moves.
+        Simplified for better performance and readability.
+        """
+        # Setup output directory
         os.makedirs(output_dir, exist_ok=True)
         trajectory_file = os.path.join(output_dir, "trajectory.h5")
-        # Create empty file initially
         with h5py.File(trajectory_file, 'w') as f:
-            pass
+            pass  # Create empty file
         
-        csv_log_file = os.path.join(output_dir, "all_info_mcmc_tetramer.csv")
-        #debug_file = os.path.join(output_dir, "debug_mcmc.txt")
-        csv_buffer = []  # Buffer for delayed CSV writes
-        # Write CSV header once
-        with open(csv_log_file, "w") as f:
-            f.write("Step,Prior,Exvol_score,Pair_score,Tet_score,Score,Accepted\n")
-            
-        # Debug file setup 
-#        with open(debug_file, "w") as f:
-#            f.write("# TetramerSampler MCMC Debug Log\n")
-#            f.write("# Overlap checking has been removed\n\n")
+        # Initialize tracking variables
+        best_positions = None
+        best_score = float('inf')
+        sigma_history = {key: np.zeros(n_steps // save_freq + 1) for key in self.sigma}
+        accepts = {'position': 0, 'sigma': 0, 'tetramer': 0}
+        attempts = {'position': 0, 'sigma': 0, 'tetramer': 0}
         
-        # Initialize counters with pre-allocation
-        moves_counts = {'position': 0, 'sigma': 0, 'tetramer': 0}
-        accepts_counts = {'position': 0, 'sigma': 0, 'tetramer': 0}
-                
-        # Temperature schedule calculation (vectorized)
-        # Changed to use accepted_moves rather than total iterations
-        cooling_factor = -np.log(1.0/5.0) / n_steps
-        get_temp = lambda accepted_moves: 5.0 * np.exp(-cooling_factor * accepted_moves)
-        
-        # Calculate initial state with caching
+        # Initialize state
         current_tetramers = self.get_tetramers(self.positions_ts)
-        prior_penalty = (self.calculate_negative_log_prior(self.sigma) if self.use_sigma_distribution 
+        prior_penalty = (self.sig_provider.calculate_negative_log_prior(self.sigma) if self.use_sigma_distribution 
                         else self.base_priors.neg_log_prior(self.sigma, self.sigma_range))
         current_score, curr_ex, curr_pair, curr_tet = self.neg_log_posterior(
             self.positions_ts, current_tetramers, prior_penalty, self.sigma)
         
-        # Debug initial scores
-#        with open(debug_file, "a") as f:
-#            f.write(f"INITIAL STATE\n")
-#            f.write(f"Initial Score: {current_score:.1f}, ExVol: {curr_ex:.3f}, ")
-#            f.write(f"Pair: {curr_pair:.1f}, Tet: {curr_tet:.1f}, Prior: {prior_penalty:.1f}\n\n")
-        
         # Store initial sigma values
-        for i, (key, value) in enumerate(self.sigma.items()):
-            sigma_history[key][0] = value
+        for key in self.sigma:
+            sigma_history[key][0] = self.sigma[key]
         
-        # Main MCMC loop with optimizations
-        move_probs = np.array([0.4, 0.1, 0.5])  # position, sigma, tetramer
+        # Main MCMC loop
         move_types = ['position', 'sigma', 'tetramer']
+        move_probs = [0.4, 0.1, 0.5]  # position, sigma, tetramer
         
-        # Progress reporting setup
-        print_freq = max(1, min(n_steps // 20, 1000))
+        # Simple cooling schedule
+        temp_start, temp_end = 5.0, 1.0
+        temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
-        # Modified loop to run until we have n_steps accepted moves
+        print(f"Starting MCMC sampling for {n_steps} steps...")
+        
         accepted_moves = 0
         total_moves = 0
-        max_iterations = n_steps * 50  # Safety cap
+        max_iterations = n_steps * 20  # Safety cap
         
         while accepted_moves < n_steps and total_moves < max_iterations:
             total_moves += 1
             
-            # Temperature based on accepted moves, not iterations
-            temp = get_temp(accepted_moves)
+            # Temperature schedule
+            temp = temp_start * (temp_decay ** accepted_moves)
             
-            # Fast random move selection
-            move_type = move_types[np.random.choice(3, p=move_probs)]
-            moves_counts[move_type] += 1
+            # Select move type
+            move_type = np.random.choice(move_types, p=move_probs)
+            attempts[move_type] += 1
             
-            # Move proposal with caching
-            cached_tetramers = None
+            # Propose move
             if move_type == 'position':
-                proposed_positions = self.propose_position_move(self.positions_ts)
-                proposed_sigma = self.sigma  # No change, just reference
+                proposed_positions = self.propose_position_move(self.positions_ts, accepts['position'] / max(1, accepted_moves))
+                proposed_sigma = self.sigma
+                proposed_tetramers = self.get_tetramers(proposed_positions)
             elif move_type == 'sigma':
-                proposed_positions = self.positions_ts  # No change, just reference
-                proposed_sigma, changed_pair_type = self.propose_sigma_move(self.sigma)
-                cached_tetramers = current_tetramers  # Reuse tetramers for sigma-only moves
+                proposed_positions = self.positions_ts
+                proposed_sigma, _ = self.propose_sigma_move(self.sigma, accepts['sigma'] / max(1, accepted_moves))
+                proposed_tetramers = current_tetramers  # Reuse
             else:  # tetramer move
-                proposed_positions = self.propose_tetramer_move(self.positions_ts)
-                proposed_sigma = self.sigma  # No change, just reference
-                self.tet_trans_acc_rate = accepts_counts['tetramer'] / max(1, moves_counts['tetramer'])
+                proposed_positions = self.propose_tetramer_move(self.positions_ts, accepts['tetramer'] / max(1, accepted_moves))
+                proposed_sigma = self.sigma
+                proposed_tetramers = self.get_tetramers(proposed_positions)
             
-            # Calculate prior efficiently
-            new_prior_penalty = (self.calculate_negative_log_prior(proposed_sigma) if self.use_sigma_distribution 
-                            else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
+            # Calculate prior
+            new_prior = (self.sig_provider.calculate_negative_log_prior(proposed_sigma) if self.use_sigma_distribution 
+                        else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
             
-            # Optimize tetramer calculation with caching
-            proposed_tetramers = cached_tetramers if cached_tetramers is not None else self.get_tetramers(proposed_positions)
-            
-            # Score calculation
+            # Calculate new score
             proposed_score, prop_ex, prop_pair, prop_tet = self.neg_log_posterior(
-                proposed_positions, proposed_tetramers, new_prior_penalty, proposed_sigma)
+                proposed_positions, proposed_tetramers, new_prior, proposed_sigma)
             
-            # Metropolis acceptance criterion (optimized)
-            delta_e = proposed_score - current_score
-            accept_move = delta_e < 0 or np.random.random() < np.exp(-delta_e / max(temp, 1e-10))
+            # Metropolis criterion
+            delta = proposed_score - current_score
+            accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
             
-            # Debug logging (simplified, overlap info removed)
-#            if total_moves % 1000 == 0:
-#                with open(debug_file, "a") as f:
-#                    f.write(f"\nSUMMARY at move {total_moves}:\n")
-#                    f.write(f"- Accepted moves: {accepted_moves}/{n_steps}\n")
-#                    f.write(f"- Overall acceptance rate: {accepted_moves/max(1,total_moves):.3f}\n")
-#                    f.write("-" * 50 + "\n\n")
-            
-            # Update state if accepted
-            if accept_move:
+            if accept:
+                # Update state
                 self.positions_ts = proposed_positions
                 self.sigma = proposed_sigma
-                current_score, curr_ex, curr_pair, curr_tet = proposed_score, prop_ex, prop_pair, prop_tet
-                current_tetramers = proposed_tetramers if cached_tetramers is None else current_tetramers
-                accepts_counts[move_type] += 1
-                accepted_moves += 1
+                current_tetramers = proposed_tetramers
+                current_score = proposed_score
+                curr_ex, curr_pair, curr_tet = prop_ex, prop_pair, prop_tet
                 
-                # Track best configuration
+                # Track best state
                 if current_score < best_score:
                     best_score = current_score
                     best_positions = {k: v.copy() for k, v in self.positions_ts.items()}
-            
-                # Efficient batch logging based on accepted moves
+                
+                accepts[move_type] += 1
+                accepted_moves += 1
+                
+                # Save state periodically
                 if accepted_moves % save_freq == 0:
+                    # Store sigma history
                     save_idx = accepted_moves // save_freq
                     if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
                         for key in self.sigma:
                             sigma_history[key][save_idx] = self.sigma[key]
                     
-                    # Direct save instead of using a list
+                    # Save to disk using existing method
                     self.save_state_to_disk(
                         accepted_moves, self.positions_ts, self.sigma, current_score,
-                        prior_score=new_prior_penalty, pair_score=curr_pair,
+                        prior_score=new_prior, pair_score=curr_pair,
                         exvol_score=curr_ex, tet_score=curr_tet,
                         traj_file=trajectory_file
                     )
-                    # run garbage collection periodically to avoid memory issues
-                    if accepted_moves % (save_freq * 10) == 0:
-                        gc.collect()
                     
-                    csv_buffer.append(
-                        f"{accepted_moves},{new_prior_penalty:.1f},{curr_ex:.1f},{curr_pair:.1f},"
-                        f"{curr_tet:.1f},{current_score:.1f},1\n"
-                    )
-                    
-                    if len(csv_buffer) >= 100:
-                        with open(csv_log_file, "a") as f:
-                            f.writelines(csv_buffer)
-                        csv_buffer = []
-            
-                if accepted_moves % print_freq == 0:
-                    overall_accept = accepted_moves / total_moves
-                    print(f"Accepted move {accepted_moves}/{n_steps} ({accepted_moves/n_steps*100:.1f}%), "
-                        f"Score: {current_score:.1f}, Temp: {temp:.2f}, "
-                        f"Accept: {overall_accept:.2f}")
+                    # Print progress
+                    acceptance_rate = accepted_moves / total_moves
+                    print(f"Step {accepted_moves}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={acceptance_rate:.2f}")
         
-        if csv_buffer:
-            with open(csv_log_file, "a") as f:
-                f.writelines(csv_buffer)
-        
-        sigma_history_df = pd.DataFrame({k: v[:n_steps//save_freq+1] for k, v in sigma_history.items()})
+        # Save sigma history
+        import pandas as pd
+        sigma_history_df = pd.DataFrame(sigma_history)
         sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
         
-#        with open(debug_file, "a") as f:
-#            f.write("\nFINAL SUMMARY:\n")
-#            f.write(f"- Total iterations: {total_moves}\n")
-#            f.write(f"- Accepted moves: {accepted_moves}\n")
-#            f.write(f"- Overall acceptance rate: {accepted_moves/total_moves:.3f}\n")
-#            f.write(f"- Final score: {current_score:.2f}\n")
-#            f.write(f"- Best score: {best_score:.2f}\n")
-        
-        print(f"\nSampling complete: {accepted_moves} accepted moves out of {total_moves} iterations")
-        for move_type in moves_counts:
-            rate = accepts_counts[move_type] / max(1, moves_counts[move_type])
-            print(f"{move_type.capitalize()} moves: {rate*100:.1f}% acceptance ({accepts_counts[move_type]}/{moves_counts[move_type]})")
+        # Print final statistics
+        print("\nSampling complete:")
+        for move_type in move_types:
+            rate = accepts[move_type] / max(1, attempts[move_type])
+            print(f"- {move_type}: {rate:.2f} acceptance ({accepts[move_type]}/{attempts[move_type]})")
         
         return best_positions, trajectory_file
 #-----------------------------------------------------------------------
-    def propose_tetramer_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        """Optimized proposal generation for tetramer moves with multiple strategies."""
-        # Create a deep copy of positions - unavoidable for MCMC proposal
+    def propose_tetramer_move(self, positions: Dict[str, np.ndarray], acceptance_rate: float) -> Dict[str, np.ndarray]:
+        """
+        Simple tetramer move: translate and rotate a randomly selected tetramer using adaptive step sizes.
+        
+        Args:
+            positions: Dictionary mapping particle types to position arrays.
+            acceptance_rate: Current acceptance rate used to adjust step sizes.
+        
+        Returns:
+            new_pos: Updated positions after the tetramer move.
+        """
+        # Copy positions
         new_pos = {k: v.copy() for k, v in positions.items()}
         
-        # Get tetramers with temperature parameter that encourages exploration
-        tetramers = self.get_tetramers(positions, temp=0.9)
-        
+        # Get tetramers
+        tetramers = self.get_tetramers(positions)
         if not tetramers:
             return new_pos
-            
-        # Define move types and normalized probabilities (ensuring they sum to exactly 1.0)
-        move_types = ['single_tetramer', 'coordinated_pair', 'radial', 'global_rotation', 'aggressive']
-        #probs = np.array([0.99, 0.0015, 0.0025, 0.0015, 0.0045])
-        probs = np.array([0.89, 0.0, 0.03, 0.07, 0.01])
-        probs /= np.sum(probs)  # Normalize to ensure sum is exactly 1.0
         
-        # Choose a move type with probability
-        move_type = np.random.choice(move_types, p=probs)
-        
-        # Calculate adaptive step size once
-        trans_base = self.tetramer_trans_step
-        rot_base = self.tetramer_rot_step
-        trans_adjust = np.clip(1.0 + 5.0 * (self.tet_trans_acc_rate - self.target_acceptance), 0.3, 2.0)
-        
-        # Use a strategy pattern with a dispatch dictionary
-        return {
-            'single_tetramer': lambda: self._move_single_tetramer(new_pos, tetramers, trans_adjust, trans_base, rot_base),
-            'coordinated_pair': lambda: self._move_tetramer_pair(new_pos, tetramers, trans_adjust, trans_base, rot_base),
-            'radial': lambda: self._move_radial_symmetry(new_pos, tetramers, trans_adjust, trans_base),
-            'global_rotation': lambda: self._move_global_rotation(new_pos, tetramers, rot_base * trans_adjust),
-            'aggressive': lambda: self._move_single_tetramer(new_pos, tetramers, trans_adjust * 2.0, trans_base, rot_base)
-        }[move_type]()
-
-    def _apply_boundary_conditions(self, positions):
-        """Apply periodic boundary conditions efficiently."""
-        # Vectorized boundary handling
-        box_size = self.params.box_size
-        return np.mod(positions, box_size)
-
-    def _calculate_system_center(self, positions):
-        """Calculate system center efficiently."""
-        # Fast concatenation of all positions
-        all_coords = np.vstack([pos for pos in positions.values()])
-        return np.mean(all_coords, axis=0)
-
-    def _move_single_tetramer(self, new_pos, tetramers, trans_adjust, trans_base, rot_base):
-        """Optimized single tetramer move with vectorized operations."""
         # Select a random tetramer
-        a_idx, b_idx, c_idx1, c_idx2 = tetramers[np.random.randint(len(tetramers))]
+        tetramer = tetramers[np.random.randint(len(tetramers))]
+        a_idx, b_idx, c_idx1, c_idx2 = tetramer
         particles = [('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)]
         
-        # Collect tetramer coordinates as a NumPy array for efficient operations
-        coords_array = np.array([new_pos[part][idx] for part, idx in particles])
+        # Get coordinates of the selected tetramer
+        coords = np.array([new_pos[part][idx] for part, idx in particles])
         
-        # Generate a single 3D displacement vector for all particles
-        trans_step = trans_base * trans_adjust * np.random.uniform(0.5, 1.5)
-        displacement = np.random.normal(0, trans_step, 3)  # Fixed: Generate a 3D vector
-            
-        # Apply the same displacement to all particles
-        for i, (part, idx) in enumerate(particles):
-            new_pos[part][idx] = self._apply_boundary_conditions(coords_array[i] + displacement)
+        # Calculate centroid
+        centroid = np.mean(coords, axis=0)
         
-        # Apply rotation with probability
-        if np.random.random() < 0.9:
-            # Use pre-calculated centroid
-            centroid = np.mean(coords_array, axis=0)
-            
-            # Generate rotation parameters
-            rot_step = rot_base * trans_adjust * np.random.uniform(0.7, 1.3)
-            rotation_axis = self._random_unit_vector()
-            rotation_angle = np.random.normal(0, rot_step)
-            rot_matrix = self._rotation_matrix(rotation_axis, rotation_angle)
-            
-            # Apply rotation to all particles
-            for i, (part, idx) in enumerate(particles):
-                vec = coords_array[i] - centroid
-                new_pos[part][idx] = self._apply_boundary_conditions(centroid + rot_matrix @ vec)
+        # Adaptive step factor: adjust steps based on deviation from target acceptance rate
+        # For example: factor = 1 + 3*(acceptance_rate - target_acceptance)
+        factor = np.clip(1.0 + 3.0 * (acceptance_rate - self.target_acceptance), 0.3, 3.0)
         
-        return new_pos
-
-    def _move_tetramer_pair(self, new_pos, tetramers, trans_adjust, trans_base, rot_base):
-        """Optimized pair move with reduced redundancy."""
-        if len(tetramers) < 2:
-            return self._move_single_tetramer(new_pos, tetramers, trans_adjust, trans_base, rot_base)
-        
-        # Select two tetramers
-        indices = np.random.choice(len(tetramers), size=2, replace=False)
-        
-        # Create single displacement for both tetramers
-        trans_step = trans_base * trans_adjust
+        # 1. TRANSLATION: Apply random displacement scaled by the adaptive factor
+        trans_step = self.tetramer_trans_step * factor
         displacement = np.random.normal(0, trans_step, 3)
         
-        # Apply to both tetramers efficiently
-        for idx in indices:
-            a_idx, b_idx, c_idx1, c_idx2 = tetramers[idx]
-            for part, idx in [('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)]:
-                new_pos[part][idx] = self._apply_boundary_conditions(new_pos[part][idx] + displacement)
-        
-        return new_pos
-
-    def _move_radial_symmetry(self, new_pos, tetramers, trans_adjust, trans_base):
-        """Efficient radial movement preserving symmetry."""
-        if len(tetramers) < 3:
-            return self._move_single_tetramer(new_pos, tetramers, trans_adjust, trans_base, self.tetramer_rot_step)
-        
-        # Calculate system center once
-        system_center = self._calculate_system_center(new_pos)
-        
-        # Single radial adjustment for all tetramers
-        radial_adjust = np.random.normal(0, trans_base * trans_adjust)
-        
-        # Process all tetramer particles
-        particle_indices = []
-        for tetramer in tetramers:
-            a_idx, b_idx, c_idx1, c_idx2 = tetramer
-            particle_indices.extend([('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)])
-        
-        # Apply radial adjustment to all particles
-        for part, idx in particle_indices:
-            vec = new_pos[part][idx] - system_center
-            distance = np.linalg.norm(vec)
-            if distance > 1e-10:  # Avoid division by zero with better threshold
-                new_distance = max(0.1, distance + radial_adjust)
-                new_pos[part][idx] = self._apply_boundary_conditions(
-                    system_center + vec * (new_distance / distance)
-                )
-        
-        return new_pos
-
-    def _move_global_rotation(self, new_pos, tetramers, rot_step):
-        """Highly optimized global rotation around system center."""
-        # Calculate system center once
-        system_center = self._calculate_system_center(new_pos)
-        
-        # Generate rotation parameters
-        rotation_axis = self._random_unit_vector()
+        # 2. ROTATION: Generate random rotation scaled by the adaptive factor
+        rot_step = self.tetramer_rot_step * factor
+        rotation_axis = np.random.randn(3)
+        rotation_axis /= np.linalg.norm(rotation_axis) + 1e-10
         rotation_angle = np.random.normal(0, rot_step)
-        rotation_matrix = self._rotation_matrix(rotation_axis, rotation_angle)
         
-        # Apply rotation to all particles at once for each component type
-        for type_name, positions in new_pos.items():
-            # Vectorized operation: translate to origin, rotate, translate back
-            centered = positions - system_center
-            # Apply rotation to all particles of this type at once
-            rotated = np.dot(centered, rotation_matrix.T)
-            new_pos[type_name] = self._apply_boundary_conditions(rotated + system_center)
+        # Create rotation matrix using quaternion representation
+        theta = rotation_angle
+        # Note the negative sign for the vector part (depending on convention)
+        q = np.array([np.cos(theta/2), -rotation_axis[0]*np.sin(theta/2), 
+                    -rotation_axis[1]*np.sin(theta/2), -rotation_axis[2]*np.sin(theta/2)])
+        rot_matrix = np.array([
+            [1 - 2*(q[2]**2 + q[3]**2), 2*(q[1]*q[2] - q[0]*q[3]), 2*(q[1]*q[3] + q[0]*q[2])],
+            [2*(q[1]*q[2] + q[0]*q[3]), 1 - 2*(q[1]**2 + q[3]**2), 2*(q[2]*q[3] - q[0]*q[1])],
+            [2*(q[1]*q[3] - q[0]*q[2]), 2*(q[2]*q[3] + q[0]*q[1]), 1 - 2*(q[1]**2 + q[2]**2)]
+        ])
+        
+        # Apply translation and rotation to each particle in the tetramer
+        for i, (part, idx) in enumerate(particles):
+            # Rotate around centroid
+            vec = coords[i] - centroid
+            rotated_pos = centroid + rot_matrix @ vec
+            # Then translate
+            final_pos = rotated_pos + displacement
+            # Apply periodic boundary conditions
+            new_pos[part][idx] = np.mod(final_pos, self.params.box_size)
         
         return new_pos
-
-    def _random_unit_vector(self):
-        """Generate a random unit vector with numerical stability."""
-        vec = np.random.randn(3)
-        norm = np.linalg.norm(vec)
-        if norm < 1e-10:
-            vec = np.array([0, 0, 1])  # Default vector if random is near zero
-        else:
-            vec /= norm
-        return vec
-
-    def _rotation_matrix(self, axis, theta):
-        """
-        Create a rotation matrix using quaternions - more efficient and stable
-        than Rodrigues' formula for repeated calculations.
-        """
-        # Normalize axis
-        axis = np.asarray(axis)
-        axis = axis / np.linalg.norm(axis)
-        
-        # Quaternion representation (more stable)
-        q = np.array([np.cos(theta/2), *(-axis*np.sin(theta/2))])
-        
-        # Fast quaternion-based rotation matrix construction
-        return np.array([
-            [1-2*(q[2]**2+q[3]**2), 2*(q[1]*q[2]-q[0]*q[3]), 2*(q[1]*q[3]+q[0]*q[2])],
-            [2*(q[1]*q[2]+q[0]*q[3]), 1-2*(q[1]**2+q[3]**2), 2*(q[2]*q[3]-q[0]*q[1])],
-            [2*(q[1]*q[3]-q[0]*q[2]), 2*(q[2]*q[3]+q[0]*q[1]), 1-2*(q[1]**2+q[2]**2)]
-        ])
 
     def calculate_tetramer_scores_batch(self, positions, tetramers, sig):
         """Calculate scores for all tetramers in a single vectorized operation."""

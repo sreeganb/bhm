@@ -57,9 +57,7 @@ class PairSampler(BaseMCSampler):
     ) -> Tuple[float, float, float, float]:
         """Calculate the log posterior for the pair-level interactions."""
         # 1) Excluded volume contribution
-        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos, step, 
-                                                                           log_file="excluded_vol_log.csv", 
-                                                                           debug = False)
+        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
         
         # 2) Pairwise negative log-likelihood
         pairwise_score = 0.0
@@ -166,10 +164,6 @@ class PairSampler(BaseMCSampler):
             accepted_moves = 0
             total_moves = 0
             temp_index = 0  # Only increment on accepted moves
-            
-            # Track statistics for debugging
-#            total_with_overlaps = 0
-#            accepted_with_overlaps = 0
 
             while accepted_moves < n_steps and total_moves < (n_steps * 50):
                 total_moves += 1
@@ -191,11 +185,6 @@ class PairSampler(BaseMCSampler):
                     proposed_positions, proposed_sigma, self.sigma_range, step=total_moves
                 )
                 delta_e = proposed_score - current_score
-                
-                # Check for overlaps before Metropolis decision
-#                has_overlaps = self._check_overlaps(proposed_positions)
-#                if has_overlaps:
-#                    total_with_overlaps += 1
 
                 # Metropolis acceptance criterion
                 accepted = False
@@ -207,9 +196,6 @@ class PairSampler(BaseMCSampler):
                     current_score = proposed_score
                     accepted_moves += 1
                     temp_index += 1  # Only increment temperature on accepted moves
-                    
-#                    if has_overlaps:
-#                        accepted_with_overlaps += 1
 
                     if current_score < best_score:
                         best_score = current_score
@@ -246,31 +232,7 @@ class PairSampler(BaseMCSampler):
             sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
 
             # Return both best and final positions for better analysis
-            return final_positions, trajectory_file
-            
-    def _check_overlaps(self, positions):
-        """Check if there are any overlaps in the given positions."""
-        has_overlaps = False
-        for type1, pos1 in positions.items():
-            for type2, pos2 in positions.items():
-                if type1 <= type2:  # Only check unique pairs
-                    min_dist = self.params.radii[type1] + self.params.radii[type2]
-                    distances = cdist(pos1, pos2)
-                    
-                    # Handle same-type particles
-                    if type1 == type2:
-                        mask = np.triu(np.ones_like(distances), k=1)
-                        if np.any((distances < min_dist) & (mask > 0)):
-                            has_overlaps = True
-                            break
-                    else:
-                        if np.any(distances < min_dist):
-                            has_overlaps = True
-                            break
-            if has_overlaps:
-                break
-        return has_overlaps
-        
+            return final_positions, trajectory_file        
 #----------------------------------------------------------------------
 if __name__ == "__main__":
     pair_samp = PairSampler()

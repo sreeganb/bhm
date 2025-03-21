@@ -67,128 +67,34 @@ class BaseMCSampler:
 
         return positions
 
-    def excluded_volume_nll(self, positions: Dict[str, np.ndarray], step: int = 0, 
-                        log_file: str = None, debug: bool = False) -> float:
+    def excluded_volume_nll(self, positions: Dict[str, np.ndarray]) -> float:
         """
-        Compute the negative log likelihood of the excluded volume penalty with improved debugging.
-        Debug information is written to a file instead of printed to console.
-        
-        Args:
-            positions: Dictionary of particle positions by type
-            step: Current MCMC step number (for logging)
-            log_file: Path to log file for overlap details
-            debug: Whether to write detailed debugging information
-        
-        Returns:
-            float: The excluded volume penalty score
+        Compute the negative log likelihood of the excluded volume penalty.
         """
         score = 0.0
         exvol_sigma = 0.1  # Excluded volume sigma penalty strength
-        overlap_count = 0
-        max_overlap = 0.0
-        overlap_details = []
         
-        # Open log files
-        log_file_handle = None
-        debug_file_handle = None
-        debug_file = "debug_exvol.txt"
-        
-        try:
-            if log_file:
-                # Determine if we need to write a header
-                write_header = not os.path.exists(log_file) or os.path.getsize(log_file) == 0
-                log_file_handle = open(log_file, 'a')
-                
-                if write_header:
-                    log_file_handle.write("step,type1,type2,idx1,idx2,distance,min_dist,overlap,score_contribution\n")
-            
-            # Open debug file if debug is True or if there are overlaps
-            if debug:
-                debug_file_handle = open(debug_file, 'a')
-            
-            # Process each pair of particle types
-            for type1, pos1 in positions.items():
-                for type2, pos2 in positions.items():
-                    # Only compute once for each unordered pair to avoid double-counting
-                    if type1 <= type2:
-                        min_dist = self.params.radii[type1] + self.params.radii[type2]
-                        distances = cdist(pos1, pos2)
-                        
-                        # Handle same-type particles (avoid self-interactions)
-                        if type1 == type2:
-                            # Use upper triangle mask to avoid counting same particle twice
-                            mask = np.triu(np.ones_like(distances), k=1)
-                            viol_mask = (distances < min_dist) & (mask > 0)
-                        else:
-                            viol_mask = distances < min_dist
-                        
-                        # Calculate overlap penalties if any exist
-                        if np.any(viol_mask):
-                            viol_indices = np.where(viol_mask)
-                            for i, j in zip(viol_indices[0], viol_indices[1]):
-                                distance = distances[i, j]
-                                current_overlap = min_dist - distance
-                                
-                                if current_overlap > 0:  # Explicit check for overlap
-                                    overlap_count += 1
-                                    max_overlap = max(max_overlap, current_overlap)
-                                    
-                                    # Calculate score contribution for this pair
-                                    contrib = (current_overlap ** 2) / (exvol_sigma ** 2)
-                                    score += contrib
-                                    
-                                    # Store details for debugging
-                                    overlap_details.append({
-                                        'type1': type1, 'idx1': i, 
-                                        'type2': type2, 'idx2': j,
-                                        'distance': distance, 
-                                        'min_dist': min_dist,
-                                        'overlap': current_overlap,
-                                        'contrib': contrib
-                                    })
-                                    
-                                    # Log overlap if requested
-                                    if log_file_handle:
-                                        log_file_handle.write(
-                                            f"{step},{type1},{type2},{i},{j},"
-                                            f"{distance:.6f},{min_dist:.6f},"
-                                            f"{current_overlap:.6f},{contrib:.6f}\n"
-                                        )
-            
-            # Write debug information to file if there are overlaps or debug is true
-            if (overlap_count > 0 or debug) and debug_file_handle is None:
-                debug_file_handle = open(debug_file, 'a')
-                
-            if debug_file_handle:
-                debug_file_handle.write(f"Step {step}: Found {overlap_count} overlaps, max_overlap={max_overlap:.4f}, score={score:.4f}\n")
-                if overlap_count > 0:
-                    for i, details in enumerate(overlap_details[:5]):  # Show first 5 overlaps
-                        debug_file_handle.write(
-                            f"  Overlap {i+1}: {details['type1']}{details['idx1']} - "
-                            f"{details['type2']}{details['idx2']}, "
-                            f"dist={details['distance']:.4f}, "
-                            f"min_dist={details['min_dist']:.4f}, "
-                            f"overlap={details['overlap']:.4f}\n"
-                        )
+        # Process each pair of particle types
+        for type1, pos1 in positions.items():
+            for type2, pos2 in positions.items():
+                # Only compute once for each unordered pair to avoid double-counting
+                if type1 <= type2:
+                    min_dist = self.params.radii[type1] + self.params.radii[type2]
+                    distances = cdist(pos1, pos2)
                     
-                    if len(overlap_details) > 5:
-                        debug_file_handle.write(f"  ... and {len(overlap_details)-5} more overlaps\n")
+                    # Handle same-type particles (avoid self-interactions)
+                    if type1 == type2:
+                        # Use upper triangle mask to avoid counting same particle twice
+                        mask = np.triu(np.ones_like(distances), k=1)
+                        viol_mask = (distances < min_dist) & (mask > 0)
+                    else:
+                        viol_mask = distances < min_dist
                     
-                    # Add a separator line for readability
-                    debug_file_handle.write("-" * 60 + "\n")
-                                
-        finally:
-            # Make sure to close the files
-            if log_file_handle:
-                log_file_handle.close()
-            if debug_file_handle:
-                debug_file_handle.close()
-        
-        # Important: Attach debug information to the instance for later inspection
-        self._last_overlap_count = overlap_count
-        self._last_max_overlap = max_overlap
-        self._last_overlap_details = overlap_details
-                
+                    # Vectorized calculation of penalties
+                    if np.any(viol_mask):
+                        overlaps = min_dist - distances[viol_mask]
+                        score += np.sum((overlaps**2) / (exvol_sigma**2))
+                    
         return score
 
     def pair_score_nll(self, pos1: np.ndarray, pos2: np.ndarray, target_dist: float, sigma: float) -> float:
@@ -202,37 +108,40 @@ class BaseMCSampler:
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     #---------------------------------------------------------------------------
     
-    def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5 ) -> Tuple[Dict[str, float], str]:
+    def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
         """
-        Propose a move for one sigma parameter using a symmetric log-space proposal,
-        with adaptive step size and reflection on the bounds.
-        Takes the current acceptance rate as input to adjust the proposal step size.
+        Propose a move for one sigma parameter using log-space sampling.
         """
-        new_sigma = sigma.copy()
-        pair_types = list(sigma.keys())
-        pair_type = random.choice(pair_types)
+        # Choose one pair type to modify
+        pair_type = random.choice(list(sigma.keys()))
         
-        # Cache physical bounds for the selected pair type.
+        # Calculate bounds directly
         sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-        min_sigma, max_sigma = 0.035 * sum_radii, 0.25 * sum_radii # changed from 0.25 to 0.35 also 0.01 to 0.1
-        log_min, log_max = np.log(min_sigma), np.log(max_sigma)
+        min_sigma = 0.035 * sum_radii
+        max_sigma = 0.25 * sum_radii
         
+        # Calculate step size - simplified adaptive adjustment
         current_val = sigma[pair_type]
-        base_step = min(0.1 * current_val, 0.03)
-        # Adaptive adjustment based on acceptance rate.
-        adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.5, 2.0)
-        step_size = base_step * adjustment
+        step_size = min(0.1 * current_val, 0.03) * (1.0 + 5.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
         
+        # Generate proposal in log space
         log_current = np.log(current_val)
+        log_min = np.log(min_sigma)
+        log_max = np.log(max_sigma)
+        
+        # Simple bounded proposal - avoid complex reflection logic
         log_proposed = log_current + np.random.normal(0, step_size)
-        # Reflecting the proposal off the bounds.
-        log_range = log_max - log_min
-        log_proposed = log_min + np.abs(log_proposed - log_min) % (2 * log_range)
-        log_proposed = log_proposed if log_proposed <= log_max else 2 * log_max - log_proposed
         
-        new_sigma[pair_type] = np.exp(log_proposed)
+        # Basic boundary enforcement
+        if log_proposed < log_min:
+            log_proposed = log_min + (log_min - log_proposed) % (log_max - log_min)
+        elif log_proposed > log_max:
+            log_proposed = log_max - (log_proposed - log_max) % (log_max - log_min)
         
-        return new_sigma, pair_type  # Return the new sigma and the type for logging
+        # Create new sigma with just the updated value
+        new_sigma = {**sigma, pair_type: np.exp(log_proposed)}
+        
+        return new_sigma, pair_type
     #---------------------------------------------------------------------------
 
     def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:

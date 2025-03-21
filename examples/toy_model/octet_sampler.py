@@ -20,259 +20,207 @@ from scipy.spatial.distance import cdist
 from typing import Dict, List, Tuple
 from scipy.stats import multivariate_normal
 from pair_sampler import PairSampler
+import h5py  # For reading HDF5 files
 #-----------------------------------------------------------------------
 class OctetSampler(BaseMCSampler):
     """
     Sampler for Tetramer-level interactions, inheriting from BaseMCSampler.
     Includes run_mc method.
     """
-    def __init__(self, use_sigma_distribution=False):
+    def __init__(self, use_sigma_distribution=False, sig_passed=None, sig_range_passed=None):
         super().__init__()  # Call BaseMCSampler constructor
         self.use_sigma_distribution = use_sigma_distribution
         self.params = SystemParameters()  # Initialize system parameters
 
-        self.ps = PairSampler() # Initialize PairSampler
-        self.ts = TetramerSampler() # Initialize TetramerSampler
-
-        # Additional initialization for tetramer-specific features
-        self.octet_trans_step = 0.25
+        # Basic sampler parameters
+        self.octet_trans_step = 0.2
         self.octet_rot_step = 0.1
-        self.sigma_prior_dist = {}
-        #-------------------------------------
-        # tracking acceptance rates
         self.octet_trans_acc_rate = 0.5
         self.target_acceptance = 0.5
-        #-------------------------------------
-        # Initialize 
-        self.positions = self.initialize_positions() # Initialize positions
-        
-        required_pairs = {"AA", "AB", "BC", "CC"}
-        if not required_pairs.issubset(self.params.pair_distances.keys()):
-            raise ValueError("Missing required pair types for tetramer sampling.")
 
         if use_sigma_distribution:
-            print("using sigma distribution now: ")
-            pwd = os.getcwd()
-            sampler_output_dir = os.path.join(pwd, "output_analysis/tetramersampler_results") # hard coded here, needs to be changed later
-            sampler_name = "TetramerSampler" # hard coded here, needs to be changed later
-            if os.path.exists(sampler_output_dir):  # Check if the directory exists
-                pattern = re.compile(r"gmm_fit_(AA|AB|BC|CC)_" + re.escape(sampler_name) + r"_chain_(\d+)\.json")
-                chain_numbers = set()
-
-                for filename in os.listdir(sampler_output_dir):
-                    match = pattern.match(filename)
-                    if match:
-                        chain_numbers.add(int(match.group(2)))
-                        print("chain numbers: ", chain_numbers)
-
-                if chain_numbers:  # Check if any chains were found
-                    selected_chain = random.choice(list(chain_numbers))
-                    self.gmm_params = {}  # Store parameters in an instance variable
-                    for sigma_type in ["AA", "AB", "BC", "CC"]:
-                        json_path = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_{sampler_name}_chain_{selected_chain}.json")
-                        if os.path.exists(json_path):  # Check file existence
-                            try:
-                                with open(json_path, 'r') as f:
-                                    self.gmm_params[sigma_type] = json.load(f)
-                            except (FileNotFoundError, json.JSONDecodeError) as e:
-                                print(f"Error loading {json_path}: {e}")
-                                # Decide how to handle the error, e.g., set a default value, raise, etc.
-                                self.gmm_params[sigma_type] = None # or some other default value
-                        else:  # File not found for this sigma_type
-                            print(f"GMM fit file not found for {sigma_type}, chain {selected_chain}: {json_path}")
-                            self.gmm_params[sigma_type] = None  # Optional: store None
-                else:
-                    print(f"No GMM fit JSON files found for {sampler_name} in {sampler_output_dir}")
-                    self.gmm_params = None  # Or some other default behavior
-            else:  # Directory doesn't exist
-                print(f"Output directory not found: {sampler_output_dir}")
-                self.gmm_params = None  # No GMM parameters available
-
-            # Initialize self.sigma by sampling from the GMM
-            self.sigma = self.initialize_sigma_from_gmm()
-            self.sigma_range = None  # Not used in this case
+            # use positions from trajectory files
+            self.positions_os = self.get_positions()
         else:
-            # Normal PairSampler initialization logic
-            self.sigma, self.sigma_range = self.initialize_sigma()  # Initialize sigma values from BaseMCSampler
-            self.base_priors = Priors("jeffreys")  # Initialize priors
-            print("Using default sigma initialization (no GMM).")
-
-    def initialize_sigma_from_gmm(self):
-        """
-        Initializes sigma values by sampling from the pre-fit GMMs.
-
-        Returns:
-            dict: A dictionary where keys are pair types (e.g., "AA", "AB") and
-                values are the sampled sigma values (floats).
-        """
-        sigma: Dict[str, float] = {}
-        for pair_type in self.params.pair_distances.keys():
-            if self.gmm_params[pair_type] is not None:
-                gmm_info = self.gmm_params[pair_type]
-                if gmm_info is not None:
-                    # Correctly sample from the GMM
-                    n_components = gmm_info['n_components']
-                    means = np.array(gmm_info['means']).reshape(n_components, 1)
-                    covariances = np.array(gmm_info['covariances']).reshape(n_components, 1, 1)
-                    weights = np.array(gmm_info['weights'])
-
-                    # 1. Choose a component based on weights
-                    component_choice = np.random.choice(n_components, p=weights)
-
-                    # 2. Sample from the chosen component's Gaussian
-                    sampled_value = np.random.multivariate_normal(
-                        mean=means[component_choice].flatten(),
-                        cov=covariances[component_choice]
-                    )
-                    sigma[pair_type] = float(sampled_value[0])  # Extract the single value
-
-                else:
-                    print(f"No GMM parameters available for {pair_type}. Using default sigma.")
-                    sigma[pair_type] = self.params.pair_distances[pair_type]
-            else:
-                print(f"No GMM data for {pair_type}. Using default sigma.")
-                sigma[pair_type] = self.params.pair_distances[pair_type]
-
-        return sigma
-    
-    def _calculate_gmm_log_prob(self, sigma_value: float, pair_type: str) -> float:
-        """
-        Calculates the log probability density of a GMM for a *single* sigma value,
-        for a specific pair type.
-        """
-        # If no GMM parameters or none for this pair type, return -inf or handle differently
-        if self.gmm_params is None or self.gmm_params[pair_type] is None:
-            return -np.inf
-
-        gmm_info = self.gmm_params[pair_type]
-        n_components = gmm_info['n_components']
-        means = np.array(gmm_info['means']).reshape(n_components, 1)
-        covariances = np.array(gmm_info['covariances']).reshape(n_components, 1, 1)
-        weights = np.array(gmm_info['weights'])
-
-        log_prob = -np.inf
-        for i in range(n_components):
-            component_log_prob = multivariate_normal.logpdf(
-                sigma_value,
-                mean=means[i].flatten(),
-                cov=covariances[i].squeeze()
-            )
-            log_prob = np.logaddexp(log_prob, np.log(weights[i]) + component_log_prob)
-        return log_prob
-
-    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Calculates the negative log prior for a set of sigma values."""
-        total_negative_log_prior = 0.0
-        for pair_type, sigma_value in sigma.items():
-            log_prior = self._calculate_gmm_log_prob(sigma_value, pair_type)
-            total_negative_log_prior += -log_prior
-        return total_negative_log_prior
-    
-    def get_initial_positions(self) -> Dict[str, np.ndarray]:
-        """Read in the tetramer sampler trajectory file and get the positions from it"""
-        cwd = os.getcwd()
-        # Directory where the pairsampler trajectory files are stored
-        traj_loc = os.path.join(cwd, "output_analysis/tetramersampler_results")
-        # Collect chain numbers from filenames of the form "trajectory_PairSampler_chain_#.h5"
-        chain_numbers = []
-        for filename in os.listdir(traj_loc):
-            if filename.startswith("trajectory_chain_") and filename.endswith(".h5"):
-                chain_numbers.append(int(filename.split("_")[-1].split(".")[0]))
-        chain_numbers.sort()
-        # Choose a random chain
-        cnum = random.choice(chain_numbers)
-        print("selected chain: ", cnum)
-        # Construct full path to file
-        filename = os.path.join(traj_loc, f"trajectory_chain_{cnum}.h5")
+            # Initialize positions using uniform prior
+            self.positions_os = self.initialize_positions()
         
-        # Open the HDF5 file and pick a random frame from the last 10% of frames.
-        with h5py.File(filename, 'r') as f:
-            traj_grp = f['trajectory']
-            keys = list(traj_grp.keys())
-            keys.sort()  # Assumes keys are zero-padded (e.g., "state_00000")
-            n = len(keys)
-            n_equil = max(1, int(0.1 * n))  # Last 10% of frames; ensure at least one frame
-            equil_keys = keys[-n_equil:]
-            key = random.choice(equil_keys)
-            print("selected frame: ", key)
-            state_grp = traj_grp[key]
+        # Initialize sigma values using sigma_provider if needed
+        self._initialize_sigma_values(use_sigma_distribution, sig_passed, sig_range_passed)
+        
+        # Initialize samplers for lower levels
+        self.ts = TetramerSampler(
+            use_sigma_distribution=use_sigma_distribution, 
+            positions_ts=self.positions_os,
+            sig_passed=self.sigma, 
+            sig_range_passed=self.sigma_range
+        )
+        
+        self.ps = PairSampler(
+            use_def_sig_pos=False, 
+            sig_passed=self.sigma, 
+            sig_range_passed=self.sigma_range,
+            pos_passed=self.positions_os
+        )
+
+    def _initialize_sigma_values(self, use_sigma_distribution, sig_passed, sig_range_passed):
+        """Initialize sigma values correctly using sigma_provider if available."""
+        if use_sigma_distribution:
+            # Use sigma_provider to get values and handle GMM calculations
+            from sigma_provider import GMMSigmaProvider
+            self.sig_provider = GMMSigmaProvider(sampler_name="OctetSampler")
+            self.sigma = self.sig_provider.sample_sigma_values()
+            self.sigma_range = None
+            print("PairSampler initialized with GMM-based sigma values.")
+        elif sig_passed is not None:
+            # Use passed-in values
+            self.sigma = sig_passed
+            self.sigma_range = sig_range_passed
+            print("PairSampler initialized with passed sigma values.")
+        else:
+            # Use default initialization
+            self.sigma, self.sigma_range = self.initialize_sigma()
+            self.base_priors = Priors("jeffreys")
+            print("PairSampler initialized with default sigma values.")
+    
+    def get_positions(self) -> Dict[str, np.ndarray]:
+        """Simply load positions from the last frame of a trajectory file."""
+        import pathlib
+        
+        traj_dir = pathlib.Path(os.getcwd()) / "output_analysis/tetramersampler_results"
+        
+        try:
+            # Get first trajectory file
+            trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
             
-            # Build a dictionary of positions for parts A, B, C from the chosen frame
-            positions = {}
-            pos_grp = state_grp['positions']
-            for type_name in pos_grp:
-                positions[type_name] = pos_grp[type_name][:]
+            if not trajectory_files:
+                raise FileNotFoundError(f"No trajectory files found in {traj_dir}")
+                
+            # Select random file
+            filepath = random.choice(trajectory_files)
+            chain_num = int(filepath.stem.split('_')[-1])
+            print(f"Selected chain: {chain_num}")
+                
+            with h5py.File(filepath, 'r') as f:
+                if 'trajectory' not in f:
+                    raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
+                    
+                traj_grp = f['trajectory']
+                keys = sorted(traj_grp.keys())
+                
+                if not keys:
+                    raise ValueError("Empty trajectory file")
+                    
+                # Get last frame
+                last_key = keys[-1]
+                print(f"Using last frame: {last_key}")
+                
+                # Read positions
+                positions = {}
+                pos_grp = traj_grp[last_key]['positions']
+                
+                for type_name in pos_grp:
+                    positions[type_name] = pos_grp[type_name][:].copy()
+                
+            return positions
+            
+        except Exception as e:
+            print(f"Error loading trajectory: {e}")
+            print("Falling back to initialized positions")
+            return self.initialize_positions()
         
     
     def propose_octet_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
-        Enhanced proposal for octet moves optimized for 8-fold symmetry systems.
-        An octet consists of two tetramers (ABCC + ABCC).
+        Simple octet move without applying periodic boundaries. We retry the random
+        displacement and rotation if any updated positions land outside the box. If,
+        after several attempts, we still can't keep the octet in the box,
+        we discard the move.
         """
         # Create a deep copy of positions
         new_pos = {k: v.copy() for k, v in positions.items()}
         
-        # First, get all tetramers using the existing method
-        tetramers = self.ts.get_tetramers(positions, temp=1.5)  # Higher temp for more diversity
-        
-        # Then get octets (pairs of tetramers)
+        # Get tetramers and form octets
+        tetramers = self.ts.get_tetramers(positions)
         octets = self.get_octets(positions, tetramers)
         
+        # If no octets found, return unchanged positions
         if not octets:
             return new_pos
-            
-        # Choose a move type with probability
-        move_type = np.random.choice([
-            'single_octet',       # Move one octet (two tetramers together)
-            'octet_pair',         # Move a pair of octets (maintaining relative orientation)
-            'radial',             # Radial movement preserving symmetry
-            'global_rotation',    # Rotate all octets around system center
-            'aggressive'          # Larger steps for escaping local minima
-        ], p=[0.96, 0.01, 0.01, 0.01, 0.01])
         
-        # Dynamic step sizes based on acceptance rate
-        trans_base = self.octet_trans_step
-        rot_base = self.octet_rot_step
+        # Select a random octet
+        octet_idx = np.random.randint(len(octets))
+        tetramer1, tetramer2 = octets[octet_idx]
         
-        # Adjust based on acceptance rate
-        trans_adjust = np.clip(1.0 + 3.0 * (self.octet_trans_acc_rate - self.target_acceptance), 0.3, 3.0)
+        # Collect all particles in the octet
+        octet_particles = []
+        for a_idx, b_idx, c_idx1, c_idx2 in [tetramer1, tetramer2]:
+            octet_particles.extend([
+                ('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)
+            ])
         
-        if move_type == 'single_octet':
-            return self._move_single_octet(new_pos, octets, trans_adjust, trans_base, rot_base)
+        # Calculate centroid of the octet
+        octet_coords = [new_pos[p][i] for p, i in octet_particles]
+        centroid = np.mean(octet_coords, axis=0)
+        
+        # We'll allow a few tries to keep the octet within [0, box_size]
+        max_tries = 10
+        box_size = self.params.box_size
+        
+        for attempt in range(max_tries):
+            # Copy positions so we can revert if needed
+            temp_pos = {k: v.copy() for k, v in new_pos.items()}
             
-        elif move_type == 'octet_pair':
-            return self._move_octet_pair(new_pos, octets, trans_adjust, trans_base, rot_base)
+            # 1. Apply translation
+            displacement = np.random.normal(0, self.octet_trans_step, 3)
             
-        elif move_type == 'radial':
-            return self._move_radial_symmetry(new_pos, octets, trans_adjust, trans_base)
+            # 2. Generate random rotation
+            axis = self._random_unit_vector()
+            angle = np.random.normal(0, self.octet_rot_step)
+            rot_matrix = self._rotation_matrix(axis, angle)
             
-        elif move_type == 'global_rotation':
-            return self._move_global_rotation(new_pos, trans_adjust * rot_base)
+            # Apply translation and rotation to all particles
+            out_of_bounds = False
+            for part, idx in octet_particles:
+                vec = temp_pos[part][idx] - centroid
+                rotated_pos = centroid + rot_matrix @ vec
+                final_pos = rotated_pos + displacement
+                
+                # Check boundaries
+                if np.any(final_pos < 0) or np.any(final_pos > box_size):
+                    out_of_bounds = True
+                    break
+                
+                # Update position
+                temp_pos[part][idx] = final_pos
             
-        else:  # aggressive
-            return self._move_single_octet(
-                new_pos, octets, 
-                trans_adjust * 2.5,  # More aggressive step size
-                trans_base, rot_base
-            )
+            # If everything is within bounds, accept and break
+            if not out_of_bounds:
+                new_pos = temp_pos
+                break
+        else:
+            # If we exhaust max_tries with no success, return the original positions
+            # (the move is effectively ignored)
+            return positions
+        
+        return new_pos
 
-    def get_octets(self, positions: Dict[str, np.ndarray], tetramers=None, temp=1.0) -> List[Tuple]:
+    def get_octets(self, positions: Dict[str, np.ndarray], tetramers=None, temp=0.90) -> List[Tuple]:
         """
-        Group tetramers into octets (pairs of ABCC tetramers).
+        Group tetramers into octets (pairs of tetramers) with temperature-based selection.
         
         Args:
             positions: Dictionary of particle positions
             tetramers: Pre-computed tetramers (optional)
-            temp: Temperature parameter for probabilistic pairing
+            temp: Temperature parameter for proximity-based pairing
         
         Returns:
             List of octet tuples, each containing two tetramers
         """
         if tetramers is None:
-            tetramers = self.ts.get_tetramers(positions, temp=temp)
+            tetramers = self.ts.get_tetramers(positions)
         
-        if len(tetramers) < 8:  # Need at least 8 tetramers for 4 octets
-            print(f"Warning: Only found {len(tetramers)} tetramers, need at least 8 for 4 octets")
+        if len(tetramers) < 2:
             return []
         
         # Calculate centers of each tetramer
@@ -287,193 +235,41 @@ class OctetSampler(BaseMCSampler):
             ]
             centers.append(np.mean(coords, axis=0))
         
-        # Calculate distances between all tetramer centers (with periodic boundary conditions)
-        dist_matrix = np.zeros((len(tetramers), len(tetramers)))
-        for i in range(len(tetramers)):
-            for j in range(i+1, len(tetramers)):
-                # Calculate minimum distance considering periodic boundaries
-                delta = centers[i] - centers[j]
-                delta = np.where(np.abs(delta) > self.params.box_size/2,
-                                delta - np.sign(delta) * self.params.box_size,
-                                delta)
-                dist = np.linalg.norm(delta)
-                
-                dist_matrix[i, j] = dist
-                dist_matrix[j, i] = dist
-        
-        # Apply temperature parameter to transform distances into probabilities
-        prob_matrix = np.exp(-dist_matrix / temp)
-        np.fill_diagonal(prob_matrix, 0)  # Cannot pair a tetramer with itself
-        
         # Form octets by pairing tetramers
         octets = []
-        available = set(range(len(tetramers)))
+        available = list(range(len(tetramers)))
         
-        # Try to make exactly 4 octets
-        target_octets = 4
-        
-        while len(octets) < target_octets and len(available) >= 2:
-            if len(available) == 0:
-                break
-                
-            # Convert available set to list for indexing
-            avail_list = list(available)
+        while len(available) >= 2:
+            # Pick first tetramer randomly
+            idx1 = np.random.choice(available)
+            available.remove(idx1)
             
-            if len(avail_list) == 2:
-                # Only two tetramers left, pair them
-                octets.append((tetramers[avail_list[0]], tetramers[avail_list[1]]))
-                available.clear()
+            # Calculate distances to all other tetramers with periodic boundaries
+            distances = []
+            for idx2 in available:
+                delta = centers[idx1] - centers[idx2]
+                # Periodic boundary correction
+                delta = np.where(np.abs(delta) > self.params.box_size/2,
+                            delta - np.sign(delta) * self.params.box_size,
+                            delta)
+                dist = np.linalg.norm(delta)
+                distances.append(dist)
+            
+            # Convert distances to selection probabilities using temperature
+            probs = np.exp(-np.array(distances) / temp)
+            if probs.sum() > 0:
+                probs = probs / probs.sum()  # Normalize
+                idx2_rel = np.random.choice(len(available), p=probs)
+                idx2 = available[idx2_rel]
             else:
-                # Choose first tetramer randomly from available
-                idx1 = np.random.choice(avail_list)
-                
-                # Choose second tetramer based on probability matrix
-                probs = prob_matrix[idx1, [i for i in avail_list if i != idx1]]
-                if probs.sum() == 0:
-                    # If all probabilities are zero, choose randomly
-                    candidates = [i for i in avail_list if i != idx1]
-                    idx2 = np.random.choice(candidates)
-                else:
-                    # Normalize probabilities
-                    probs = probs / probs.sum()
-                    idx2_rel = np.random.choice(len(probs), p=probs)
-                    candidates = [i for i in avail_list if i != idx1]
-                    idx2 = candidates[idx2_rel]
-                
-                # Add the pair to octets
-                octets.append((tetramers[idx1], tetramers[idx2]))
-                available.remove(idx1)
-                available.remove(idx2)
+                # If all probabilities are zero, choose randomly
+                idx2 = np.random.choice(available)
+            
+            # Add the pair to octets and remove from available
+            octets.append((tetramers[idx1], tetramers[idx2]))
+            available.remove(idx2)
         
         return octets
-
-    def _move_single_octet(self, new_pos, octets, trans_adjust, trans_base, rot_base):
-        """Move a single octet (a pair of tetramers) with translation and rotation."""
-        # Select a random octet
-        octet_idx = np.random.randint(len(octets))
-        tetramer1, tetramer2 = octets[octet_idx]
-        
-        # Collect all particles in the octet
-        octet_particles = []
-        for a_idx, b_idx, c_idx1, c_idx2 in [tetramer1, tetramer2]:
-            octet_particles.extend([
-                ('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)
-            ])
-        
-        # Collect octet coordinates for centroid calculation
-        octet_coords = [new_pos[p][i] for p, i in octet_particles]
-        centroid = np.mean(octet_coords, axis=0)
-        
-        # Apply translation with high probability
-        if np.random.random() < 0.95:
-            # Translation with jitter for exploration
-            trans_step = trans_base * trans_adjust * np.random.uniform(0.7, 1.3)
-            displacement = np.random.normal(0, trans_step, 3)
-            
-            # Apply translation to all particles in the octet
-            for part, idx in octet_particles:
-                new_pos[part][idx] += displacement
-                new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
-        
-        # Apply rotation with high probability
-        if np.random.random() < 0.95:
-            # Enhanced rotation with variable amplitude
-            rot_step = rot_base * trans_adjust * np.random.uniform(0.7, 1.3)
-            rotation_axis = self._random_unit_vector()
-            rotation_angle = np.random.normal(0, rot_step)
-            rot_matrix = self._rotation_matrix(rotation_axis, rotation_angle)
-            
-            # Apply rotation to all particles in the octet
-            for part, idx in octet_particles:
-                vec = new_pos[part][idx] - centroid
-                new_pos[part][idx] = centroid + rot_matrix @ vec
-                new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
-        
-        return new_pos
-
-    def _move_octet_pair(self, new_pos, octets, trans_adjust, trans_base, rot_base):
-        """Move a pair of octets while maintaining their relative orientation."""
-        if len(octets) < 2:
-            return self._move_single_octet(new_pos, octets, trans_adjust, trans_base, rot_base)
-        
-        # Select two octets
-        indices = np.random.choice(len(octets), size=2, replace=False)
-        
-        # Collect all particles in both octets
-        all_particles = []
-        for idx in indices:
-            tetramer1, tetramer2 = octets[idx]
-            for a_idx, b_idx, c_idx1, c_idx2 in [tetramer1, tetramer2]:
-                all_particles.extend([
-                    ('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)
-                ])
-        
-        # Apply translation to both octets together
-        trans_step = trans_base * trans_adjust
-        displacement = np.random.normal(0, trans_step, 3)
-        
-        for part, idx in all_particles:
-            new_pos[part][idx] += displacement
-            new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
-        
-        return new_pos
-
-    def _move_radial_symmetry(self, new_pos, octets, trans_adjust, trans_base):
-        """Move octets preserving radial symmetry."""
-        if len(octets) < 2:
-            return self._move_single_octet(new_pos, octets, trans_adjust, trans_base, self.octet_rot_step)
-        
-        # Calculate system center
-        all_coords = []
-        for type_name, positions_array in new_pos.items():
-            all_coords.extend(positions_array)
-        system_center = np.mean(all_coords, axis=0)
-        
-        # Randomly adjust the radial distance for all octets
-        radial_adjust = np.random.normal(0, trans_base * trans_adjust)
-        
-        # Apply radial adjustment to all octets
-        for tetramer1, tetramer2 in octets:
-            octet_particles = []
-            for a_idx, b_idx, c_idx1, c_idx2 in [tetramer1, tetramer2]:
-                octet_particles.extend([
-                    ('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)
-                ])
-            
-            # Apply radial scaling to all particles in this octet
-            for part, idx in octet_particles:
-                vec = new_pos[part][idx] - system_center
-                distance = np.linalg.norm(vec)
-                if distance > 0:  # Avoid division by zero
-                    new_distance = max(0.1, distance + radial_adjust)
-                    scaling = new_distance / distance
-                    new_pos[part][idx] = system_center + vec * scaling
-                    new_pos[part][idx] = np.mod(new_pos[part][idx], self.params.box_size)
-        
-        return new_pos
-
-    def _move_global_rotation(self, new_pos, rot_step):
-        """Apply a global rotation to all particles around the system center."""
-        # Calculate system center
-        all_coords = []
-        for type_name, positions_array in new_pos.items():
-            for pos in positions_array:
-                all_coords.append(pos)
-        system_center = np.mean(all_coords, axis=0)
-        
-        # Generate rotation
-        rotation_axis = self._random_unit_vector()
-        rotation_angle = np.random.normal(0, rot_step)
-        rotation_matrix = self._rotation_matrix(rotation_axis, rotation_angle)
-        
-        # Apply to all particles
-        for type_name in new_pos:
-            for i in range(len(new_pos[type_name])):
-                vec = new_pos[type_name][i] - system_center
-                new_pos[type_name][i] = system_center + rotation_matrix @ vec
-                new_pos[type_name][i] = np.mod(new_pos[type_name][i], self.params.box_size)
-        
-        return new_pos
     
     def _random_unit_vector(self):
         """Generate a random unit vector."""
@@ -497,271 +293,370 @@ class OctetSampler(BaseMCSampler):
             [2*(b*d-a*c), 2*(c*d+a*b), a*a+d*d-b*b-c*c]
         ])
         
-    def run_mc(self, n_steps: int = 50000, save_freq: int = 100, output_dir: str = "output_analysis/octamersampler_results/") -> Tuple:
-        """Monte Carlo sampling with octet moves."""
-        best_positions = None
-        trajectory = []
-        sigma_history_octet = {key: [] for key in self.sigma}  # Pre-allocate sigma history
-
-        # Calculate the prior for the initial sigma values
-        if self.use_sigma_distribution:
-            prior_penalty = self.calculate_negative_log_prior(self.sigma)
-        else:
-            prior_penalty = self.base_priors.neg_log_prior(self.sigma, self.sigma_range)
-
-        # Get initial octets (pairs of tetramers)
-        tetramers = self.ts.get_tetramers(self.positions)
-        octets = self.get_octets(self.positions, tetramers)
-
-        # Initial score calculation
-        current_score, curr_ex, curr_pair, curr_oct = self.neg_log_posterior(
-            self.positions,
-            tetramers,
-            octets,
-            prior_penalty, 
-            self.sigma
-        )
-        curr_prior = prior_penalty
-        best_score = current_score  # Initialize with the initial score
-
-        # Pre-calculate temperature schedule
-        initial_temp = 5.0
-        final_temp = 1.0
-        cooling_factor = -np.log(final_temp / initial_temp) / n_steps
-        temperatures = initial_temp * np.exp(-cooling_factor * np.arange(n_steps))
-
-        # Prepare output directories and files
+    def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/octetsampler_results/"):
+        """
+        Monte Carlo sampling with position, sigma, tetramer, and octet moves.
+        Simplified for better performance and readability.
+        """
+        # Setup output directory
         os.makedirs(output_dir, exist_ok=True)
-        csv_log_file = os.path.join(output_dir, "all_info_mcmc_octet.csv")
-
-        # Write CSV header (include individual score components)
-        with open(csv_log_file, "w") as f:
-            f.write("Step,T,Prior,Exvol_score,Pair_score,Octet_score,Score,Accepted\n")
+        trajectory_file = os.path.join(output_dir, "trajectory.h5")
+        with h5py.File(trajectory_file, 'w') as f:
+            pass  # Create empty file
         
-        oct_moves = 0
-        oct_accepted = 0  # Counter for octet moves
+        # Initialize tracking variables
+        best_positions = None
+        best_score = float('inf')
+        sigma_history = {key: np.zeros(n_steps // save_freq + 1) for key in self.sigma}
+        accepts = {'position': 0, 'sigma': 0, 'tetramer': 0, 'octet': 0}
+        attempts = {'position': 0, 'sigma': 0, 'tetramer': 0, 'octet': 0}
+        
+        # Initialize state
+        tetramers = self.ts.get_tetramers(self.positions_os)
+        octets = self.get_octets(self.positions_os, tetramers)
+        
+        prior_penalty = (self.sig_provider.calculate_negative_log_prior(self.sigma) if self.use_sigma_distribution 
+                        else self.base_priors.neg_log_prior(self.sigma, self.sigma_range))
+        
+        current_score, curr_ex, curr_pair, curr_oct = self.neg_log_posterior(
+            self.positions_os, tetramers, octets, prior_penalty, self.sigma)
+        
+        # Store initial sigma values
+        for key in self.sigma:
+            sigma_history[key][0] = self.sigma[key]
+        
+        # Main MCMC loop parameters
+        move_types = ['position', 'sigma', 'tetramer', 'octet']
+        move_probs = [0.2, 0.1, 0.3, 0.4]  # position, sigma, tetramer, octet
+        
+        # Simple cooling schedule
+        temp_start, temp_end = 5.0, 1.0
+        temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
+        
+        print(f"Starting MCMC sampling for {n_steps} steps...")
+        
         accepted_moves = 0
+        total_moves = 0
+        max_iterations = n_steps * 20  # Safety cap
         
-        for step in range(n_steps):
-            temp = temperatures[step]
-            move_type = np.random.choice(['position', 'sigma', 'tetramer', 'octet'],
-                                        p=[0.2, 0.1, 0.3, 0.4])
-
+        while accepted_moves < n_steps and total_moves < max_iterations:
+            total_moves += 1
+            
+            # Temperature schedule
+            temp = temp_start * (temp_decay ** accepted_moves)
+            
+            # Select move type
+            move_type = np.random.choice(move_types, p=move_probs)
+            attempts[move_type] += 1
+            
+            # Propose move
             if move_type == 'position':
-                proposed_positions = self.propose_position_move(self.positions)
+                # also pass the acceptance rate for position moves
+                proposed_positions = self.propose_position_move(self.positions_os, accepts['position'] / max(1, attempts['position']))
                 proposed_sigma = self.sigma
             elif move_type == 'sigma':
-                proposed_positions = self.positions
-                proposed_sigma, pair_type = self.propose_sigma_move(self.sigma)
+                proposed_positions = self.positions_os
+                proposed_sigma, _ = self.propose_sigma_move(self.sigma, accepts['sigma'] / max(1, attempts['sigma']))
             elif move_type == 'tetramer':
-                proposed_positions = self.ts.propose_tetramer_move(self.positions)
+                proposed_positions = self.ts.propose_tetramer_move(self.positions_os, accepts['tetramer'] / max(1, attempts['tetramer']))
                 proposed_sigma = self.sigma
             else:  # octet move
-                oct_moves += 1
-                self.oct_trans_acc_rate = oct_accepted / max(1, oct_moves)
-                proposed_positions = self.propose_octet_move(self.positions)
+                proposed_positions = self.propose_octet_move(self.positions_os)
                 proposed_sigma = self.sigma
             
             # Get tetramers and octets for proposed configuration
             proposed_tetramers = self.ts.get_tetramers(proposed_positions)
             proposed_octets = self.get_octets(proposed_positions, proposed_tetramers)
             
-            new_prior_penalty = 0.0
-            # Calculate the prior for the proposed sigma values
-            if self.use_sigma_distribution:
-                new_prior_penalty = self.calculate_negative_log_prior(proposed_sigma)
-            else:
-                new_prior_penalty = self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range)
-                
-            # Calculate proposed score    
+            # Calculate prior
+            new_prior = (self.sig_provider.calculate_negative_log_prior(proposed_sigma) if self.use_sigma_distribution 
+                        else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
+            
+            # Calculate new score
             proposed_score, prop_ex, prop_pair, prop_oct = self.neg_log_posterior(
-                proposed_positions,
-                proposed_tetramers,
-                proposed_octets,
-                new_prior_penalty, 
-                proposed_sigma
-            )
+                proposed_positions, proposed_tetramers, proposed_octets, new_prior, proposed_sigma)
             
             # Metropolis criterion
-            delta_e = proposed_score - current_score
-            acceptance = 0
-            if delta_e < 0 or np.random.random() < np.exp(-delta_e / temp):
-                self.positions = proposed_positions
+            delta = proposed_score - current_score
+            accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
+            
+            debug = True  # Uncomment for detailed debug output
+            
+            if accept:
+                # Update state
+                self.positions_os = proposed_positions
                 self.sigma = proposed_sigma
                 current_score = proposed_score
-                curr_ex = prop_ex
-                curr_pair = prop_pair
-                curr_oct = prop_oct
-                curr_prior = new_prior_penalty
-                accepted_moves += 1
-                acceptance = 1
-
-                # Update octet acceptance rate
-                if move_type == 'octet':
-                    oct_accepted += 1
-
-                # Keep track of best positions
+                curr_ex, curr_pair, curr_oct = prop_ex, prop_pair, prop_oct
+                
+                if debug:
+                    # open a file and write the score components to it 
+                    # overwrite if it exists
+                    # (this is for debugging purposes)
+                    with open(os.path.join(output_dir, "debug_scores.txt"), 'w') as f:
+                        f.write(f"Step {accepted_moves}: Score={current_score:.2f}, "
+                                f"Exclusion={curr_ex:.2f}, Pair={curr_pair:.2f}, Octet={curr_oct:.2f}, Prior={new_prior:.2f}\n")
+                
+                # Track best state
                 if current_score < best_score:
                     best_score = current_score
-                    best_positions = {k: v.copy() for k, v in self.positions.items()}
-            
-            # Logging and saving trajectory at specified frequency
-            if step % save_freq == 0:
-                accept_rate = accepted_moves / (step + 1)
-                # Update sigma history
-                for key in sigma_history_octet:
-                    sigma_history_octet[key].append(self.sigma[key])
+                    best_positions = {k: v.copy() for k, v in self.positions_os.items()}
                 
-                # Append current state with detailed score breakdown
-                trajectory.append(
-                    self.save_state(
-                        step, self.positions, self.sigma, current_score,
-                        prior_score=curr_prior,
-                        pair_score=curr_pair,
-                        exvol_score=curr_ex,
-                        oct_score=curr_oct
-                    )
-                )
+                accepts[move_type] += 1
+                accepted_moves += 1
                 
-                # Write to CSV log
-                with open(csv_log_file, "a") as f:
-                    f.write(
-                        f"{step},{temp:.1f},{curr_prior:.1f},{curr_ex:.1f},{curr_pair:.1f},"
-                        f"{curr_oct:.1f},{current_score:.1f},{acceptance:.1f}\n"
+                # Save state periodically
+                if accepted_moves % save_freq == 0:
+                    # Store sigma history
+                    save_idx = accepted_moves // save_freq
+                    if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
+                        for key in self.sigma:
+                            sigma_history[key][save_idx] = self.sigma[key]
+                    
+                    # Save to disk using existing method
+                    self.save_state_to_disk(
+                        accepted_moves, self.positions_os, self.sigma, current_score,
+                        prior_score=new_prior, pair_score=curr_pair,
+                        exvol_score=curr_ex, oct_score=curr_oct,
+                        traj_file=trajectory_file
                     )
-
-                print(f"Step {step}, Score: {current_score:.2f}, "
-                    f"Temp: {temp:.2f}, Accept: {accept_rate:.2f}")
-
-        # Save sigma history
-        sigma_history_oct_df = pd.DataFrame(sigma_history_octet)
-        sigma_history_oct_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
+                    
+                    # Print progress
+                    acceptance_rate = accepted_moves / total_moves
+                    print(f"Step {accepted_moves}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={acceptance_rate:.2f}")
         
-        # Save the trajectory in HDF5 format
-        trajectory_file = os.path.join(output_dir, "trajectory.h5")
-        final_file = self.save_trajectory(trajectory, trajectory_file)
+        # Save sigma history
+        import pandas as pd
+        sigma_history_df = pd.DataFrame(sigma_history)
+        sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
+        
+        # Print final statistics
+        print("\nSampling complete:")
+        for move_type in move_types:
+            rate = accepts[move_type] / max(1, attempts[move_type])
+            print(f"- {move_type}: {rate:.2f} acceptance ({accepts[move_type]}/{attempts[move_type]})")
+        
+        return best_positions, trajectory_file
 
-        return best_positions, trajectory, final_file
-
-    def calculate_octet_score(self, positions: Dict[str, np.ndarray], 
-                            octet: Tuple[Tuple[int, ...], Tuple[int, ...]], 
-                            sig: Dict[str, float] = None) -> float:
+    def calculate_octet_scores_batch(self, positions, octets, sig):
         """
-        Calculate score for a single octet (a pair of tetramers).
-        An octet consists of 2 A's, 2 B's, and 4 C's.
+        Calculate octet scores in a vectorized operation.
+        Each octet consists of two tetramers (Tet1 and Tet2),
+        and we want to account for inter-tetramer pairs:
+        A–A, A–B, B–B, B–C, and C–C
+        so that the 'normal' pair sampler can exclude them.
         
         Args:
-            positions: Dictionary mapping atom types to position arrays
-            octet: A tuple containing two tetramer tuples
+            positions: Dictionary of particle positions
+            octets: List of pairs of tetramers [(tet1, tet2), ...]
             sig: Dictionary of sigma values
         
         Returns:
-            float: The negative log likelihood score for the octet
+            numpy.ndarray: Array of octet scores (one per octet)
         """
-        tetramer1, tetramer2 = octet
-        
-        # First calculate individual tetramer scores
-        score = self.ts.calculate_tetramer_score(positions, tetramer1, sig)
-        score += self.ts.calculate_tetramer_score(positions, tetramer2, sig)
-        
-        # Now calculate inter-tetramer interactions within the octet
-        a_idx1, b_idx1, c1_idx1, c2_idx1 = tetramer1
-        a_idx2, b_idx2, c1_idx2, c2_idx2 = tetramer2
-        
-        # A-A interaction between tetramers
-        score += self.pair_score_nll(
-            positions['A'][a_idx1],
-            positions['A'][a_idx2],
-            self.params.pair_distances['AA'],
-            sig['AA']
-        )
-        
-        # B-B interaction between tetramers
-#        score += self.pair_score_nll(
-#            positions['B'][b_idx1],
-#            positions['B'][b_idx2],
-#            self.params.pair_distances['BB'],
-#            sig['BB']
-#        )
-        
-        # Cross-tetramer C-C interactions (can be customized based on your model)
-        for c_idx1 in [c1_idx1, c2_idx1]:
-            for c_idx2 in [c1_idx2, c2_idx2]:
-                score += 0.5 * self.pair_score_nll(  # Weight factor of 0.5 to prevent overweighting
-                    positions['C'][c_idx1],
-                    positions['C'][c_idx2],
-                    self.params.pair_distances['CC'],
-                    sig['CC']
-                )
-        
-        return score
+
+        if not octets:
+            return np.array([], dtype=np.float32)
+
+        # Separate the two tetramers in each octet
+        tetramers1 = []
+        tetramers2 = []
+        for tet1, tet2 in octets:
+            tetramers1.append(tet1)
+            tetramers2.append(tet2)
+
+        # We can include the intra-tetramer terms by reusing the tetramer sampler
+        # if you wish, but typically we handle intra-tetramer in a separate step.
+        # For now, this function focuses on inter-tetramer interactions.
+
+        # Unpack indices: (A, B, C1, C2)
+        a1_1 = np.array([t[0] for t in tetramers1], dtype=np.int32)
+        b1_1 = np.array([t[1] for t in tetramers1], dtype=np.int32)
+        c1a_1 = np.array([t[2] for t in tetramers1], dtype=np.int32)
+        c1b_1 = np.array([t[3] for t in tetramers1], dtype=np.int32)
+
+        a1_2 = np.array([t[0] for t in tetramers2], dtype=np.int32)
+        b1_2 = np.array([t[1] for t in tetramers2], dtype=np.int32)
+        c1a_2 = np.array([t[2] for t in tetramers2], dtype=np.int32)
+        c1b_2 = np.array([t[3] for t in tetramers2], dtype=np.int32)
+
+        # We'll map them to their particle positions
+        posA1_1 = positions['A'][a1_1]
+        posA1_2 = positions['A'][a1_2]
+        posB1_1 = positions['B'][b1_1]
+        posB1_2 = positions['B'][b1_2]
+        posC1a_1 = positions['C'][c1a_1]
+        posC1a_2 = positions['C'][c1a_2]
+        posC1b_1 = positions['C'][c1b_1]
+        posC1b_2 = positions['C'][c1b_2]
+
+        # We'll accumulate inter-tetramer scores for each octet in this array
+        octet_scores = np.zeros(len(octets), dtype=np.float32)
+
+        # Helper function to compute Gaussian negative log-likelihood for distances
+        def gaussian_nll(dists, target, sigma_val):
+            return ((dists - target)**2)/(2*sigma_val**2) + np.log(2*np.pi*sigma_val)
+
+        # 1) A–A across tetramers
+        delta_aa = posA1_1 - posA1_2
+        dists_aa = np.sqrt(np.sum(delta_aa**2, axis=1))
+        aa_target = self.params.pair_distances['AA']
+        aa_score_arr = gaussian_nll(dists_aa, aa_target, sig['AA'])
+
+        # 2) A–B across tetramers (two ways: A in Tet1 with B in Tet2, and B in Tet1 with A in Tet2)
+        # A in Tet1 vs B in Tet2
+        delta_ab_12 = posA1_1 - posB1_2
+        dists_ab_12 = np.sqrt(np.sum(delta_ab_12**2, axis=1))
+        ab_target = self.params.pair_distances['AB']
+        ab_score_arr_12 = gaussian_nll(dists_ab_12, ab_target, sig['AB'])
+
+        # B in Tet1 vs A in Tet2
+        delta_ab_21 = posB1_1 - posA1_2
+        dists_ab_21 = np.sqrt(np.sum(delta_ab_21**2, axis=1))
+        # same AB target, same sigma
+        ab_score_arr_21 = gaussian_nll(dists_ab_21, ab_target, sig['AB'])
+
+        # 3) B–C across tetramers
+        # We have 2 Cs in each tetramer. So we have B1_1 to (C1a_2, C1b_2) etc.
+        # We'll just do this in a loop for clarity:
+        bc_target = self.params.pair_distances['BC']
+        bc_score_sum = np.zeros(len(octets), dtype=np.float32)
+        for c_pos2 in [posC1a_2, posC1b_2]:
+            # B in Tet1 vs C in Tet2
+            delta_bc_12 = posB1_1 - c_pos2
+            dists_bc_12 = np.sqrt(np.sum(delta_bc_12**2, axis=1))
+            bc_score_sum += gaussian_nll(dists_bc_12, bc_target, sig['BC'])
+
+        for c_pos1 in [posC1a_1, posC1b_1]:
+            # C in Tet1 vs B in Tet2
+            delta_bc_21 = c_pos1 - posB1_2
+            dists_bc_21 = np.sqrt(np.sum(delta_bc_21**2, axis=1))
+            bc_score_sum += gaussian_nll(dists_bc_21, bc_target, sig['BC'])
+
+        # 4) C–C across tetramers (4 combos for each octet)
+        cc_target = self.params.pair_distances['CC']
+        cc_score_sum = np.zeros(len(octets), dtype=np.float32)
+        c_pairs = [
+            (posC1a_1, posC1a_2),
+            (posC1a_1, posC1b_2),
+            (posC1b_1, posC1a_2),
+            (posC1b_1, posC1b_2),
+        ]
+        for p1, p2 in c_pairs:
+            delta_cc = p1 - p2
+            dists_cc = np.sqrt(np.sum(delta_cc**2, axis=1))
+            cc_score_sum += gaussian_nll(dists_cc, cc_target, sig['CC'])
+
+        # Combine them all
+        # If you'd like to weight certain interactions, apply your weighting factors here
+        octet_scores += aa_score_arr
+        octet_scores += ab_score_arr_12
+        octet_scores += ab_score_arr_21
+        octet_scores += bc_score_sum
+        octet_scores += cc_score_sum
+
+        return octet_scores
 
     def neg_log_posterior(
         self,
         positions: Dict[str, np.ndarray],
         tetramers: List[Tuple[int, ...]],
         octets: List[Tuple[Tuple[int, ...], Tuple[int, ...]]],
-        prior_penalty_from_distribution: float = 0.0,
+        prior_penalty: float = 0.0,
         sig: Dict[str, float] = None,
         exclusion_weight: float = 1.0,
         pair_weight: float = 1.0,
         octet_weight: float = 1.0,
     ) -> Tuple[float, float, float, float]:
         """
-        Calculate the total score for an octet system:
-        1. Identify pairs within all tetramers
-        2. Identify additional pairs that form octets
-        3. Exclude those pairs from the parent PairSampler calculation
-        4. Add additional terms for octet-specific scoring
+        Calculate the total negative log-posterior score for an octet system.
         
+        Steps:
+        1) Exclude from the normal pair-sampler any pairs that belong to tetramers or octets,
+            so we don't double-count them.
+        2) Use the pair-sampler to compute the "background" pair cost for everything else.
+        3) Calculate the tetramer scores (intra-tetramer) if needed separately
+            (often done in calculate_tetramer_scores_batch).
+        4) Calculate the new octet scores (all inter-tetramer interactions).
+        5) Sum them, add the prior penalty, and return.
+
         Returns:
-            Tuple of (total_score, exclusion_score, pair_score, octet_score)
+        (total_score, exclusion_score, pair_score, octet_score)
         """
-        # 1) Identify pairs within tetramers
-        tetramer_pairs = set()
-        for a_idx, b_idx, c1_idx, c2_idx in tetramers:
-            tetramer_pairs.add(('A', a_idx, 'B', b_idx))
-            tetramer_pairs.add(('B', b_idx, 'C', c1_idx))
-            tetramer_pairs.add(('B', b_idx, 'C', c2_idx))
-            tetramer_pairs.add(('C', c1_idx, 'C', c2_idx))
-        
-        # 2) Identify additional octet-specific pairs
-        octet_pairs = set()
-        for tetramer1, tetramer2 in octets:
-            a_idx1, b_idx1, c1_idx1, c2_idx1 = tetramer1
-            a_idx2, b_idx2, c1_idx2, c2_idx2 = tetramer2
-            
-            # Add A-A interaction between tetramers
-            octet_pairs.add(('A', a_idx1, 'A', a_idx2))
-            
-#            # Add B-B interaction between tetramers
-#            octet_pairs.add(('B', b_idx1, 'B', b_idx2))
-            
-            # Add cross-tetramer C-C interactions
-            for c_idx1 in [c1_idx1, c2_idx1]:
-                for c_idx2 in [c1_idx2, c2_idx2]:
-                    octet_pairs.add(('C', c_idx1, 'C', c_idx2))
-        
-        # 3) Calculate score using the parent PairSampler, excluding all internal pairs
-        excluded_pairs = tetramer_pairs.union(octet_pairs)
+        # Use the provided sigma if given, else use the sampler's
+        sigma = sig if sig is not None else self.sigma
+
+        # If no octets, just do the normal pair-sampler + tetramer logic and return
+        if not octets:
+            # The user wants no special octet logic if there are none
+            score, ex_score, pair_score, _ = self.ps.calculate_score(
+                positions, sigma, self.sigma_range,
+                excluded_pairs=set(),  # no exclusions
+                use_sigma_distribution=self.use_sigma_distribution,
+                prior_penalty_from_distribution=prior_penalty
+            )
+            return score, ex_score, pair_score, 0.0
+
+        # Build a set of all pairs belonging to:
+        #   1) Each tetramer (intra-tetramer pairs: (A–B), (B–C), (C–C))
+        #   2) Each octet (inter-tetramer pairs: A–A, A–B, B–C, C–C across tetra1 and tetra2)
+        # so that these are excluded from the "normal" pair-sampler.
+        excluded_pairs = set()
+
+        # --- 1) Exclude intratetramer pairs ---
+        for (a_idx, b_idx, c1_idx, c2_idx) in tetramers:
+            # A–B
+            excluded_pairs.add(('A', a_idx, 'B', b_idx))
+            excluded_pairs.add(('B', b_idx, 'A', a_idx))
+            # B–C
+            excluded_pairs.add(('B', b_idx, 'C', c1_idx))
+            excluded_pairs.add(('B', b_idx, 'C', c2_idx))
+            excluded_pairs.add(('C', c1_idx, 'B', b_idx))
+            excluded_pairs.add(('C', c2_idx, 'B', b_idx))
+            # C–C
+            excluded_pairs.add(('C', c1_idx, 'C', c2_idx))
+            excluded_pairs.add(('C', c2_idx, 'C', c1_idx))
+
+        # --- 2) Exclude inter-tetramer pairs for each octet ---
+        for tet1, tet2 in octets:
+            a1, b1, c1a1, c1b1 = tet1
+            a2, b2, c2a1, c2b1 = tet2
+
+            # A–A
+            excluded_pairs.add(('A', a1, 'A', a2))
+            excluded_pairs.add(('A', a2, 'A', a1))
+            # A–B
+            excluded_pairs.add(('A', a1, 'B', b2))
+            excluded_pairs.add(('B', b2, 'A', a1))
+            excluded_pairs.add(('B', b1, 'A', a2))
+            excluded_pairs.add(('A', a2, 'B', b1))
+            # B–C
+            for c_idx2 in [c2a1, c2b1]:
+                excluded_pairs.add(('B', b1, 'C', c_idx2))
+                excluded_pairs.add(('C', c_idx2, 'B', b1))
+            for c_idx1 in [c1a1, c1b1]:
+                excluded_pairs.add(('C', c_idx1, 'B', b2))
+                excluded_pairs.add(('B', b2, 'C', c_idx1))
+            # C–C
+            for c_idx1 in [c1a1, c1b1]:
+                for c_idx2 in [c2a1, c2b1]:
+                    excluded_pairs.add(('C', c_idx1, 'C', c_idx2))
+                    excluded_pairs.add(('C', c_idx2, 'C', c_idx1))
+
+        # --- 3) Let the pair sampler handle all non-excluded pairs ---
         score, ex_score, pair_score, _ = self.ps.calculate_score(
-            positions,
-            sig,
-            self.sigma_range,
-            excluded_pairs,
-            self.use_sigma_distribution,
-            prior_penalty_from_distribution
+            positions, sigma, self.sigma_range,
+            excluded_pairs=excluded_pairs,
+            use_sigma_distribution=self.use_sigma_distribution,
+            prior_penalty_from_distribution=prior_penalty
         )
 
-        # 4) Add octet-specific score
-        total_oct_score = 0.0
-        
-        # Score for each octet
-        for octet in octets:
-            oct_score = self.calculate_octet_score(positions, octet, sig)
-            total_oct_score += oct_score
-        
-        # Add the octet score to the total
-        score += octet_weight * total_oct_score
+        # --- 4) Calculate the octet score for all octets (A–A, A–B, B–C, C–C inter-tetramer) ---
+        octet_scores = self.calculate_octet_scores_batch(positions, octets, sigma)
+        total_octet_score = octet_scores.sum()
 
-        return score, ex_score, pair_score, octet_weight * total_oct_score
+        # Combine everything
+        weighted_octet_score = octet_weight * total_octet_score
+        total_score = score + weighted_octet_score
+
+        return total_score, ex_score, pair_score, weighted_octet_score
