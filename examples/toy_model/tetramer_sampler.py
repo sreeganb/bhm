@@ -38,7 +38,7 @@ class TetramerSampler(BaseMCSampler):
         self.use_sigma_distribution = use_sigma_distribution
         
         # Initialize features for tetramer-specific sampling
-        self.tetramer_trans_step = 0.1
+        self.tetramer_trans_step = 0.2
         self.tetramer_rot_step = 0.1
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
@@ -134,49 +134,84 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
-        """Generate tetramers based on distance-weighted probabilities."""
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.75) -> List[Tuple[int, ...]]:
+        """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
-            # Check if we have required components
-            if not all(comp in positions and len(positions[comp]) > 0 for comp in ['A', 'B', 'C']):
+            # Quick validation
+            if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
                 return []
             
-            # Get positions
-            a_pos = positions['A']
-            b_pos = positions['B']
-            c_pos = positions['C']
-            
-            # Check we have enough particles
-            if len(c_pos) < 2:
-                return []
-            
-            # A-B connections
-            dist_AB = cdist(a_pos, b_pos) / max(0.1, temp)
-            exp_terms = np.exp(-(dist_AB - dist_AB.min(axis=1, keepdims=True)))
-            probs_B = exp_terms / (exp_terms.sum(axis=1, keepdims=True) + 1e-10)
-            
-            # Select B indices for each A
-            b_indices = np.zeros(len(a_pos), dtype=int)
-            for i in range(len(a_pos)):
-                b_indices[i] = np.random.choice(len(b_pos), p=probs_B[i])
-            
-            # B-C connections
-            dist_BC = cdist(b_pos[b_indices], c_pos) / max(0.1, temp)
-            exp_terms = np.exp(-(dist_BC - dist_BC.min(axis=1, keepdims=True)))
-            probs_C = exp_terms / (exp_terms.sum(axis=1, keepdims=True) + 1e-10)
-            
-            # Build tetramers
+            a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
+            used_a, used_b, used_c = set(), set(), set()
             tetramers = []
-            for a_idx in range(len(a_pos)):
-                # Select two C particles based on probability
-                if probs_C[a_idx].sum() < 1e-10:
-                    c_indices = np.random.choice(len(c_pos), size=2, replace=(len(c_pos) < 2))
-                else:
-                    p_norm = probs_C[a_idx] / probs_C[a_idx].sum()
-                    c_indices = np.random.choice(len(c_pos), size=2, replace=False, p=p_norm)
+            
+            # A-B distance calculation
+            dist_AB = cdist(a_pos, b_pos) / max(0.1, temp)
+            
+            # Process A particles in order of increasing minimum distance to any B
+            for a_idx in np.argsort(np.min(dist_AB, axis=1)):
+                if a_idx in used_a:
+                    continue
+                    
+                # Find available B particles and their selection probabilities
+                b_mask = np.ones(len(b_pos), dtype=bool)
+                for idx in used_b:
+                    b_mask[idx] = False
+                    
+                if not np.any(b_mask):
+                    continue
+                    
+                # Calculate B selection probabilities
+                b_dists = dist_AB[a_idx].copy()
+                b_dists[~b_mask] = np.inf
+                min_b_dist = np.min(b_dists)
+                if np.isinf(min_b_dist):
+                    continue
+                    
+                b_probs = np.exp(-(b_dists - min_b_dist))
+                b_probs = b_probs / np.sum(b_probs)
                 
-                tetramers.append((a_idx, b_indices[a_idx], c_indices[0], c_indices[1]))
+                # Select B particle
+                available_b = np.where(b_mask)[0]
+                b_idx = np.random.choice(available_b, p=b_probs[b_mask])
                 
+                # Find available C particles
+                c_mask = np.ones(len(c_pos), dtype=bool)
+                for idx in used_c:
+                    c_mask[idx] = False
+                    
+                if np.sum(c_mask) < 2:  # Need at least 2 C particles
+                    continue
+                    
+                # Calculate C selection probabilities
+                c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos)[0] / max(0.1, temp)
+                c_dists[~c_mask] = np.inf
+                min_c_dist = np.min(c_dists)
+                if np.isinf(min_c_dist):
+                    continue
+                    
+                c_probs = np.exp(-(c_dists - min_c_dist))
+                c_probs = c_probs / np.sum(c_probs)
+                
+                # Select two C particles
+                available_c = np.where(c_mask)[0]
+                c_indices = np.random.choice(
+                    available_c, 
+                    size=2, 
+                    replace=False, 
+                    p=c_probs[c_mask] / np.sum(c_probs[c_mask])
+                )
+                
+                # Add tetramer and mark particles as used
+                tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
+                used_a.add(a_idx)
+                used_b.add(b_idx)
+                used_c.update(c_indices)
+                
+                # Stop if we have enough tetramers
+                if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
+                    break
+                    
             return tetramers
             
         except Exception as e:
@@ -205,8 +240,13 @@ class TetramerSampler(BaseMCSampler):
         current_tetramers = self.get_tetramers(self.positions_ts)
         prior_penalty = (self.sig_provider.calculate_negative_log_prior(self.sigma) if self.use_sigma_distribution 
                         else self.base_priors.neg_log_prior(self.sigma, self.sigma_range))
+#        current_score, curr_ex, curr_pair, curr_tet = self.neg_log_posterior(
+#            self.positions_ts, current_tetramers, prior_penalty, self.sigma)
+        # And also for the initial score calculation at the beginning:
         current_score, curr_ex, curr_pair, curr_tet = self.neg_log_posterior(
-            self.positions_ts, current_tetramers, prior_penalty, self.sigma)
+            self.positions_ts, current_tetramers, prior_penalty, self.sigma, 
+            debug=False  # Debug the initial state
+        )
         
         # Store initial sigma values
         for key in self.sigma:
@@ -224,7 +264,7 @@ class TetramerSampler(BaseMCSampler):
         
         accepted_moves = 0
         total_moves = 0
-        max_iterations = n_steps * 20  # Safety cap
+        max_iterations = n_steps * 30  # Safety cap
         
         while accepted_moves < n_steps and total_moves < max_iterations:
             total_moves += 1
@@ -255,8 +295,12 @@ class TetramerSampler(BaseMCSampler):
                         else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
             
             # Calculate new score
+#            proposed_score, prop_ex, prop_pair, prop_tet = self.neg_log_posterior(
+#                proposed_positions, proposed_tetramers, new_prior, proposed_sigma)
             proposed_score, prop_ex, prop_pair, prop_tet = self.neg_log_posterior(
-                proposed_positions, proposed_tetramers, new_prior, proposed_sigma)
+                proposed_positions, proposed_tetramers, new_prior, proposed_sigma, 
+                debug=False  # Enable debug when score is too high
+            )
             
             # Metropolis criterion
             delta = proposed_score - current_score
@@ -313,16 +357,9 @@ class TetramerSampler(BaseMCSampler):
 #-----------------------------------------------------------------------
     def propose_tetramer_move(self, positions: Dict[str, np.ndarray], acceptance_rate: float) -> Dict[str, np.ndarray]:
         """
-        Simple tetramer move: translate and rotate a randomly selected tetramer using adaptive step sizes.
-        
-        Args:
-            positions: Dictionary mapping particle types to position arrays.
-            acceptance_rate: Current acceptance rate used to adjust step sizes.
-        
-        Returns:
-            new_pos: Updated positions after the tetramer move.
+        Tetramer move: translate and rotate a randomly selected tetramer using adaptive step sizes.
+        Ensures symmetric proposals (Gaussian translations + isotropic rotations).
         """
-        # Copy positions
         new_pos = {k: v.copy() for k, v in positions.items()}
         
         # Get tetramers
@@ -337,49 +374,44 @@ class TetramerSampler(BaseMCSampler):
         
         # Get coordinates of the selected tetramer
         coords = np.array([new_pos[part][idx] for part, idx in particles])
-        
-        # Calculate centroid
         centroid = np.mean(coords, axis=0)
         
-        # Adaptive step factor: adjust steps based on deviation from target acceptance rate
-        # For example: factor = 1 + 3*(acceptance_rate - target_acceptance)
+        # Adaptive step factor
         factor = np.clip(1.0 + 3.0 * (acceptance_rate - self.target_acceptance), 0.3, 3.0)
-        
-        # 1. TRANSLATION: Apply random displacement scaled by the adaptive factor
+
+        # Symmetric translation (Gaussian about 0)
         trans_step = self.tetramer_trans_step * factor
         displacement = np.random.normal(0, trans_step, 3)
-        
-        # 2. ROTATION: Generate random rotation scaled by the adaptive factor
+
+        # Symmetric rotation: pick axis uniformly, angle from a zero-mean Gaussian
         rot_step = self.tetramer_rot_step * factor
         rotation_axis = np.random.randn(3)
         rotation_axis /= np.linalg.norm(rotation_axis) + 1e-10
         rotation_angle = np.random.normal(0, rot_step)
         
-        # Create rotation matrix using quaternion representation
-        theta = rotation_angle
-        # Note the negative sign for the vector part (depending on convention)
-        q = np.array([np.cos(theta/2), -rotation_axis[0]*np.sin(theta/2), 
-                    -rotation_axis[1]*np.sin(theta/2), -rotation_axis[2]*np.sin(theta/2)])
+        # Standard quaternion construction (no extra minus signs)
+        half_angle = rotation_angle / 2.0
+        qw = np.cos(half_angle)
+        qx = rotation_axis[0] * np.sin(half_angle)
+        qy = rotation_axis[1] * np.sin(half_angle)
+        qz = rotation_axis[2] * np.sin(half_angle)
         rot_matrix = np.array([
-            [1 - 2*(q[2]**2 + q[3]**2), 2*(q[1]*q[2] - q[0]*q[3]), 2*(q[1]*q[3] + q[0]*q[2])],
-            [2*(q[1]*q[2] + q[0]*q[3]), 1 - 2*(q[1]**2 + q[3]**2), 2*(q[2]*q[3] - q[0]*q[1])],
-            [2*(q[1]*q[3] - q[0]*q[2]), 2*(q[2]*q[3] + q[0]*q[1]), 1 - 2*(q[1]**2 + q[2]**2)]
+            [1 - 2*(qy**2 + qz**2),   2*(qx*qy - qw*qz),     2*(qx*qz + qw*qy)],
+            [2*(qx*qy + qw*qz),       1 - 2*(qx**2 + qz**2), 2*(qy*qz - qw*qx)],
+            [2*(qx*qz - qw*qy),       2*(qy*qz + qw*qx),     1 - 2*(qx**2 + qy**2)]
         ])
-        
-        # Apply translation and rotation to each particle in the tetramer
+
+        # Apply rotation + translation (symmetric about zero)
         for i, (part, idx) in enumerate(particles):
-            # Rotate around centroid
             vec = coords[i] - centroid
             rotated_pos = centroid + rot_matrix @ vec
-            # Then translate
-            final_pos = rotated_pos + displacement
-            # Apply periodic boundary conditions
-            new_pos[part][idx] = np.mod(final_pos, self.params.box_size)
+            final_pos = np.mod(rotated_pos + displacement, self.params.box_size)
+            new_pos[part][idx] = final_pos
         
         return new_pos
 
-    def calculate_tetramer_scores_batch(self, positions, tetramers, sig):
-        """Calculate scores for all tetramers in a single vectorized operation."""
+    def calculate_tetramer_scores_batch(self, positions, tetramers, sig, debug_logging=False):
+        """Calculate scores for all tetramers with optional debugging."""
         if not tetramers:
             return np.array([], dtype=np.float32)
             
@@ -408,14 +440,73 @@ class TetramerSampler(BaseMCSampler):
         bc_target = self.params.pair_distances['BC']
         cc_target = self.params.pair_distances['CC']
         
-        # Calculate scores in vectorized form (much faster than loop)
-        scores = ((ab_dists - ab_target)**2)/(2*sig['AB']**2) + np.log(2 * np.pi *sig['AB'])
-        scores += ((bc1_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
-        scores += ((bc2_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
-        scores += ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
+        # Calculate scores individually to enable detailed logging
+        ab_scores = ((ab_dists - ab_target)**2)/(2*sig['AB']**2) + np.log(2 * np.pi *sig['AB'])
+        bc1_scores = ((bc1_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
+        bc2_scores = ((bc2_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
+        cc_scores = ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
         
+        scores = ab_scores + bc1_scores + bc2_scores + cc_scores
+#        
         return scores
 
+#    def neg_log_posterior(
+#        self,
+#        positions: Dict[str, np.ndarray],
+#        tetramers: List[Tuple[int, ...]],
+#        prior_penalty_from_distribution: float = 0.0,
+#        sig: Dict[str, float] = None,
+#        exclusion_weight: float = 1.0,
+#        pair_weight: float = 1.0,
+#        tetramer_weight: float = 1.0,
+#    ) -> Tuple[float, float, float, float]:
+#        """
+#        Efficiently calculate the total score for a tetramer system with vectorized operations.
+#        
+#        Returns:
+#            Tuple of (total_score, exclusion_score, pair_score, tetramer_score)
+#        """
+#        # Use sigma if provided, otherwise use class sigma
+#        sigma = sig if sig is not None else self.sigma
+#        
+#        # Quick return if no tetramers
+#        if not tetramers:
+#            # Calculate score with no excluded pairs
+#            score, ex_score, pair_score, _ = self.ps.calculate_score(
+#                positions, sigma, self.sigma_range, 
+#                set(), self.use_sigma_distribution, 
+#                prior_penalty_from_distribution
+#            )
+#            return score, ex_score, pair_score, 0.0
+#        
+#        # 1) Efficiently build set of tetramer pairs
+#        tetramer_pairs = set()
+#        tetramer_pairs_add = tetramer_pairs.add  # Local reference for faster calls
+#        
+#        # Build set of pairs with optimized batch processing
+#        for a_idx, b_idx, c1_idx, c2_idx in tetramers:
+#            tetramer_pairs_add(('A', a_idx, 'B', b_idx))
+#            tetramer_pairs_add(('B', b_idx, 'C', c1_idx))
+#            tetramer_pairs_add(('B', b_idx, 'C', c2_idx))
+#            tetramer_pairs_add(('C', c1_idx, 'C', c2_idx))
+#
+#        # 2) Calculate score excluding tetramer pairs
+#        score, ex_score, pair_score, _ = self.ps.calculate_score(
+#            positions, sigma, self.sigma_range,
+#            tetramer_pairs, self.use_sigma_distribution,
+#            prior_penalty_from_distribution
+#        )
+#
+#        # 3) Calculate tetramer score using the vectorized batch method
+#        scores_array = self.calculate_tetramer_scores_batch(positions, tetramers, sigma)
+#        total_tet_score = scores_array.sum()
+#        
+#        # Apply weighting and return all score components
+#        weighted_tet_score = tetramer_weight * total_tet_score
+#        score += weighted_tet_score
+#
+#        return score, ex_score, pair_score, weighted_tet_score
+    
     def neg_log_posterior(
         self,
         positions: Dict[str, np.ndarray],
@@ -425,51 +516,118 @@ class TetramerSampler(BaseMCSampler):
         exclusion_weight: float = 1.0,
         pair_weight: float = 1.0,
         tetramer_weight: float = 1.0,
+        debug: bool = False
     ) -> Tuple[float, float, float, float]:
-        """
-        Efficiently calculate the total score for a tetramer system with vectorized operations.
-        
-        Returns:
-            Tuple of (total_score, exclusion_score, pair_score, tetramer_score)
-        """
+        """Calculate the negative log posterior with optional debugging."""
         # Use sigma if provided, otherwise use class sigma
         sigma = sig if sig is not None else self.sigma
+        
+        # Only create/write to log file when debug is True
+        if debug:
+            tetramer_pairs_log = "tetramer_pairs.txt"
+            with open(tetramer_pairs_log, "a") as log_file:
+                log_file.write(f"\n===== MCMC STEP - {len(tetramers)} TETRAMERS =====\n")
         
         # Quick return if no tetramers
         if not tetramers:
             # Calculate score with no excluded pairs
-            score, ex_score, pair_score, _ = self.ps.calculate_score(
+            result = self.ps.calculate_score(
                 positions, sigma, self.sigma_range, 
                 set(), self.use_sigma_distribution, 
                 prior_penalty_from_distribution
             )
+            
+            if isinstance(result, tuple) and len(result) >= 3:
+                score, ex_score, pair_score = result[:3]
+            else:
+                if debug:
+                    print("Error: Unexpected return value from calculate_score")
+                return 0.0, 0.0, 0.0, 0.0
+                
+            if debug:
+                print("No tetramers - using all pairs for scoring")
+                with open(tetramer_pairs_log, "a") as log_file:
+                    log_file.write("No tetramers found - no intra-tetramer pairs to score\n")
+                    
             return score, ex_score, pair_score, 0.0
         
-        # 1) Efficiently build set of tetramer pairs
+        # 1) Build set of tetramer pairs
         tetramer_pairs = set()
-        tetramer_pairs_add = tetramer_pairs.add  # Local reference for faster calls
         
-        # Build set of pairs with optimized batch processing
-        for a_idx, b_idx, c1_idx, c2_idx in tetramers:
-            tetramer_pairs_add(('A', a_idx, 'B', b_idx))
-            tetramer_pairs_add(('B', b_idx, 'C', c1_idx))
-            tetramer_pairs_add(('B', b_idx, 'C', c2_idx))
-            tetramer_pairs_add(('C', c1_idx, 'C', c2_idx))
+        # Process all tetramers
+        for t_idx, (a_idx, b_idx, c1_idx, c2_idx) in enumerate(tetramers):
+            # Add pairs to excluded set (these are scored separately as tetramer pairs)
+            ab_pair = ('A', a_idx, 'B', b_idx)
+            bc1_pair = ('B', b_idx, 'C', c1_idx)
+            bc2_pair = ('B', b_idx, 'C', c2_idx)
+            cc_pair = ('C', c1_idx, 'C', c2_idx)
+            
+            tetramer_pairs.add(ab_pair)
+            tetramer_pairs.add(bc1_pair)
+            tetramer_pairs.add(bc2_pair)
+            tetramer_pairs.add(cc_pair)
+            
+            # Only log when debug is True
+            if debug:
+                # Log to file
+                with open(tetramer_pairs_log, "a") as log_file:
+                    log_file.write(f"Tetramer {t_idx}:\n")
+                    log_file.write(f"  A({a_idx})-B({b_idx})\n")
+                    log_file.write(f"  B({b_idx})-C({c1_idx})\n")
+                    log_file.write(f"  B({b_idx})-C({c2_idx})\n")
+                    log_file.write(f"  C({c1_idx})-C({c2_idx})\n")
+                
+                # Log to console
+                print(f"Tetramer {t_idx}:")
+                print(f"  A({a_idx})-B({b_idx})")
+                print(f"  B({b_idx})-C({c1_idx})")
+                print(f"  B({b_idx})-C({c2_idx})")
+                print(f"  C({c1_idx})-C({c2_idx})")
 
+        # Log statistics about tetramer pairs only when debug is True
+        unique_pairs = len(tetramer_pairs)
+        expected_pairs = len(tetramers) * 4
+        
+        if debug:
+            with open(tetramer_pairs_log, "a") as log_file:
+                log_file.write(f"Total unique tetramer pairs: {unique_pairs} (expected {expected_pairs})\n")
+                if unique_pairs != expected_pairs:
+                    log_file.write("WARNING: Some tetramers share components - potential source of problems!\n")
+            
+            print(f"Total unique tetramer pairs: {unique_pairs} (expected {expected_pairs})")
+            if unique_pairs != expected_pairs:
+                print("WARNING: Some tetramers share components - potential source of problems!")
+        
         # 2) Calculate score excluding tetramer pairs
-        score, ex_score, pair_score, _ = self.ps.calculate_score(
+        result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
             tetramer_pairs, self.use_sigma_distribution,
             prior_penalty_from_distribution
         )
+        
+        if isinstance(result, tuple) and len(result) >= 3:
+            score, ex_score, pair_score = result[:3]
+        else:
+            if debug:
+                print("Error: Unexpected return value from calculate_score")
+            return 0.0, 0.0, 0.0, 0.0
 
-        # 3) Calculate tetramer score using the vectorized batch method
-        scores_array = self.calculate_tetramer_scores_batch(positions, tetramers, sigma)
+        # 3) Calculate tetramer score using vectorized batch method 
+        # Pass debug flag to control debugging in the batch method
+        scores_array = self.calculate_tetramer_scores_batch(positions, tetramers, sigma, debug_logging=debug)
         total_tet_score = scores_array.sum()
         
         # Apply weighting and return all score components
         weighted_tet_score = tetramer_weight * total_tet_score
         score += weighted_tet_score
 
+        # Only log score summary when debug is True
+        if debug:
+            print("\n===== SCORE SUMMARY =====")
+            print(f"Exclusion Score: {ex_score:.2f}")
+            print(f"Pair Score (non-tetramer): {pair_score:.2f}")
+            print(f"Tetramer Score: {weighted_tet_score:.2f}")
+            print(f"Total Score: {score:.2f}")
+
         return score, ex_score, pair_score, weighted_tet_score
-#-----------------------------------------------------------------------
+    #-----------------------------------------------------------------------

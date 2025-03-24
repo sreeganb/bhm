@@ -12,38 +12,78 @@ import argparse
 import sys
 
 def load_trajectory_from_hdf5(filename: str) -> list:
-    """Loads MCMC trajectory data from an HDF5 file."""
-    trajectory = []
+    """
+    Loads MCMC trajectory data from an HDF5 file, matching the save_state_to_disk format.
+    Safely handles missing keys and empty datasets, then sorts the states by step number.
+    """
+    all_states = []
+    if not os.path.isfile(filename):
+        print(f"File not found: {filename}")
+        return all_states
+
     with h5py.File(filename, 'r') as f:
+        # If the 'trajectory' group doesn't exist, bail out
+        if 'trajectory' not in f:
+            print(f"No 'trajectory' group in file: {filename}")
+            return all_states
+        
         traj_grp = f['trajectory']
         for state_name in traj_grp:
             state_grp = traj_grp[state_name]
             state = {
-                "step": state_grp.attrs["step"],
-                "total_score": state_grp.attrs["total_score"],
-                "prior_score": state_grp.attrs["prior_score"],
-                "pair_score": state_grp.attrs["pair_score"],
-                "exvol_score": state_grp.attrs["exvol_score"],
+                "step": state_grp.attrs.get("step", 0),
+                "total_score": state_grp.attrs.get("total_score", 0.0),
+                "prior_score": state_grp.attrs.get("prior_score", 0.0),
+                "pair_score": state_grp.attrs.get("pair_score", 0.0),
+                "exvol_score": state_grp.attrs.get("exvol_score", 0.0),
                 "sigma": {},
                 "positions": {},
                 "types": {},
                 "bead_numbers": {}
             }
-            sigma_grp = state_grp['sigma']
-            for key in sigma_grp.attrs:
-                state["sigma"][key] = sigma_grp.attrs[key]
-            pos_grp = state_grp['positions']
-            for type_name in pos_grp:
-                state["positions"][type_name] = pos_grp[type_name][:]
-            types_keys_dataset = state_grp['types_keys'][:]
-            types_vals_dataset = state_grp['types_vals'][:]
-            bead_keys_dataset = state_grp['bead_keys'][:]
-            bead_vals_dataset = state_grp['bead_vals'][:]
+            
+            # Safely read sigma values
+            if 'sigma' in state_grp:
+                sigma_grp = state_grp['sigma']
+                for key in sigma_grp.attrs:
+                    state["sigma"][key] = float(sigma_grp.attrs[key])
 
-            state["types"] = {types_keys_dataset[i].decode('utf-8'): types_vals_dataset[i].decode('utf-8') for i in range(len(types_keys_dataset))}
-            state["bead_numbers"] = {int(bead_keys_dataset[i]): int(bead_vals_dataset[i]) for i in range(len(bead_keys_dataset))}
-            trajectory.append(state)
-    return trajectory
+            # Safely read positions
+            if 'positions' in state_grp:
+                pos_grp = state_grp['positions']
+                for type_name in pos_grp:
+                    state["positions"][type_name] = pos_grp[type_name][()]
+
+            # Safely read types
+            if 'types_keys' in state_grp and 'types_vals' in state_grp:
+                types_keys_dataset = state_grp['types_keys'][()]
+                types_vals_dataset = state_grp['types_vals'][()]
+                if len(types_keys_dataset) == len(types_vals_dataset):
+                    for i in range(len(types_keys_dataset)):
+                        k = types_keys_dataset[i]
+                        v = types_vals_dataset[i]
+                        if isinstance(k, bytes):
+                            k = k.decode('utf-8', errors='ignore')
+                        if isinstance(v, bytes):
+                            v = v.decode('utf-8', errors='ignore')
+                        state["types"][k] = v
+            
+            # Safely read bead_numbers
+            if 'bead_keys' in state_grp and 'bead_vals' in state_grp:
+                bead_keys_dataset = state_grp['bead_keys'][()]
+                bead_vals_dataset = state_grp['bead_vals'][()]
+                if len(bead_keys_dataset) == len(bead_vals_dataset):
+                    for i in range(len(bead_keys_dataset)):
+                        bkey = bead_keys_dataset[i]
+                        bval = bead_vals_dataset[i]
+                        state["bead_numbers"][int(bkey)] = int(bval)
+
+            all_states.append(state)
+
+    # Sort the collected states by their step number
+    all_states.sort(key=lambda s: s["step"])
+
+    return all_states
 
 # Add this import at the top with your other imports
 from statsmodels.tsa.stattools import acf

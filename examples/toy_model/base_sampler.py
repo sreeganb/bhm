@@ -44,7 +44,7 @@ class BaseMCSampler:
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.035 * sum_radii
+            lower_bound = 0.025 * sum_radii
             upper_bound = 0.25 * sum_radii
             # Propose sigma in log-space for a uniform proposal in that space.
             sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
@@ -106,64 +106,82 @@ class BaseMCSampler:
         """Vectorized calculation of pair scores between two sets of positions."""
         distances = cdist(pos1, pos2)
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
-    #---------------------------------------------------------------------------
-    
+    #---------------------------------------------------------------------------    
     def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
         """
-        Propose a move for one sigma parameter using log-space sampling.
+        Propose a move for one sigma parameter using symmetrical sampling in log-space,
+        without reflecting out-of-bounds proposals. If the proposed sigma is outside
+        [min_sigma, max_sigma], the prior penalty will usually lead to rejection.
         """
-        # Choose one pair type to modify
+        import random
+        # Pick which pair type to modify
         pair_type = random.choice(list(sigma.keys()))
-        
-        # Calculate bounds directly
+
+        # Compute per-type bounds (used only for prior calculation, no reflection)
         sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-        min_sigma = 0.035 * sum_radii
-        max_sigma = 0.25 * sum_radii
-        
-        # Calculate step size - simplified adaptive adjustment
-        current_val = sigma[pair_type]
-        step_size = min(0.1 * current_val, 0.03) * (1.0 + 5.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
-        
-        # Generate proposal in log space
-        log_current = np.log(current_val)
-        log_min = np.log(min_sigma)
-        log_max = np.log(max_sigma)
-        
-        # Simple bounded proposal - avoid complex reflection logic
+
+        # Current value in log-space
+        log_current = np.log(sigma[pair_type])
+
+        # Adaptive step size (smaller if acceptance is low, bigger if acceptance is high)
+        base_step_size = 0.01  # Tune as needed
+        step_factor = (1.0 + 5.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.2))
+        step_size = base_step_size * step_factor
+
+        # Make the proposal in log-space (no boundary reflection)
         log_proposed = log_current + np.random.normal(0, step_size)
-        
-        # Basic boundary enforcement
-        if log_proposed < log_min:
-            log_proposed = log_min + (log_min - log_proposed) % (log_max - log_min)
-        elif log_proposed > log_max:
-            log_proposed = log_max - (log_proposed - log_max) % (log_max - log_min)
-        
-        # Create new sigma with just the updated value
-        new_sigma = {**sigma, pair_type: np.exp(log_proposed)}
-        
+
+        # Construct the updated sigma (may be out of [min_sigma, max_sigma])
+        new_sigma = dict(sigma)
+        new_sigma[pair_type] = np.exp(log_proposed)
+
         return new_sigma, pair_type
     #---------------------------------------------------------------------------
-
     def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
         """
-        Propose a move for a randomly selected component's position with adaptive step size.
-        Only the chosen type's positions are copied and updated.
+        Propose a move for a randomly selected component's position using a symmetric, 
+        zero-mean Gaussian proposal with reflection at boundaries.
         """
+        def reflect_in_box(coord: float, box_size: float) -> float:
+            """
+            Reflect a single coordinate if it goes out of [0, box_size].
+            This ensures that proposals remain within the box boundaries symmetrically.
+            """
+            # A simple 'bounce' reflection: if we go below 0, reflect up;
+            # if we go above box_size, reflect down.
+            if coord < 0:
+                coord = -coord
+                if coord > box_size:
+                    coord = 2 * box_size - coord
+            elif coord > box_size:
+                coord = 2 * box_size - coord
+                if coord < 0:
+                    coord = -coord
+            return coord
+
+        import random
         new_positions = positions.copy()
         type_names = list(self.params.component_counts.keys())
         type_name = random.choice(type_names)
-        
+
         base_step = self.params.radii[type_name] * 0.1
-        adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.5, 2.0)
+        # Adaptive factor, with a zero-mean Gaussian ensuring symmetry
+        adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.1, 2.5)
         step_size = base_step * adjustment
-        
+
         idx = np.random.randint(self.params.component_counts[type_name])
-        # Copy only the array to be modified to avoid full deep copy.
+        # Copy only the array to be modified
         new_pos_array = np.copy(new_positions[type_name])
-        new_pos_array[idx] = np.clip(new_pos_array[idx] + np.random.normal(0, step_size, 3),
-                                     0, self.params.box_size)
+
+        # Generate a zero-mean proposal
+        proposal = new_pos_array[idx] + np.random.normal(0, step_size, 3)
+        # Reflect in all dimensions that exceed boundaries
+        for i in range(3):
+            proposal[i] = reflect_in_box(proposal[i], self.params.box_size)
+
+        new_pos_array[idx] = proposal
         new_positions[type_name] = new_pos_array
-        
+
         return new_positions
     
     def save_state(
