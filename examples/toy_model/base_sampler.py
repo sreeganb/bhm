@@ -125,7 +125,7 @@ class BaseMCSampler:
 
         # Adaptive step size (smaller if acceptance is low, bigger if acceptance is high)
         base_step_size = 0.01  # Tune as needed
-        step_factor = (1.0 + 5.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.2))
+        step_factor = (1.0 + 5.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.5))
         step_size = base_step_size * step_factor
 
         # Make the proposal in log-space (no boundary reflection)

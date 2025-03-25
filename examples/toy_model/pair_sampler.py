@@ -153,7 +153,7 @@ class PairSampler(BaseMCSampler):
         duplicate_chosen = []     # Track pairs chosen multiple times
         
         # Log file for debugging
-        pairs_log_file = "pair_debugging.txt"
+        pairs_log_file = "output_analysis/pair_debugging.txt"
         if debug_pairs:
             with open(pairs_log_file, "a") as log_file:
                 log_file.write(f"\n{'='*50}\n")
@@ -265,12 +265,12 @@ class PairSampler(BaseMCSampler):
                 log_file.write(f"\n{'='*50}\n\n")
         
         # Also write to standard log file if set
-        if hasattr(self, 'pairs_log_file') and self.pairs_log_file:
-            with open(self.pairs_log_file, "a") as log_file:
-                log_file.write(f"Chosen pairs for step {step}:\n")
-                for cpair in chosen_pairs_log:
-                    log_file.write(f"{cpair}\n")
-                log_file.write("\n")
+#        if hasattr(self, 'pairs_log_file') and self.pairs_log_file:
+#            with open(self.pairs_log_file, "a") as log_file:
+#                log_file.write(f"Chosen pairs for step {step}:\n")
+#                for cpair in chosen_pairs_log:
+#                    log_file.write(f"{cpair}\n")
+#                log_file.write("\n")
         
         return total_score, exclusion_score, pairwise_score, prior_penalty
     #----------------------------------------------------------------------
@@ -296,7 +296,7 @@ class PairSampler(BaseMCSampler):
 
         # Initial score
         current_score, curr_excl, curr_pair, curr_prior = self.calculate_score(
-            self.positions_ps, self.sigma, self.sigma_range, debug_pairs = True, step=0
+            self.positions_ps, self.sigma, self.sigma_range, debug_pairs = False, step=0
         )
         best_score = current_score
 
@@ -333,7 +333,7 @@ class PairSampler(BaseMCSampler):
 
             # Score proposed move
             proposed_score, excl_val, pair_val, prior_val = self.calculate_score(
-                proposed_positions, proposed_sigma, self.sigma_range, debug_pairs=True, step=total_moves
+                proposed_positions, proposed_sigma, self.sigma_range, debug_pairs=False, step=total_moves
             )
             delta_e = proposed_score - current_score
 

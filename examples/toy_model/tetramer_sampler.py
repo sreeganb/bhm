@@ -38,8 +38,8 @@ class TetramerSampler(BaseMCSampler):
         self.use_sigma_distribution = use_sigma_distribution
         
         # Initialize features for tetramer-specific sampling
-        self.tetramer_trans_step = 0.2
-        self.tetramer_rot_step = 0.1
+        self.tetramer_trans_step = 0.35
+        self.tetramer_rot_step = 0.35
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
         self.sigma_prior_dist = {}
@@ -134,7 +134,7 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.75) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.90) -> List[Tuple[int, ...]]:
         """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
             # Quick validation
@@ -524,7 +524,7 @@ class TetramerSampler(BaseMCSampler):
         
         # Only create/write to log file when debug is True
         if debug:
-            tetramer_pairs_log = "tetramer_pairs.txt"
+            tetramer_pairs_log = "output_analysis/tetramer_pairs.txt"
             with open(tetramer_pairs_log, "a") as log_file:
                 log_file.write(f"\n===== MCMC STEP - {len(tetramers)} TETRAMERS =====\n")
         
@@ -602,7 +602,7 @@ class TetramerSampler(BaseMCSampler):
         result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
             tetramer_pairs, self.use_sigma_distribution,
-            prior_penalty_from_distribution
+            prior_penalty_from_distribution, debug_pairs = False
         )
         
         if isinstance(result, tuple) and len(result) >= 3:
