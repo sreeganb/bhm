@@ -101,16 +101,16 @@ def run_hierarchical_sampling(
 def main():
     run_config = {
         "pair_sampler": {
-            "run": False,
-            #"run": True,
+            #"run": False,
+            "run": True,
             "n_chains": 1,
-            "n_steps": 40,
+            "n_steps": 400,
             "save_freq": 1,
             "use_sigma_dist": False, # Example of sampler-specific parameter
         },
         "tetramer_sampler": {
-            "run": True,
-            #"run": False,
+            #"run": True,
+            "run": False,
             "n_chains": 1,
             "n_steps": 5000,
             "save_freq": 10,
@@ -132,8 +132,8 @@ def main():
     last_sigma = None # To hold sigma from previous level if hierarchical
 
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
-    #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
-    sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
+    #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
 

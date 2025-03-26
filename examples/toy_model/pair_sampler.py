@@ -191,116 +191,158 @@ class PairSampler(BaseMCSampler):
         
         return total_score, exclusion_score, pairwise_score, prior_penalty
     #----------------------------------------------------------------------
-    def run_mc(self,
-            n_steps: int = 50000,
-            save_freq: int = 100,
-            output_dir: str = "output_analysis/pairsampler_results/",
-            position_move_prob: float = 0.9,
-            debug: bool = True) -> Tuple[Dict[str, np.ndarray], str]:
+    def run_mc(
+        self,
+        n_steps: int = 50000,
+        save_freq: int = 100,
+        output_dir: str = "output_analysis/pairsampler_results/",
+        debug: bool = False
+    ) -> Tuple[Dict[str, np.ndarray], str]:
         """
         Monte Carlo sampling with position and sigma moves.
-        Adds optional debug prints and removes garbage collection.
+        Optimized for performance and reduced memory usage.
         """
-
         # Setup output directory
         os.makedirs(output_dir, exist_ok=True)
         trajectory_file = os.path.join(output_dir, "trajectory.h5")
-        with h5py.File(trajectory_file, 'w'):
-            pass
-
-        # Track sigma history in lists
-        sigma_history = {key: [] for key in self.sigma}
-
-        # Initial score
+        with h5py.File(trajectory_file, 'w') as f:
+            pass  # Create empty file
+        
+        # Initialize tracking variables
+        best_positions = None
+        best_score = float('inf')
+        sigma_history = {key: np.zeros(n_steps // save_freq + 1) for key in self.sigma}
+        accepts = {'position': 0, 'sigma': 0}
+        attempts = {'position': 0, 'sigma': 0}
+        
+        # Initial score calculation
         current_score, curr_excl, curr_pair, curr_prior = self.calculate_score(
-            self.positions_ps, self.sigma, self.sigma_range, debug_pairs = False, step=0
+            self.positions_ps, self.sigma, self.sigma_range, 
+            set(), False, 0.0,
+            debug_pairs=(debug and True)
         )
-        best_score = current_score
-
-        # Temperature schedule
-        initial_temp, final_temp = 5.0, 1.0
-        cooling_factor = -np.log(final_temp / initial_temp) / n_steps
-        temperatures = initial_temp * np.exp(-cooling_factor * np.arange(n_steps * 50))
-
-        # Logging files
+        
+        # Store initial sigma values
+        for key in self.sigma:
+            sigma_history[key][0] = self.sigma[key]
+        
+        # Setup logging files
         csv_log_file = os.path.join(output_dir, "all_info_mcmc.csv")
         with open(csv_log_file, "w") as f:
-            f.write("Step,Prior,Exvol_score,Pair_score,Score\n")
-
-        self.pairs_log_file = os.path.join(output_dir, "pairs_log.txt")
-        with open(self.pairs_log_file, "w") as f:
-            f.write("# MCMC Pair Selection Log\n")
+            f.write("Step,Prior,Exvol_score,Pair_score,Score,Accept_rate\n")
+            f.write(f"0,{curr_prior:.3f},{curr_excl:.3f},{curr_pair:.3f},{current_score:.3f},0.0\n")
 
         if debug:
-            print(f"Starting MCMC with up to {n_steps} accepted steps.")
-
-        accepted_moves, total_moves, temp_index = 0, 0, 0
-        while accepted_moves < n_steps and total_moves < (n_steps * 50):
+            self.pairs_log_file = os.path.join(output_dir, "pairs_log.txt")
+            with open(self.pairs_log_file, "w") as f:
+                f.write("# MCMC Pair Selection Log\n")
+        
+        # Main MCMC loop
+        move_types = ['position', 'sigma']
+        move_probs = [0.9, 0.1]  # position, sigma
+        
+        # Simple cooling schedule
+        temp_start, temp_end = 5.0, 1.0
+        temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
+        
+        print(f"Starting MCMC sampling for {n_steps} steps...")
+        
+        accepted_moves = 0
+        total_moves = 0
+        max_iterations = n_steps * 30  # Safety cap
+        
+        while accepted_moves < n_steps and total_moves < max_iterations:
             total_moves += 1
-            temp = temperatures[min(temp_index, len(temperatures) - 1)]
-            move_type_is_position = (np.random.random() < position_move_prob)
-
+            
+            # Temperature schedule
+            temp = temp_start * (temp_decay ** accepted_moves)
+            
+            # Select move type
+            move_type = np.random.choice(move_types, p=move_probs)
+            attempts[move_type] += 1
+            
             # Propose move
-            if move_type_is_position:
-                proposed_positions = self.propose_position_move(self.positions_ps)
+            if move_type == 'position':
+                proposed_positions = self.propose_position_move(
+                    self.positions_ps, 
+                    accepts['position'] / max(1, accepted_moves)
+                )
                 proposed_sigma = self.sigma
-            else:
+            else:  # sigma move
                 proposed_positions = self.positions_ps
-                proposed_sigma, pair_type = self.propose_sigma_move(self.sigma)
-
-            # Score proposed move
-            proposed_score, excl_val, pair_val, prior_val = self.calculate_score(
-                proposed_positions, proposed_sigma, self.sigma_range, debug_pairs=False, step=total_moves
+                proposed_sigma, _ = self.propose_sigma_move(
+                    self.sigma, 
+                    accepts['sigma'] / max(1, accepted_moves)
+                )
+            
+            # Calculate new score
+            proposed_score, prop_excl, prop_pair, prop_prior = self.calculate_score(
+                proposed_positions, proposed_sigma, self.sigma_range,
+                set(), False, 0.0,
+                debug_pairs=(debug and accepted_moves % save_freq == 0)
             )
-            delta_e = proposed_score - current_score
-
-            # Metropolis accept/reject
-            if delta_e < 0 or np.random.random() < np.exp(-delta_e / temp):
+            
+            # Metropolis criterion
+            delta = proposed_score - current_score
+            accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
+            
+            if accept:
+                # Update state
                 self.positions_ps = proposed_positions
                 self.sigma = proposed_sigma
                 current_score = proposed_score
-                accepted_moves += 1
-                temp_index += 1
-
-                # Update best score
+                curr_excl, curr_pair, curr_prior = prop_excl, prop_pair, prop_prior
+                
+                # Track best state
                 if current_score < best_score:
                     best_score = current_score
-
-                # Periodic saving
+                    best_positions = {k: v.copy() for k, v in self.positions_ps.items()}
+                
+                accepts[move_type] += 1
+                accepted_moves += 1
+                
+                # Save state periodically
                 if accepted_moves % save_freq == 0:
-                    for key in sigma_history:
-                        sigma_history[key].append(self.sigma[key])
-
+                    # Store sigma history
+                    save_idx = accepted_moves // save_freq
+                    if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
+                        for key in self.sigma:
+                            sigma_history[key][save_idx] = self.sigma[key]
+                    
+                    # Save to disk using existing method
                     self.save_state_to_disk(
                         accepted_moves, self.positions_ps, self.sigma, current_score,
-                        prior_score=prior_val, pair_score=pair_val, exvol_score=excl_val,
+                        prior_score=curr_prior, pair_score=curr_pair,
+                        exvol_score=curr_excl, tet_score=0.0,
                         traj_file=trajectory_file
                     )
-
+                    
+                    # Log to CSV
+                    acceptance_rate = accepted_moves / total_moves
                     with open(csv_log_file, "a") as f:
-                        f.write(f"{accepted_moves},{prior_val:.3f},{excl_val:.3f},"
-                                f"{pair_val:.3f},{current_score:.3f}\n")
-
-                    if debug:
-                        accept_rate = accepted_moves / total_moves
-                        print(f"Accepted Step {accepted_moves}, "
-                            f"Score: {current_score:.2f}, T: {temp:.4f}, "
-                            f"AcceptRate: {accept_rate:.2f}")
-
-        # Store final positions
-        final_positions = {k: v.copy() for k, v in self.positions_ps.items()}
-        self.pairs_log_file = None
-
+                        f.write(f"{accepted_moves},{curr_prior:.3f},{curr_excl:.3f},"
+                                f"{curr_pair:.3f},{current_score:.3f},{acceptance_rate:.3f}\n")
+                    
+                    # Print progress
+                    print(f"Step {accepted_moves}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={acceptance_rate:.2f}")
+        
         # Save sigma history
         sigma_history_df = pd.DataFrame(sigma_history)
         sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
-
+        
+        # Clean up
         if debug:
-            print("MCMC sampling complete.")
-            print(f"Accepted moves: {accepted_moves} / {total_moves}")
-            print(f"Best score: {best_score:.3f}")
-
-        return final_positions, trajectory_file     
+            self.pairs_log_file = None
+        
+        # Print final statistics
+        print("\nSampling complete:")
+        for move_type in move_types:
+            rate = accepts[move_type] / max(1, attempts[move_type])
+            print(f"- {move_type}: {rate:.2f} acceptance ({accepts[move_type]}/{attempts[move_type]})")
+        print(f"- Best score: {best_score:.2f}")
+        
+        # Return best positions if found, otherwise current positions
+        return best_positions if best_positions is not None else self.positions_ps, trajectory_file
 #----------------------------------------------------------------------
 if __name__ == "__main__":
     pair_samp = PairSampler()
