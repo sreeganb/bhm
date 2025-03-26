@@ -44,8 +44,8 @@ class BaseMCSampler:
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.025 * sum_radii
-            upper_bound = 0.25 * sum_radii
+            lower_bound = 0.02 * sum_radii
+            upper_bound = 0.2 * sum_radii
             # Propose sigma in log-space for a uniform proposal in that space.
             sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
             sigma[pair_type] = sigma_val
@@ -109,29 +109,22 @@ class BaseMCSampler:
     #---------------------------------------------------------------------------    
     def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
         """
-        Propose a move for one sigma parameter using symmetrical sampling in log-space,
-        without reflecting out-of-bounds proposals. If the proposed sigma is outside
-        [min_sigma, max_sigma], the prior penalty will usually lead to rejection.
+        Propose a move for one sigma parameter using symmetrical sampling in log-space.
+        If the proposed sigma is outside [min_sigma, max_sigma], the prior penalty likely rejects it.
         """
         import random
-        # Pick which pair type to modify
         pair_type = random.choice(list(sigma.keys()))
-
-        # Compute per-type bounds (used only for prior calculation, no reflection)
-        sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
 
         # Current value in log-space
         log_current = np.log(sigma[pair_type])
 
-        # Adaptive step size (smaller if acceptance is low, bigger if acceptance is high)
-        base_step_size = 0.01  # Tune as needed
-        step_factor = (1.0 + 5.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.5))
+        # Smaller base step size and narrower factor
+        base_step_size = 0.005
+        step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
         step_size = base_step_size * step_factor
 
-        # Make the proposal in log-space (no boundary reflection)
         log_proposed = log_current + np.random.normal(0, step_size)
 
-        # Construct the updated sigma (may be out of [min_sigma, max_sigma])
         new_sigma = dict(sigma)
         new_sigma[pair_type] = np.exp(log_proposed)
 

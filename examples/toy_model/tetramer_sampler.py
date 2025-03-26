@@ -38,8 +38,8 @@ class TetramerSampler(BaseMCSampler):
         self.use_sigma_distribution = use_sigma_distribution
         
         # Initialize features for tetramer-specific sampling
-        self.tetramer_trans_step = 0.35
-        self.tetramer_rot_step = 0.35
+        self.tetramer_trans_step = 0.02
+        self.tetramer_rot_step = 0.02
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
         self.sigma_prior_dist = {}
@@ -257,7 +257,7 @@ class TetramerSampler(BaseMCSampler):
         move_probs = [0.4, 0.1, 0.5]  # position, sigma, tetramer
         
         # Simple cooling schedule
-        temp_start, temp_end = 5.0, 1.0
+        temp_start, temp_end = 6.0, 2.0
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} steps...")
@@ -361,35 +361,39 @@ class TetramerSampler(BaseMCSampler):
         Ensures symmetric proposals (Gaussian translations + isotropic rotations).
         """
         new_pos = {k: v.copy() for k, v in positions.items()}
-        
+
         # Get tetramers
         tetramers = self.get_tetramers(positions)
         if not tetramers:
             return new_pos
-        
+
         # Select a random tetramer
         tetramer = tetramers[np.random.randint(len(tetramers))]
         a_idx, b_idx, c_idx1, c_idx2 = tetramer
         particles = [('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)]
-        
+
         # Get coordinates of the selected tetramer
         coords = np.array([new_pos[part][idx] for part, idx in particles])
         centroid = np.mean(coords, axis=0)
-        
-        # Adaptive step factor
-        factor = np.clip(1.0 + 3.0 * (acceptance_rate - self.target_acceptance), 0.3, 3.0)
 
-        # Symmetric translation (Gaussian about 0)
-        trans_step = self.tetramer_trans_step * factor
-        displacement = np.random.normal(0, trans_step, 3)
+        # Smaller base step sizes for large radii/distances
+        base_trans_step = 0.02  # Example: reduce from 0.1
+        base_rot_step   = 0.02  # Example: reduce from 0.1
 
-        # Symmetric rotation: pick axis uniformly, angle from a zero-mean Gaussian
-        rot_step = self.tetramer_rot_step * factor
+        # Adaptive step factor with narrower clipping
+        factor = np.clip(1.0 + 1.5 * (acceptance_rate - self.target_acceptance), 0.6, 1.6)
+
+        # Symmetric translation (Gaussian around 0)
+        trans_step = base_trans_step * factor
+        displacement = np.random.normal(0.0, trans_step, 3)
+
+        # Symmetric rotation: pick random axis, angle ~ N(0, rot_step)
+        rot_step = base_rot_step * factor
         rotation_axis = np.random.randn(3)
         rotation_axis /= np.linalg.norm(rotation_axis) + 1e-10
-        rotation_angle = np.random.normal(0, rot_step)
-        
-        # Standard quaternion construction (no extra minus signs)
+        rotation_angle = np.random.normal(0.0, rot_step)
+
+        # Build rotation matrix via quaternion
         half_angle = rotation_angle / 2.0
         qw = np.cos(half_angle)
         qx = rotation_axis[0] * np.sin(half_angle)
@@ -401,15 +405,15 @@ class TetramerSampler(BaseMCSampler):
             [2*(qx*qz - qw*qy),       2*(qy*qz + qw*qx),     1 - 2*(qx**2 + qy**2)]
         ])
 
-        # Apply rotation + translation (symmetric about zero)
+        # Apply rotation + translation about centroid
         for i, (part, idx) in enumerate(particles):
             vec = coords[i] - centroid
-            rotated_pos = centroid + rot_matrix @ vec
-            final_pos = np.mod(rotated_pos + displacement, self.params.box_size)
-            new_pos[part][idx] = final_pos
-        
-        return new_pos
+            rotated = rot_matrix @ vec
+            final_pos = centroid + rotated + displacement
+            new_pos[part][idx] = np.mod(final_pos, self.params.box_size)
 
+        return new_pos
+#-----------------------------------------------------------------------
     def calculate_tetramer_scores_batch(self, positions, tetramers, sig, debug_logging=False):
         """Calculate scores for all tetramers with optional debugging."""
         if not tetramers:
