@@ -151,7 +151,7 @@ class GMMSigmaProvider:
         valid_priors = [lp for lp in log_priors if lp > -np.inf]
         
         if not valid_priors:
-            return 1000.0  # Large but finite penalty for all invalid priors
+            return 100000.0  # Large but finite penalty for all invalid priors
             
         return -np.sum(valid_priors)
     
