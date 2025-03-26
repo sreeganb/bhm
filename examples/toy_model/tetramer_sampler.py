@@ -66,6 +66,7 @@ class TetramerSampler(BaseMCSampler):
         # Initialize PairSampler
         self.ps = PairSampler(
             use_def_sig_pos=False, 
+            pair_weight = 0.1,
             sig_passed=self.sigma, 
             sig_range_passed=self.sigma_range,
             pos_passed=self.positions_ts
@@ -134,7 +135,7 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.90) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.99) -> List[Tuple[int, ...]]:
         """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
             # Quick validation
@@ -608,6 +609,9 @@ class TetramerSampler(BaseMCSampler):
             tetramer_pairs, self.use_sigma_distribution,
             prior_penalty_from_distribution, debug_pairs = False
         )
+        
+        # zeroing out the pair score for now
+#        result = 0.0, 0.0, 0.0
         
         if isinstance(result, tuple) and len(result) >= 3:
             score, ex_score, pair_score = result[:3]
