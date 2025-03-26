@@ -44,82 +44,7 @@ class PairSampler(BaseMCSampler):
             self.sigma_range = sig_range_passed
             self.positions_ps = pos_passed
             print("PairSampler initialized with passed sigma values.")        
-
-#    def calculate_score(
-#        self,
-#        pos: Dict[str, np.ndarray],
-#        sig: Dict[str, float],
-#        sig_range: Dict[str, Tuple[float, float]] = None,
-#        excluded_pairs=None,
-#        use_sigma_distribution=False,
-#        prior_penalty_from_distribution=0.0,
-#        step: int = 0
-#    ) -> Tuple[float, float, float, float]:
-#        """Calculate the log posterior for the pair-level interactions."""
-#        # 1) Excluded volume contribution
-#        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
-#        
-#        # 2) Pairwise negative log-likelihood
-#        pairwise_score = 0.0
-#        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
-#        
-#        # Collect logged pairs for printing below
-#        chosen_pairs_log = []
-#        
-#        for type1, type2 in pair_types:
-#            pair_key = f"{type1}{type2}"
-#            if pair_key in self.params.pair_distances:
-#                target_dist = self.params.pair_distances[pair_key]
-#                sigma_value = sig[pair_key]
-#                
-#                # Calculate pairwise score matrix
-#                score_matrix = self.calculate_pair_scores_matrix(
-#                    pos[type1], pos[type2], target_dist, sigma_value
-#                )
-#                
-#                # Mask diagonal (for same-type pairs)
-#                if type1 == type2:
-#                    np.fill_diagonal(score_matrix, np.inf)  # Use inf for clearer intent
-#                
-#                # Exclude certain pairs - more efficient implementation
-#                if excluded_pairs:
-#                    relevant_pairs = [(p[1], p[3]) for p in excluded_pairs 
-#                                    if p[0] == type1 and p[2] == type2]
-#                    for i, j in relevant_pairs:
-#                        if i < len(pos[type1]) and j < len(pos[type2]):
-#                            score_matrix[i, j] = np.inf
-#                
-#                # Identify minimal row/column pairs
-#                row_indices = np.argmin(score_matrix, axis=1)
-#                col_indices = np.argmin(score_matrix, axis=0)
-#                row_pairs = {(i, row_indices[i]) for i in range(len(row_indices))}
-#                col_pairs = {(col_indices[j], j) for j in range(len(col_indices))}
-#                unique_pairs = row_pairs.union(col_pairs)
-#                
-#                for i, j in unique_pairs:
-#                    pairwise_score += self.pair_weight * score_matrix[i, j]
-#                    # Log the chosen pair (e.g. (A1, B2))
-#                    chosen_pairs_log.append(f"({type1}{i}, {type2}{j})")
-#        
-#        # 3) Prior penalty
-#        if not use_sigma_distribution:
-#            prior_penalty = self.priors.neg_log_prior(sig, sig_range)
-#        else:
-#            prior_penalty = prior_penalty_from_distribution
-#        
-#        total_score = exclusion_score + pairwise_score + prior_penalty
-#        
-#        # Avoid opening/closing the file in every call by making this optional
-#        # or passing a file handle instead
-#        if hasattr(self, 'pairs_log_file') and self.pairs_log_file:
-#            with open(self.pairs_log_file, "a") as log_file:
-#                log_file.write("Chosen pairs:\n")
-#                for cpair in chosen_pairs_log:
-#                    log_file.write(f"{cpair}\n")
-#                log_file.write("\n")  # Blank line between scoring steps
-#        
-#        return total_score, exclusion_score, pairwise_score, prior_penalty
-    
+                
     def calculate_score(
         self,
         pos: Dict[str, np.ndarray],
@@ -263,14 +188,6 @@ class PairSampler(BaseMCSampler):
                 log_file.write(f"  Prior penalty: {prior_penalty:.2f}\n")
                 log_file.write(f"  Total score: {total_score:.2f}\n")
                 log_file.write(f"\n{'='*50}\n\n")
-        
-        # Also write to standard log file if set
-#        if hasattr(self, 'pairs_log_file') and self.pairs_log_file:
-#            with open(self.pairs_log_file, "a") as log_file:
-#                log_file.write(f"Chosen pairs for step {step}:\n")
-#                for cpair in chosen_pairs_log:
-#                    log_file.write(f"{cpair}\n")
-#                log_file.write("\n")
         
         return total_score, exclusion_score, pairwise_score, prior_penalty
     #----------------------------------------------------------------------
