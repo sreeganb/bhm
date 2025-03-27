@@ -112,8 +112,8 @@ def main():
             "run": True,
             #"run": False,
             "n_chains": 1,
-            "n_steps": 10000,
-            "save_freq": 10,
+            "n_steps": 20000,
+            "save_freq": 20,
             "use_sigma_dist": True, # Example of sampler-specific parameter
         },
          "octet_sampler": { # Example configuration for OctamerSampler
