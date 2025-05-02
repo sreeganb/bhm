@@ -66,7 +66,7 @@ class TetramerSampler(BaseMCSampler):
         # Initialize PairSampler
         self.ps = PairSampler(
             use_def_sig_pos=False, 
-            pair_weight = 0.1,
+            pair_weight = 0.01,
             sig_passed=self.sigma, 
             sig_range_passed=self.sigma_range,
             pos_passed=self.positions_ts

@@ -44,8 +44,8 @@ class BaseMCSampler:
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.02 * sum_radii
-            upper_bound = 0.2 * sum_radii
+            lower_bound = 0.035 * sum_radii
+            upper_bound = 0.35 * sum_radii
             # Propose sigma in log-space for a uniform proposal in that space.
             sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
             sigma[pair_type] = sigma_val
@@ -120,7 +120,16 @@ class BaseMCSampler:
 
         # Smaller base step size and narrower factor
         base_step_size = 0.005
-        step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
+        
+        diff_acc = accept_rate - self.target_acceptance
+        clipped_diff = np.clip(diff_acc, -0.2, 0.2)
+        # Use an exponential function to adjust the step size
+        # The factor (e.g., 0.1 or 0.2) controls the rate of adaptation.
+        # A smaller factor leads to slower, more stable adaptation.
+        log_step_size_adjustment = 0.1 * clipped_diff
+        step_factor = np.exp(log_step_size_adjustment)
+        
+        #step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, 0.1, 0.5))
         step_size = base_step_size * step_factor
 
         log_proposed = log_current + np.random.normal(0, step_size)
@@ -159,7 +168,7 @@ class BaseMCSampler:
 
         base_step = self.params.radii[type_name] * 0.1
         # Adaptive factor, with a zero-mean Gaussian ensuring symmetry
-        adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.1, 2.5)
+        adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.1, 2.75)
         step_size = base_step * adjustment
 
         idx = np.random.randint(self.params.component_counts[type_name])
@@ -176,7 +185,7 @@ class BaseMCSampler:
         new_positions[type_name] = new_pos_array
 
         return new_positions
-    
+    #---------------------------------------------------------------------------
     def save_state(
         self, step: int, positions: Dict[str, np.ndarray], sigma: Dict[str, float], 
         total_score: float, prior_score: float, pair_score: float, exvol_score: float, 
