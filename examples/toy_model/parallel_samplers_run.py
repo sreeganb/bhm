@@ -38,7 +38,7 @@ def run_analysis(sampler_key: str):
     """Run the fit_gmm.py script for the specified sampler."""
     print(f"\nRunning analysis for {sampler_key}...")
     try:
-        cmd = ["python3.11", "fit_gmm.py", sampler_key]
+        cmd = ["python3.13", "fit_gmm.py", sampler_key]
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         
@@ -201,12 +201,14 @@ def main():
     # Define the sequence of samplers to run and their steps
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "pair_sampler"]
     #mcmc_steps = [10000, 5000, 10000]
-    #sampler_sequence = ["pair_sampler", "tetramer_sampler"]
-    #mcmc_steps = [100000, 60000]
-    sampler_sequence = ["tetramer_sampler"]
-    mcmc_steps = [250000]
+    sampler_sequence = ["pair_sampler", "tetramer_sampler"]
+    mcmc_steps = [100000, 80000]
+    #sampler_sequence = ["tetramer_sampler"]
+    #mcmc_steps = [25000]
+    #sampler_sequence = ["octet_sampler"]
+    #mcmc_steps = [25000]
     #sampler_sequence = ["pair_sampler"]
-    #mcmc_steps = [500000]
+    #mcmc_steps = [100000]
     
     # Setup
     output_folder = "output_analysis"
