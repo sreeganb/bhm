@@ -24,7 +24,7 @@ import h5py  # For reading HDF5 files
 #-----------------------------------------------------------------------
 class OctetSampler(BaseMCSampler):
     """
-    Sampler for Tetramer-level interactions, inheriting from BaseMCSampler.
+    Sampler for Octamer-level interactions, inheriting from BaseMCSampler.
     Includes run_mc method.
     """
     def __init__(self, use_sigma_distribution=False, sig_passed=None, sig_range_passed=None):

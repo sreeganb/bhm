@@ -132,9 +132,9 @@ def main():
     last_sigma = None # To hold sigma from previous level if hierarchical
 
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
-    sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
+    #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
     #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
-    #sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
+    sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
 
     # Profile the output 
