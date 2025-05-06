@@ -66,7 +66,7 @@ class TetramerSampler(BaseMCSampler):
         # Initialize PairSampler
         self.ps = PairSampler(
             use_def_sig_pos=False, 
-            pair_weight = 0.01,
+            pair_weight = 0.1,
             sig_passed=self.sigma, 
             sig_range_passed=self.sigma_range,
             pos_passed=self.positions_ts
@@ -454,63 +454,7 @@ class TetramerSampler(BaseMCSampler):
         scores = ab_scores + bc1_scores + bc2_scores + cc_scores
 #        
         return scores
-
-#    def neg_log_posterior(
-#        self,
-#        positions: Dict[str, np.ndarray],
-#        tetramers: List[Tuple[int, ...]],
-#        prior_penalty_from_distribution: float = 0.0,
-#        sig: Dict[str, float] = None,
-#        exclusion_weight: float = 1.0,
-#        pair_weight: float = 1.0,
-#        tetramer_weight: float = 1.0,
-#    ) -> Tuple[float, float, float, float]:
-#        """
-#        Efficiently calculate the total score for a tetramer system with vectorized operations.
-#        
-#        Returns:
-#            Tuple of (total_score, exclusion_score, pair_score, tetramer_score)
-#        """
-#        # Use sigma if provided, otherwise use class sigma
-#        sigma = sig if sig is not None else self.sigma
-#        
-#        # Quick return if no tetramers
-#        if not tetramers:
-#            # Calculate score with no excluded pairs
-#            score, ex_score, pair_score, _ = self.ps.calculate_score(
-#                positions, sigma, self.sigma_range, 
-#                set(), self.use_sigma_distribution, 
-#                prior_penalty_from_distribution
-#            )
-#            return score, ex_score, pair_score, 0.0
-#        
-#        # 1) Efficiently build set of tetramer pairs
-#        tetramer_pairs = set()
-#        tetramer_pairs_add = tetramer_pairs.add  # Local reference for faster calls
-#        
-#        # Build set of pairs with optimized batch processing
-#        for a_idx, b_idx, c1_idx, c2_idx in tetramers:
-#            tetramer_pairs_add(('A', a_idx, 'B', b_idx))
-#            tetramer_pairs_add(('B', b_idx, 'C', c1_idx))
-#            tetramer_pairs_add(('B', b_idx, 'C', c2_idx))
-#            tetramer_pairs_add(('C', c1_idx, 'C', c2_idx))
-#
-#        # 2) Calculate score excluding tetramer pairs
-#        score, ex_score, pair_score, _ = self.ps.calculate_score(
-#            positions, sigma, self.sigma_range,
-#            tetramer_pairs, self.use_sigma_distribution,
-#            prior_penalty_from_distribution
-#        )
-#
-#        # 3) Calculate tetramer score using the vectorized batch method
-#        scores_array = self.calculate_tetramer_scores_batch(positions, tetramers, sigma)
-#        total_tet_score = scores_array.sum()
-#        
-#        # Apply weighting and return all score components
-#        weighted_tet_score = tetramer_weight * total_tet_score
-#        score += weighted_tet_score
-#
-#        return score, ex_score, pair_score, weighted_tet_score
+#-----------------------------------------------------------------------
     
     def neg_log_posterior(
         self,

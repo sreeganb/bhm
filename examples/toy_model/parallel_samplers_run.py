@@ -224,7 +224,7 @@ def main():
             "run": True,
             "n_chains": 8 if sampler_key == "pair_sampler" else 8,
             "n_steps": mcmc_steps[idx],
-            "save_freq": 500,
+            "save_freq": 200,
             "use_sigma_dist": False if is_first else True
         }
         

@@ -34,8 +34,8 @@ class OctetSampler(BaseMCSampler):
         self._initialize_step_sizes()
 
         # Basic sampler parameters
-        self.octet_trans_step = 0.2
-        self.octet_rot_step = 0.1
+        self.octet_trans_step = 0.02
+        self.octet_rot_step = 0.02
         self.octet_trans_acc_rate = 0.5
         self.target_acceptance = 0.5
 
@@ -133,103 +133,81 @@ class OctetSampler(BaseMCSampler):
     
     def propose_octet_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
-        Improved octet move with adaptive step sizes, periodic boundary conditions,
-        and partial move attempts for higher acceptance rates.
+        Propose a move for a randomly selected octet by applying a small translation and rotation.
+        This version does not apply periodic boundary conditions.
         """
-        # Create a deep copy of positions
+        # Create a deep copy of positions to modify
         new_pos = {k: v.copy() for k, v in positions.items()}
         
-        # Get tetramers and form octets
-        tetramers = self.ts.get_tetramers(positions)
-        octets = self.get_octets(positions, tetramers)
+        # Get tetramers and then form octets
+        tetramers = self.ts.get_tetramers(new_pos) # Use new_pos in case get_tetramers modifies it
+        octets = self.get_octets(new_pos, tetramers)
+        
         if not octets:
-            return new_pos
+            return new_pos # No octets to move, return original positions
         
         # Select a random octet
         octet_idx = np.random.randint(len(octets))
         tetramer1, tetramer2 = octets[octet_idx]
         
-        # Collect particle indices
-        octet_particles = []
+        # Collect all particle types and indices belonging to the selected octet
+        octet_particles_info = []
         for tet in [tetramer1, tetramer2]:
-            octet_particles.extend([('A', tet[0]), ('B', tet[1]), ('C', tet[2]), ('C', tet[3])])
+            # tet is (a_idx, b_idx, c_idx1, c_idx2)
+            octet_particles_info.extend([
+                ('A', tet[0]), ('B', tet[1]), ('C', tet[2]), ('C', tet[3])
+            ])
         
-        # Group by chain type for vectorized operations
-        groups = {}
-        for chain, idx in octet_particles:
-            groups.setdefault(chain, []).append(idx)
+        # Group indices by particle type for efficient transformation
+        grouped_indices: Dict[str, List[int]] = {}
+        for particle_type, particle_idx in octet_particles_info:
+            grouped_indices.setdefault(particle_type, []).append(particle_idx)
         
-        # Get coordinates for centroid calculation
-        all_coords = []
-        for chain, idx in octet_particles:
-            all_coords.append(new_pos[chain][idx])
-        all_coords = np.vstack(all_coords)
-        centroid = np.mean(all_coords, axis=0)
+        # Collect current coordinates of all particles in the octet to calculate the centroid
+        octet_coords_list = []
+        for particle_type, indices_list in grouped_indices.items():
+            octet_coords_list.append(new_pos[particle_type][indices_list])
         
-        # System parameters
-        box_size = self.params.box_size
-        max_tries = 20  # Increase tries for better success rate
-        
-        # Use adaptive step sizes based on recent acceptance rates
-        # Lower rates → smaller steps
-        acceptance_factor = max(0.1, min(1.0, self.octet_trans_acc_rate))
-        trans_step = self.octet_trans_step * acceptance_factor
-        rot_step = self.octet_rot_step * acceptance_factor
-        
-        # Scaling factors for partial moves
-        scales = [1.0, 0.8, 0.6, 0.4, 0.2]
-        
-        # Main move proposal loop
-        success = False
-        
-        for attempt in range(max_tries):
-            # Generate random rotation and translation
-            displacement = np.random.normal(0, trans_step, 3)
-            axis = self._random_unit_vector()
-            angle = np.random.normal(0, rot_step)
-            rot_matrix = self._rotation_matrix(axis, angle)
+        if not octet_coords_list: # Should not happen if octets were found
+            return new_pos 
             
-            # Try different scale factors if needed
-            for scale in scales:
-                if attempt > 0:
-                    # Reduce displacement and angle for subsequent attempts
-                    scaled_disp = displacement * scale
-                    scaled_angle = angle * scale
-                    rot_matrix = self._rotation_matrix(axis, scaled_angle)
-                else:
-                    scaled_disp = displacement
-                
-                # Apply transformation with periodic boundary conditions
-                temp_pos = {k: v.copy() for k, v in new_pos.items()}
-                valid = True
-                
-                for chain, indices in groups.items():
-                    pts = temp_pos[chain][indices]
-                    # Apply rotation and translation
-                    transformed = (pts - centroid) @ rot_matrix.T + centroid + scaled_disp
-                    
-                    # Apply periodic boundary conditions instead of rejecting
-                    transformed = transformed % box_size
-                    
-                    # Update positions
-                    temp_pos[chain][indices] = transformed
-                
-                # Check if the move preserves octet connectivity
-                # This is a basic check - you might want to add more sophisticated checks
-                if valid:
-                    # Move accepted, update positions and return
-                    return temp_pos
+        all_octet_coords = np.vstack(octet_coords_list)
+        centroid = np.mean(all_octet_coords, axis=0)
         
-        # If all attempts failed, return original positions
-        return positions
+        # Define step sizes for translation and rotation
+        # Using the adaptive step sizes from the class
+        trans_step = self.octet_trans_step 
+        rot_step = self.octet_rot_step
+        
+        # Generate a random translation vector
+        displacement = np.random.normal(0, trans_step, 3)
+        
+        # Generate a random rotation axis and angle
+        axis = self._random_unit_vector()
+        angle = np.random.normal(0, rot_step)
+        rotation_matrix = self._rotation_matrix(axis, angle)
+        
+        # Apply the transformation to each particle in the octet
+        for particle_type, indices_list in grouped_indices.items():
+            # Get current positions of particles of this type in the octet
+            current_particle_positions = new_pos[particle_type][indices_list]
+            
+            # Translate to origin (centroid), rotate, then translate back and apply displacement
+            transformed_positions = (current_particle_positions - centroid) @ rotation_matrix.T + centroid + displacement
+            
+            # Update positions in the new_pos dictionary
+            new_pos[particle_type][indices_list] = transformed_positions
+            
+        return new_pos
     
     def _initialize_step_sizes(self):
-        """Set initial step sizes and periodically adjust them based on acceptance rates"""
-        self.octet_trans_step = 0.15  # Start with smaller steps
-        self.octet_rot_step = 0.08
-        self.step_adaptation_factor = 0.95  # Adjustment factor
-        self.min_step = 0.01  # Minimum step size
-        self.max_step = 0.5   # Maximum step size
+        """Set much smaller initial step sizes for better acceptance rates"""
+        self.octet_trans_step = 0.04  # Start with very small steps
+        self.octet_rot_step = 0.02
+        self.step_adaptation_factor = 0.95
+        self.min_step = 0.001  # Even smaller minimum
+        self.max_step = 0.2    # More conservative maximum
+        self.octet_trans_acc_rate = 0.1  # Start with a more realistic value
 
     def adapt_step_sizes(self, acceptance_rate):
         """
@@ -416,6 +394,13 @@ class OctetSampler(BaseMCSampler):
             # Calculate new score
             proposed_score, prop_ex, prop_pair, prop_oct = self.neg_log_posterior(
                 proposed_positions, proposed_tetramers, proposed_octets, new_prior, proposed_sigma)
+            
+            # Check for non-finite scores
+            if not np.isfinite(proposed_score):
+                print(f"WARNING: Non-finite score {proposed_score} detected!")
+                print(f"Components: ex={prop_ex}, pair={prop_pair}, oct={prop_oct}, prior={new_prior}")
+                # Skip this iteration or handle accordingly
+                continue
             
             # Metropolis criterion
             delta = proposed_score - current_score
