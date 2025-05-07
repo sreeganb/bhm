@@ -34,8 +34,8 @@ class OctetSampler(BaseMCSampler):
         self._initialize_step_sizes()
 
         # Basic sampler parameters
-        self.octet_trans_step = 0.02
-        self.octet_rot_step = 0.02
+        self.octet_trans_step = 0.01
+        self.octet_rot_step = 0.01
         self.octet_trans_acc_rate = 0.5
         self.target_acceptance = 0.5
 
@@ -228,7 +228,7 @@ class OctetSampler(BaseMCSampler):
         self.octet_trans_step = max(self.min_step, min(self.max_step, self.octet_trans_step))
         self.octet_rot_step = max(self.min_step, min(self.max_step, self.octet_rot_step))
 
-    def get_octets(self, positions: Dict[str, np.ndarray], tetramers=None, temp=0.990) -> List[Tuple]:
+    def get_octets(self, positions: Dict[str, np.ndarray], tetramers=None, temp=0.9) -> List[Tuple]:
         """
         Group tetramers into octets (pairs of tetramers) with temperature-based selection.
         Vectorized implementation for better performance.
@@ -349,7 +349,7 @@ class OctetSampler(BaseMCSampler):
         move_probs = [0.2, 0.1, 0.3, 0.4]  # position, sigma, tetramer, octet
         
         # Simple cooling schedule
-        temp_start, temp_end = 5.0, 1.0
+        temp_start, temp_end = 40.0, 1.0
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} steps...")
@@ -371,13 +371,16 @@ class OctetSampler(BaseMCSampler):
             # Propose move
             if move_type == 'position':
                 # also pass the acceptance rate for position moves
-                proposed_positions = self.propose_position_move(self.positions_os, accepts['position'] / max(1, attempts['position']))
+                proposed_positions = self.propose_position_move(self.positions_os, 
+                                                                accepts['position'] / max(1, attempts['position']))
                 proposed_sigma = self.sigma
             elif move_type == 'sigma':
                 proposed_positions = self.positions_os
-                proposed_sigma, _ = self.propose_sigma_move(self.sigma, accepts['sigma'] / max(1, attempts['sigma']))
+                proposed_sigma, _ = self.propose_sigma_move(self.sigma, 
+                                                            accepts['sigma'] / max(1, attempts['sigma']))
             elif move_type == 'tetramer':
-                proposed_positions = self.ts.propose_tetramer_move(self.positions_os, accepts['tetramer'] / max(1, attempts['tetramer']))
+                proposed_positions = self.ts.propose_tetramer_move(self.positions_os, 
+                                                                   accepts['tetramer'] / max(1, attempts['tetramer']))
                 proposed_sigma = self.sigma
             else:  # octet move
                 proposed_positions = self.propose_octet_move(self.positions_os)
