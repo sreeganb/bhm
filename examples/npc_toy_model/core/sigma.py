@@ -1,8 +1,8 @@
-# core/sigma.py
 import os
 import pickle
+import json
 import numpy as np
-from typing import Dict, Tuple, Optional, Sequence
+from typing import Dict, Tuple, Optional, Sequence, Any, Union
 from .state import SystemState
 
 class SigmaBuilder:
@@ -61,17 +61,15 @@ class SigmaBuilder:
             # locate gmm file if not explicit
             gmm_path = self.gmm_file or self._auto_select_gmm()
             # load parameters
-            with open(gmm_path, 'rb') as f:
-                gmm_params = pickle.load(f)
+            gmm_params = self._load_gmm_params(gmm_path)
             # store full gmm_params in metadata
             self.state.metadata['gmm_params'] = gmm_params
             # extract sigma
             sig_dict = {}
             for k in self.keys:
                 if k in gmm_params:
-                    model = gmm_params[k]
-                    comp = np.argmax(model.weights_)
-                    sig_dict[k] = float(model.means_[comp][0])
+                    params = gmm_params[k]
+                    sig_dict[k] = self._extract_sigma_from_params(params)
                 else:
                     # fallback mid-range
                     sig_dict[k] = 0.5 * (self.ranges[k][0] + self.ranges[k][1])
@@ -80,20 +78,70 @@ class SigmaBuilder:
         else:
             raise ValueError(f"Invalid sigma_source: {self.source}")
 
+    def _load_gmm_params(self, path: str) -> Dict[str, Any]:
+        """
+        Load GMM parameters from a file, supporting both pickle and JSON formats.
+        """
+        if path.endswith('.json'):
+            # Extract parameter key from filename (e.g., 'AA' from gmm_fit_AA_chain_1.json)
+            param_key = os.path.basename(path).split('_')[2]
+            with open(path, 'r') as f:
+                json_data = json.load(f)
+                
+            # Convert JSON format to a structure compatible with our code
+            return {param_key: {
+                'means_': np.array([[m] for m in json_data['means']]),
+                'covariances_': np.array([[c] for c in json_data['covariances']]),
+                'weights_': np.array(json_data['weights']),
+                'n_components': json_data['n_components']
+            }}
+        else:
+            # Original pickle format
+            with open(path, 'rb') as f:
+                return pickle.load(f)
+
+    def _extract_sigma_from_params(self, params: Dict[str, Any]) -> float:
+        """
+        Extract sigma value from GMM parameters, handling both pickle-loaded
+        sklearn models and our custom JSON format.
+        """
+        if hasattr(params, 'weights_'):  # sklearn GMM model from pickle
+            comp = np.argmax(params.weights_)
+            return float(params.means_[comp][0])
+        else:  # Our JSON-derived format
+            comp = np.argmax(params['weights_'])
+            return float(params['means_'][comp][0])
+
     def _auto_select_gmm(self) -> str:
         """
         Pick the latest GMM file for sampler_name in gmm_folder.
         """
         if not self.sampler_name:
             raise ValueError("sampler_name must be provided to auto-select GMM file")
-        # find directories starting with sampler_name_
-        chains = [d for d in os.listdir(self.gmm_folder)
-                  if d.startswith(self.sampler_name)]
-        if not chains:
-            raise FileNotFoundError(f"No GMM chains for {self.sampler_name} in {self.gmm_folder}")
-        # pick highest numerical suffix
-        best = sorted(chains, key=lambda d: int(d.split('_')[-1]))[-1]
-        path = os.path.join(self.gmm_folder, best)
+        
+        # Find all files/directories that match the pattern
+        gmm_files = []
+        for root, _, files in os.walk(self.gmm_folder):
+            for file in files:
+                if file.startswith(f"gmm_fit_{self.sampler_name}_chain_") and (file.endswith('.json') or file.endswith('.pkl')):
+                    gmm_files.append(os.path.join(root, file))
+        
+        if not gmm_files:
+            # Fallback to previous directory-based logic
+            chains = [d for d in os.listdir(self.gmm_folder)
+                    if d.startswith(self.sampler_name)]
+            if not chains:
+                raise FileNotFoundError(f"No GMM chains for {self.sampler_name} in {self.gmm_folder}")
+            # pick highest numerical suffix
+            best = sorted(chains, key=lambda d: int(d.split('_')[-1]))[-1]
+            path = os.path.join(self.gmm_folder, best)
+        else:
+            # Sort by chain number to get the latest one
+            path = sorted(
+                gmm_files,
+                key=lambda f: int(os.path.basename(f).split('_chain_')[1].split('.')[0])
+            )[-1]
+            
         if not os.path.exists(path):
             raise FileNotFoundError(f"GMM file not found: {path}")
         return path
