@@ -119,7 +119,7 @@ class BaseMCSampler:
         log_current = np.log(sigma[pair_type])
 
         # Smaller base step size and narrower factor
-        base_step_size = 0.004 # switching from 0.002 to 0.004
+        base_step_size = 0.04 # switching from 0.002 to 0.004
         step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
         step_size = base_step_size * step_factor
 
@@ -157,7 +157,7 @@ class BaseMCSampler:
         type_names = list(self.params.component_counts.keys())
         type_name = random.choice(type_names)
 
-        base_step = self.params.radii[type_name] * 0.2
+        base_step = self.params.radii[type_name] * 0.25
         # Adaptive factor, with a zero-mean Gaussian ensuring symmetry
         adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.1, 2.75)
         step_size = base_step * adjustment

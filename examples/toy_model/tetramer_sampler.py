@@ -38,8 +38,8 @@ class TetramerSampler(BaseMCSampler):
         self.use_sigma_distribution = use_sigma_distribution
         
         # Initialize features for tetramer-specific sampling
-        self.tetramer_trans_step = 0.02
-        self.tetramer_rot_step = 0.02
+        self.tetramer_trans_step = 0.04
+        self.tetramer_rot_step = 0.04
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
         self.sigma_prior_dist = {}
@@ -135,7 +135,7 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.99) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
         """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
             # Quick validation
@@ -258,7 +258,7 @@ class TetramerSampler(BaseMCSampler):
         move_probs = [0.4, 0.1, 0.5]  # position, sigma, tetramer
         
         # Simple cooling schedule
-        temp_start, temp_end = 6.0, 2.0
+        temp_start, temp_end = 5.0, 1.0
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} steps...")
@@ -378,8 +378,8 @@ class TetramerSampler(BaseMCSampler):
         centroid = np.mean(coords, axis=0)
 
         # Smaller base step sizes for large radii/distances
-        base_trans_step = 0.05  # Example: reduce from 0.1
-        base_rot_step   = 0.05  # Example: reduce from 0.1
+        base_trans_step = 0.1  # Example: reduce from 0.1
+        base_rot_step   = 0.1  # Example: reduce from 0.1
 
         # Adaptive step factor with narrower clipping
         factor = np.clip(1.0 + 1.5 * (acceptance_rate - self.target_acceptance), 0.6, 1.6)
@@ -553,9 +553,6 @@ class TetramerSampler(BaseMCSampler):
             tetramer_pairs, self.use_sigma_distribution,
             prior_penalty_from_distribution, debug_pairs = False
         )
-        
-        # zeroing out the pair score for now
-#        result = 0.0, 0.0, 0.0
         
         if isinstance(result, tuple) and len(result) >= 3:
             score, ex_score, pair_score = result[:3]

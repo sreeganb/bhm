@@ -96,11 +96,12 @@ class PairSampler(BaseMCSampler):
                 score_matrix = self.calculate_pair_scores_matrix(
                     pos[type1], pos[type2], target_dist, sigma_value
                 )
-                
+                                              
                 # Mask diagonal (for same-type pairs)
                 if type1 == type2:
-                    np.fill_diagonal(score_matrix, np.inf)  # Use inf for clearer intent
-                
+                    mask = np.triu(np.ones_like(score_matrix), k=1)
+                    score_matrix = score_matrix * mask
+                    
                 # Exclude certain pairs
                 if excluded_pairs:
                     relevant_pairs = [(p[1], p[3]) for p in excluded_pairs 
