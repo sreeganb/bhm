@@ -24,7 +24,7 @@ class SystemParameters:
                 'AB': 36.5,
                 'BC': 34.5,  # minimum allowed C-C distance
                 #'CC': 36.5   # note: with the following placement BC bonds won’t be exactly this long!
-                'CC': 56.5   # note: with the following placement BC bonds won’t be exactly this long!
+                'CC': 50.5   # note: with the following placement BC bonds won’t be exactly this long!
             }
         if self.component_counts is None:
             self.component_counts = {'A': 8, 'B': 8, 'C': 16}

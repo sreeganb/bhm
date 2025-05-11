@@ -119,7 +119,7 @@ class BaseMCSampler:
         log_current = np.log(sigma[pair_type])
 
         # Smaller base step size and narrower factor
-        base_step_size = 0.04 # switching from 0.002 to 0.004
+        base_step_size = 0.05 # switching from 0.002 to 0.004
         step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
         step_size = base_step_size * step_factor
 

@@ -135,7 +135,7 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.95) -> List[Tuple[int, ...]]:
         """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
             # Quick validation
