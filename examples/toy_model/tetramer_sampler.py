@@ -551,7 +551,7 @@ class TetramerSampler(BaseMCSampler):
         result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
             tetramer_pairs, self.use_sigma_distribution,
-            prior_penalty_from_distribution, debug_pairs = False
+            prior_penalty_from_distribution #, debug_pairs = False
         )
         
         if isinstance(result, tuple) and len(result) >= 3:

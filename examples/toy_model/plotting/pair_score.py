@@ -88,59 +88,59 @@ class ScoringSystem:
     
     def calculate_score(
         self,
-        pos: Dict[str, np.ndarray],
-        sig: Dict[str, float],
-        sig_range: Dict[str, Tuple[float, float]] = None,
+        pos: Dict[str, np.ndarray],  # input positions
+        sig: Dict[str, float],       # input sigma values
+        sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
+        excluded_pairs=None,
         use_sigma_distribution=False,
-        prior_penalty_from_distribution=0.0,
-        step: int = 0
+        prior_penalty_from_distribution=0.0
     ) -> Tuple[float, float, float, float]:
-        """Calculate the log posterior with detailed debugging of chosen pairs."""
-        # 1) Excluded volume contribution
+        """Calculate the log posterior for the pair-level interactions."""
+        # 1) Excluded volume contribution (from BaseMCSampler)
         exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
-        
-        # 2) Pairwise negative log-likelihood
+
+        # 2) Pairwise negative log-likelihood (pair-specific)
         pairwise_score = 0.0
         pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
-        
         for type1, type2 in pair_types:
             pair_key = f"{type1}{type2}"
             if pair_key in self.params.pair_distances:
                 target_dist = self.params.pair_distances[pair_key]
-                sigma_value = sig[pair_key]
-                
+                sigma_value = sig[pair_key]  # Use the passed sigma
+
                 # Calculate pairwise score matrix
                 score_matrix = self.calculate_pair_scores_matrix(
-                    pos[type1], pos[type2], target_dist, sigma_value
+                    pos[type1],
+                    pos[type2],
+                    target_dist,
+                    sigma_value
                 )
-                
+
                 # Mask diagonal (for same-type pairs)
                 if type1 == type2:
                     mask = np.triu(np.ones_like(score_matrix), k=1)
-                    score_matrix = score_matrix * mask
-                        
-                # Identify minimal row/column pairs
+                    score_matrix *= mask
+
+                # Zero out excluded pairs if provided
+                if excluded_pairs:
+                    for i in range(len(pos[type1])):
+                        for j in range(len(pos[type2])):
+                            if (type1, i, type2, j) in excluded_pairs:
+                                score_matrix[i, j] = np.inf
+
+                # Identify minimal row/column pairs and accumulate the score
                 row_indices = np.argmin(score_matrix, axis=1)
                 col_indices = np.argmin(score_matrix, axis=0)
                 row_pairs = {(i, row_indices[i]) for i in range(len(row_indices))}
                 col_pairs = {(col_indices[j], j) for j in range(len(col_indices))}
                 unique_pairs = row_pairs.union(col_pairs)
-                
                 for i, j in unique_pairs:
-                    # Skip infinite scores (excluded or diagonal)
-                    if np.isinf(score_matrix[i, j]):
-                        continue
-                        
                     pairwise_score += self.pair_weight * score_matrix[i, j]
-                    
-        # 3) Prior penalty
-        if not use_sigma_distribution:
-            prior_penalty = self.priors.neg_log_prior(sig, sig_range)
-        else:
-            prior_penalty = prior_penalty_from_distribution
-        
+
+        # 3) Prior penalty: if not using the sigma distribution, compute using Priors.
+        prior_penalty = 0.0
+
         total_score = exclusion_score + pairwise_score + prior_penalty
-        
         return total_score, exclusion_score, pairwise_score, prior_penalty
     
 

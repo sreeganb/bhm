@@ -13,7 +13,7 @@ class TetramerScorer:
         self.sigma_range = {"AA": (0.01, 10.0), "AB": (0.01, 10.0), "BC": (0.01, 10.0), "CC": (0.01, 10.0)}
         self.use_sigma_distribution = False
         
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9999) -> List[Tuple[int, ...]]:
         """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
             # Quick validation
@@ -220,6 +220,7 @@ class TetramerScorer:
         unique_pairs = len(tetramer_pairs)
         expected_pairs = len(tetramers) * 4
         
+        tetramer_pairs = None
         # 2) Calculate score excluding tetramer pairs
         result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,

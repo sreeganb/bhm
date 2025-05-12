@@ -199,5 +199,5 @@ class PerturbSystemParameters:
 
 if __name__ == "__main__":
     analyze = PerturbSystemParameters()
-    magnitudes = np.linspace(0.001, 6.0, 100)
-    analyze.analyze_perturbations(magnitudes, num_perturbations=20, seed=52)
+    magnitudes = np.linspace(0.001, 5.0, 10)
+    analyze.analyze_perturbations(magnitudes, num_perturbations=10, seed=52)

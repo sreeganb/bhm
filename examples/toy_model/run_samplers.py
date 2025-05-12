@@ -120,8 +120,8 @@ def main():
              "run": True,
              #"run": False,
              "n_chains": 1,
-             "n_steps": 5000,
-             "save_freq": 10,
+             "n_steps": 50,
+             "save_freq": 1,
              "use_sigma_dist": True #, # Example of sampler-specific parameter
              #"read_pos": False,
          }

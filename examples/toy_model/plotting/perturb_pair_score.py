@@ -30,7 +30,7 @@ class PerturbSystemParameters:
     # Scoring related attributes from your first script's __init__
     scalc: Optional[ScoringSystem] = None # Will be initialized in __post_init__
     #fixed_sigma_for_scoring: Dict[str, float] = field(default_factory=lambda: {'AA': 0.2025, 'AB': 0.5, 'BC': 0.5, 'CC': 0.2822})
-    fixed_sigma_for_scoring: Dict[str, float] = field(default_factory=lambda: {'AA': 0.75, 'AB': 0.45, 'BC': 0.35, 'CC': 0.65})
+    fixed_sigma_for_scoring: Dict[str, float] = field(default_factory=lambda: {'AA': 0.7, 'AB': 0.75, 'BC': 0.35, 'CC': 0.65})
     sig_range_for_scoring: Dict[str, Tuple[float, float]] = field(default_factory=lambda: {"AA": (0.01, 10.0), "AB": (0.01, 10.0), "BC": (0.01, 10.0), "CC": (0.01, 10.0)})
 
     ideal_score: float = 0.0
@@ -197,37 +197,36 @@ class PerturbSystemParameters:
             return np.sqrt(np.mean(np.sum((ideal_centered - perturbed_centered) ** 2, axis=1)))
 
 
-    def analyze_perturbations(self, magnitudes: List[float], num_perturbations: int = 10,
-                              base_seed: Optional[int] = None,
-                              # Parameters from the newer script for enhanced analysis
-                              score_threshold: Optional[float] = None,
-                              exclusion_w_scorer: float = 1.0, # Parameter to potentially adjust scorer's internal weight
-                              pair_w_scorer: float = 1.0,     # Parameter to potentially adjust scorer's internal weight
-                              plot_means_only: bool = False,
-                              add_error_bars_to_mean_plot: bool = True
-                              ):
-        # Ensure self.scalc is initialized
-        if self.scalc is None:
-            print("Error: ScoringSystem (self.scalc) is not initialized.")
-            return None # Or raise an error
-
-        # Optionally update scorer weights if they are meant to be dynamic for the analysis
-        # This assumes your ScoringSystem instance can have its weights updated.
-        # If not, they are fixed at its instantiation.
-        # self.scalc.exclusion_weight = exclusion_w_scorer 
-        # self.scalc.pair_weight = pair_w_scorer
-
+    def analyze_perturbations(self, magnitudes: List['float'], num_perturbations: int = 10,
+                            base_seed: Optional['int'] = None,
+                            score_threshold: Optional['float'] = None,
+                            exclusion_w_scorer: float = 1.0,
+                            pair_w_scorer: float = 1.0,
+                            plot_means_only: bool = False,
+                            add_error_bars_to_mean_plot: bool = True
+                            ):
+        sns.set_theme(context='notebook', style='whitegrid', palette='deep', font='sans-serif', font_scale=1.1)
         results = []
-        current_global_seed = base_seed # From newer script for better seed control
+
+        # Dictionary to track the best (lowest score) coords per magnitude
+        # Keys: magnitude (float), Value: dict of arrays = {component_name: coords}
+        best_coords_for_mag = {}
+        # Additionally track the best (lowest) score per magnitude to compare each candidate
+        best_score_for_mag = {}
+
+        current_global_seed = base_seed
         total_skipped_overlap_failure = 0
         total_skipped_score_threshold = 0
 
         for mag_idx, mag in enumerate(magnitudes):
             num_successful_perturbations_for_mag = 0
+            best_score_for_mag['mag'] = float('inf')
+            best_coords_for_mag['mag'] = None
+
             print(f"\nProcessing Magnitude: {mag:.3f} ({mag_idx+1}/{len(magnitudes)})")
             for i in range(num_perturbations):
                 current_perturb_seed = (current_global_seed + i) if base_seed is not None else None
-                
+
                 if self.debug_overlap_failure:
                     print(f"  Attempting Pert {i+1}/{num_perturbations}, Mag {mag:.3f}, Seed {current_perturb_seed}")
 
@@ -236,31 +235,30 @@ class PerturbSystemParameters:
                 if perturbed_coords is None:
                     if not self.debug_overlap_failure:
                         print(f"  Skipped Pert {i+1} (Mag {mag:.3f}, Seed {current_perturb_seed}): Overlap resolution failed.")
-                    # else: # debug_overlap_failure is True, details printed in resolve_overlaps
-                        # print(f"  Skipped Pert {i+1} (Mag {mag:.3f}, Seed {current_perturb_seed}) due to previously noted overlap resolution failure.")
-                    total_skipped_overlap_failure +=1
+                    total_skipped_overlap_failure += 1
                     continue
-                
+
                 num_successful_perturbations_for_mag += 1
-                
-                # Use self.scalc.calculate_score as per your first script
-                # and class attributes for sigmas
+
+                # Calculate score using the perturbed coordinates
                 score_tuple = self.scalc.calculate_score(
-                    perturbed_coords, 
-                    self.fixed_sigma_for_scoring, 
+                    perturbed_coords,
+                    self.fixed_sigma_for_scoring,
                     self.sig_range_for_scoring
                 )
-                score = score_tuple[0]
-                # Assuming score_tuple is (total_score, exclusion, pair, other)
+                score = score_tuple[0]  # Access by position, not by key
+                
+                # If score_tuple has additional components, access them by position
+                # Assuming a format like (total_score, exclusion, pair, other)
                 exclusion_val = score_tuple[1] if len(score_tuple) > 1 else np.nan
                 pair_val = score_tuple[2] if len(score_tuple) > 2 else np.nan
                 other_val = score_tuple[3] if len(score_tuple) > 3 else np.nan
-                
+
                 if score_threshold is not None and score > score_threshold:
                     print(f"  Skipped Pert {i+1} (Mag {mag:.3f}, Seed {current_perturb_seed}): Score {score:.2f} > threshold {score_threshold}.")
                     if self.log_high_score_details:
                         print(f"    Score Details: Total={score:.2f}, Excl={exclusion_val:.2f}, Pair={pair_val:.2f}, Other={other_val:.2f}")
-                    total_skipped_score_threshold +=1
+                    total_skipped_score_threshold += 1
                     continue
 
                 rmsd = self.calculate_rmsd(perturbed_coords)
@@ -270,18 +268,25 @@ class PerturbSystemParameters:
                     'Magnitude': mag, 'Score': score, 'RMSD': rmsd, 'Accuracy': accuracy,
                     'ExclusionScore': exclusion_val, 'PairScore': pair_val, 'OtherScore': other_val
                 })
-            
+
+                # Update best structure if this is the lowest score so far for this magnitude
+                if score < best_score_for_mag.get(mag, float('inf')):
+                    best_score_for_mag['mag'] = score
+                    best_coords_for_mag['mag'] = perturbed_coords
+
             if base_seed is not None:
-                current_global_seed += num_perturbations # Advance seed block for next magnitude
-            
+                current_global_seed += num_perturbations
+
             print(f"  Completed {num_successful_perturbations_for_mag}/{num_perturbations} valid perturbations for magnitude {mag:.3f}.")
 
         if not results:
-            print("No valid results generated.")
-            # Print skip reasons
-            # (Summary printing logic below will cover this)
-            return None 
-            
+            print("No valid results generated. Check parameters or overlap resolution.")
+            if total_skipped_overlap_failure > 0:
+                print(f"Total configurations skipped due to overlap resolution failure: {total_skipped_overlap_failure}")
+            if total_skipped_score_threshold > 0:
+                print(f"Total configurations skipped due to exceeding score threshold: {total_skipped_score_threshold}")
+            return None
+
         df_results = pd.DataFrame(results)
 
         print(f"\n--- Analysis Summary ---")
@@ -291,7 +296,7 @@ class PerturbSystemParameters:
             print(f"Total configurations skipped due to exceeding score threshold: {total_skipped_score_threshold}")
         total_skipped_configs = total_skipped_overlap_failure + total_skipped_score_threshold
         if total_skipped_configs > 0:
-             print(f"Total configurations skipped overall: {total_skipped_configs}")
+            print(f"Total configurations skipped overall: {total_skipped_configs}")
 
         summary_stats = df_results.groupby('Magnitude').agg(
             mean_score=('Score', 'mean'), std_score=('Score', 'std'),
@@ -303,67 +308,198 @@ class PerturbSystemParameters:
         print("\nSummary Statistics per Magnitude (based on non-skipped configurations):")
         print(summary_stats)
 
-        # --- Plotting (from newer version, adapted) ---
-        sns.set_theme(context='notebook', style='whitegrid', palette='deep', font='sans-serif', font_scale=1.1)
+        # --- Plotting ---
+        # Setup figure for main plot - keep this large
         fig_width = 12
         phi = (1 + np.sqrt(5)) / 2
         fig_height = fig_width / phi
         plt.figure(figsize=(fig_width, fig_height))
-        
-        plot_title_base = 'RMSD vs. Model Score' # From your old script
-        plot_filename_suffix = 'detailed' # Default for raw data plot
+
+        # Configure larger, bolder fonts
+        plt.rcParams.update({
+            'font.size': 14,
+            'font.weight': 'bold',
+            'axes.titlesize': 22,
+            'axes.labelsize': 18,
+            'axes.titleweight': 'bold',
+            'axes.labelweight': 'bold',
+            'xtick.labelsize': 14,
+            'ytick.labelsize': 14,
+            'legend.fontsize': 14,
+            'legend.title_fontsize': 16
+        })
+
+        plot_title = 'RMSD vs. Score for Pair Sampler'
+        plot_filename_suffix = 'detailed'
 
         if plot_means_only:
-            plot_title = f'Mean {plot_title_base} (Error Bars: Std Dev)'
+            plot_title = 'Mean RMSD vs. Mean Score (Error Bars: Std Dev)'
             plot_filename_suffix = 'means'
             if summary_stats.empty:
                 print("No summary statistics to plot for means. Skipping plot.")
-                return df_results 
+                return df_results
 
             plt.errorbar(summary_stats['mean_rmsd'], summary_stats['mean_score'],
-                         xerr=summary_stats['std_rmsd'] if add_error_bars_to_mean_plot else None,
-                         yerr=summary_stats['std_score'] if add_error_bars_to_mean_plot else None,
-                         fmt='-o', capsize=5, elinewidth=1, markeredgewidth=1,
-                         label='Mean Values (per Magnitude)', color='dodgerblue', markerfacecolor='skyblue', markersize=8)
-            final_plot_title = plot_title
-        else: 
-            # Scatterplot for raw data (similar to your old script, but with hue/size for magnitude)
-            sns.scatterplot(
-                data=df_results, x='RMSD', y='Score', hue='Magnitude', size='Magnitude',
-                palette='viridis', sizes=(30, 150), legend='auto', alpha=0.7
-                # Original style: color='blue', marker='o', s=80, edgecolor='black', facecolors='blue', label='Perturbed Structures'
+                        xerr=summary_stats['std_rmsd'] if add_error_bars_to_mean_plot else None,
+                        yerr=summary_stats['std_score'] if add_error_bars_to_mean_plot else None,
+                        fmt='-o', capsize=6, elinewidth=2, markeredgewidth=2,
+                        label='Mean Values (per Magnitude)', color='dodgerblue',
+                        markerfacecolor='skyblue', markersize=12)
+
+        else:
+            # Single color and size for all perturbed structures
+            plt.scatter(
+                df_results['RMSD'], df_results['Score'],
+                color='blue', s=30, alpha=0.7,
+                label='Perturbed Structures'
             )
-            final_plot_title = plot_title_base
-        
-        # Plot ideal structure (same as your old script)
+
+        # Plot the ground truth with red star
         plt.scatter(
-            [self.ideal_rmsd], [self.ideal_score],
-            color='lime', marker='^', s=150, edgecolor='black', label='Ideal Structure', zorder=5
+            self.ideal_rmsd, self.ideal_score,
+            color='red', marker='*', s=400, edgecolor='black', linewidth=2,
+            label='Ground Truth', zorder=5
         )
-        plt.xlabel('RMSD ($\AA$)', fontsize=16) # Assuming Angstroms based on common practice
-        plt.ylabel('Score', fontsize=16) # Or 'Model Score'
-        plt.title(final_plot_title, fontsize=18)
-        plt.grid(True, linestyle='--', alpha=0.5) # alpha from old
-        plt.legend(fontsize=14 if not plot_means_only else 12, loc='best', title='Perturbation Magnitude' if not plot_means_only else 'Legend')
+
+        plt.xlabel('RMSD ($\AA$)', fontsize=20, fontweight='bold')
+        plt.ylabel('Score (Negative Log Posterior)', fontsize=20, fontweight='bold')
+        plt.title(plot_title, fontsize=22, fontweight='bold', pad=15)
+        plt.grid(True, linestyle='-', alpha=0.3, linewidth=1.5)
+
+        # Make tick marks bolder and larger
+        plt.tick_params(axis='both', which='major', labelsize=16, width=2, length=6)
+
+        # Customize legend
+        legend = plt.legend(fontsize=16, loc='best', framealpha=0.9, edgecolor='black')
+
         plt.tight_layout()
 
-        output_dir = 'output_analysis/accuracy_vs_score' # From your old script
+        # Save the main plot
+        output_dir = 'output_analysis/accuracy_vs_score'
         os.makedirs(output_dir, exist_ok=True)
-        
-        # Consistent naming from newer script
-        df_results.to_csv(os.path.join(output_dir, 'rmsd_vs_score_raw_data.csv'), index=False)
-        if plot_means_only and not summary_stats.empty : 
-             summary_stats.to_csv(os.path.join(output_dir, 'rmsd_vs_score_summary_stats.csv'), index=False)
 
-        plot_filename = os.path.join(output_dir, f'rmsd_vs_score_{plot_filename_suffix}.png')
-        
-        plt.savefig(plot_filename, dpi=300)
-        print(f"\nPlot saved to {plot_filename}")
-        print(f"Raw results saved to {os.path.join(output_dir, 'rmsd_vs_score_raw_data.csv')}")
+        df_results.to_csv(os.path.join(output_dir, 'perturbation_analysis_results_raw.csv'), index=False)
         if plot_means_only and not summary_stats.empty:
-            print(f"Summary statistics saved to {os.path.join(output_dir, 'rmsd_vs_score_summary_stats.csv')}")
+            summary_stats.to_csv(os.path.join(output_dir, 'perturbation_analysis_summary_stats.csv'), index=False)
+
+        plot_filename = os.path.join(output_dir, f'rmsd_vs_score_{plot_filename_suffix}_pair.png')
+        plot_filename_pdf = os.path.join(output_dir, f'rmsd_vs_score_{plot_filename_suffix}_pair.svg')  # Changed to SVG
+
+        plt.savefig(plot_filename, dpi=300)
+        plt.savefig(plot_filename_pdf)
+
+        print(f"\nPlot saved to {plot_filename} and {plot_filename_pdf}")
+        print(f"Raw results saved to {os.path.join(output_dir, 'perturbation_analysis_results_raw.csv')}")
+        if plot_means_only and not summary_stats.empty:
+            print(f"Summary statistics saved to {os.path.join(output_dir, 'perturbation_analysis_summary_stats.csv')}")
+
         plt.show()
+
+        # --- Create a second "zoomed in" plot for RMSD in [0,2.0] ---
+
+        zoomed_df = df_results[(df_results['RMSD'] >= 0) & (df_results['RMSD'] <= 2.0)]
+        if zoomed_df.empty:
+            print("No results with RMSD between 0 and 2.0, skipping zoomed plot.")
+        else:
+            # Smaller figure but larger fonts for the zoomed plot
+            zoom_width = 8  # Smaller width
+            zoom_height = zoom_width / phi
+            plt.figure(figsize=(zoom_width, zoom_height))
+
+            # Even larger fonts for the smaller zoomed plot
+            plt.rcParams.update({
+                'font.size': 16,
+                'font.weight': 'bold',
+                'axes.titlesize': 24,
+                'axes.labelsize': 22,
+                'axes.titleweight': 'bold',
+                'axes.labelweight': 'bold',
+                'xtick.labelsize': 18,
+                'ytick.labelsize': 18,
+                'legend.fontsize': 16,
+                'legend.title_fontsize': 18
+            })
+
+            # Create scatter plot with consistent marker size and color
+            plt.scatter(
+                zoomed_df['RMSD'], zoomed_df['Score'],
+                color='blue', s=30, alpha=0.8,
+                label='Perturbed Structures'
+            )
+
+            # Mark the ground truth if applicable
+            if 0 <= self.ideal_rmsd <= 2.0:
+                plt.scatter(
+                    self.ideal_rmsd, self.ideal_score,
+                    color='red', marker='*', s=500, edgecolor='black', linewidth=2.5,
+                    label='Ground Truth', zorder=10
+                )
+
+            plt.xlabel('RMSD ($\AA$)', fontsize=22, fontweight='bold')
+            plt.ylabel('Score (Negative Log Posterior)', fontsize=22, fontweight='bold')
+            plt.title("Zoomed RMSD ∈ [0, 2.0]", fontsize=24, fontweight='bold', pad=15)
+            plt.grid(True, linestyle='-', alpha=0.3, linewidth=1.5)
+
+            # Very bold tick marks for the small zoomed plot
+            plt.tick_params(axis='both', which='major', labelsize=18, width=2.5, length=8)
+
+            # Bold legend
+            zoom_legend = plt.legend(fontsize=16, loc='best', framealpha=0.95,
+                                    edgecolor='black', borderpad=1)
+
+            plt.tight_layout()
+
+            zoomed_plot_path_png = os.path.join(output_dir, "zoomed_pair_rmsd_vs_score.png")
+            zoomed_plot_path_svg = os.path.join(output_dir, "zoomed_pair_rmsd_vs_score.svg")  # Changed to SVG
+            plt.savefig(zoomed_plot_path_png, dpi=300)
+            plt.savefig(zoomed_plot_path_svg)
+            print(f"\nZoomed plot saved to {zoomed_plot_path_png} and {zoomed_plot_path_svg}")
+            plt.show()
+
+        # After plotting and saving main results, also save lowest-scoring structures
+        self.save_lowest_scoring_structures(df_results, best_coords_for_mag)
         return df_results
+
+    def save_lowest_scoring_structures(self,
+                                    df_results: pd.DataFrame,
+                                    best_coords_for_mag: Dict['float', Dict['str', np.ndarray]],
+                                    h5_filename: str = "lowest_scoring_structures_pair.h5",
+                                    csv_filename: str = "lowest_scoring_summary_pair.csv"):
+        """
+        Save the lowest-score structure per magnitude to HDF5,
+        and also output a CSV summarizing Magnitude, Score, RMSD.
+        Each magnitude-group's minimal entry from df_results is used.
+        """
+        import h5py
+
+        # 1) Find the row with the lowest Score for each magnitude in df_results
+        # Use idxmin() on the Score column directly - much simpler approach
+        idx_min = df_results.groupby('Magnitude')['Score'].idxmin()
+        lowest_rows = df_results.loc[idx_min]
+
+        # 2) Write each best coordinate set to one HDF5 file, keyed by "mag_XXXX"
+        os.makedirs('output_analysis/lowest_structures', exist_ok=True)
+        full_h5_path = os.path.join('output_analysis/lowest_structures', h5_filename)
+
+        with h5py.File(full_h5_path, 'w') as f:
+            for row in lowest_rows.itertuples():
+                mag = getattr(row, 'Magnitude')
+                coords_dict = best_coords_for_mag.get(mag, None)
+                if coords_dict is None:
+                    continue
+                group_name = f"magnitude_{mag:.3f}"
+                grp = f.create_group(group_name)
+                # Save each component as a dataset
+                for comp_name, arr in coords_dict.items():
+                    grp.create_dataset(comp_name, data=arr, compression="gzip", compression_opts=9)
+
+        # 3) Save a CSV with the minimal Score entries
+        #    containing Magnitude, Score, RMSD, etc.
+        csv_path = os.path.join('output_analysis/lowest_structures', csv_filename)
+        lowest_rows[['Magnitude', 'Score', 'RMSD']].to_csv(csv_path, index=False)
+
+        print(f"\nSaved lowest-scoring structures per magnitude to HDF5: {full_h5_path}")
+        print(f"Saved lowest-scoring summary CSV to: {csv_path}")
 
 
 if __name__ == "__main__":

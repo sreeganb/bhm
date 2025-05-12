@@ -52,7 +52,7 @@ class PerturbSystemParameters:
             exclusion_weight=1.0,
             pair_weight=1.0,
             tetramer_weight=1.0,
-            debug=False
+            debug=True
         )
         self.ideal_score = score_tuple[0]
         print(f"Initialized Ideal Structure: Score = {self.ideal_score:.4f}")
