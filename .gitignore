@@ -7,6 +7,15 @@
 *.gcno
 *.gcda
 *.rmf3
+*.aux
+*.pdf
+*.png
+*.bbl
+*.out
+*.blg
+*.svg
+*.txt
+*.log
 test/CMakeLists.txt
 src/CMakeLists.txt
 ModuleBuild.cmake

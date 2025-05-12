@@ -254,15 +254,13 @@ class PerturbSystemParameters:
                             score_threshold: Optional[float] = None,
                             exclusion_w: float = 1.0, pair_w: float = 1.0, tetramer_w: float = 1.0,
                             plot_means_only: bool = False,
-                            add_error_bars_to_mean_plot: bool = True
+                            add_error_bars_to_mean_plot: bool = True,
+                            max_rmsd_to_plot: float = 15.0  # <-- New parameter to limit RMSD in plots
                             ):
         sns.set_theme(context='notebook', style='whitegrid', palette='deep', font='sans-serif', font_scale=1.1)
         results = []
 
-        # Dictionary to track the best (lowest score) coords per magnitude
-        # Keys: magnitude (float), Value: dict of arrays = {component_name: coords}
         best_coords_for_mag = {}
-        # Additionally track the best (lowest) score per magnitude to compare each candidate
         best_score_for_mag = {}
 
         current_global_seed = base_seed
@@ -303,7 +301,6 @@ class PerturbSystemParameters:
                 )
                 score = score_vals[0]
 
-                # Check threshold
                 if score_threshold is not None and score > score_threshold:
                     print(f"  Skipped Pert {i+1} (Mag {mag:.3f}, Seed {current_perturb_seed}): Score {score:.2f} > threshold {score_threshold}.")
                     if self.log_high_score_details:
@@ -314,7 +311,6 @@ class PerturbSystemParameters:
                 rmsd = self.calculate_rmsd(perturbed_coords)
                 accuracy = 1.0 / (1.0 + rmsd) if rmsd != np.inf else 0
 
-                # Record to results
                 results.append({
                     'Magnitude': mag,
                     'Score': score,
@@ -325,7 +321,6 @@ class PerturbSystemParameters:
                     'TetramerScore': score_vals[3]
                 })
 
-                # Update best structure if this is the lowest score so far for this magnitude
                 if score < best_score_for_mag[mag]:
                     best_score_for_mag[mag] = score
                     best_coords_for_mag[mag] = perturbed_coords
@@ -354,7 +349,10 @@ class PerturbSystemParameters:
         if total_skipped_configs > 0:
             print(f"Total configurations skipped overall: {total_skipped_configs}")
 
-        summary_stats = df_results.groupby('Magnitude').agg(
+        # Filter to plot only RMSD <= max_rmsd_to_plot
+        df_results_for_plot = df_results[df_results['RMSD'] <= max_rmsd_to_plot]
+
+        summary_stats = df_results_for_plot.groupby('Magnitude').agg(
             mean_score=('Score', 'mean'), std_score=('Score', 'std'),
             mean_rmsd=('RMSD', 'mean'), std_rmsd=('RMSD', 'std'),
             mean_accuracy=('Accuracy', 'mean'), std_accuracy=('Accuracy', 'std'),
@@ -364,14 +362,14 @@ class PerturbSystemParameters:
         print("\nSummary Statistics per Magnitude (based on non-skipped configurations):")
         print(summary_stats)
 
-        # --- Plotting ---
-        # Setup figure for main plot - keep this large
-        fig_width = 12 
-        phi = (1 + np.sqrt(5)) / 2
-        fig_height = fig_width / phi
+        fig_width = 10
+        fig_height = 10
         plt.figure(figsize=(fig_width, fig_height))
-        
-        # Configure larger, bolder fonts
+
+        #fig_width = 12
+        #phi = (1 + np.sqrt(5)) / 2
+        #fig_height = fig_width / phi
+        #plt.figure(figsize=(fig_width, fig_height))
         plt.rcParams.update({
             'font.size': 14,
             'font.weight': 'bold',
@@ -384,86 +382,76 @@ class PerturbSystemParameters:
             'legend.fontsize': 14,
             'legend.title_fontsize': 16
         })
-        
-        plot_title = 'RMSD vs. Score for Tetramer Sampler'
+
+        # Removed plot title
         plot_filename_suffix = 'detailed'
 
         if plot_means_only:
-            plot_title = 'Mean RMSD vs. Mean Score (Error Bars: Std Dev)'
             plot_filename_suffix = 'means'
             if summary_stats.empty:
                 print("No summary statistics to plot for means. Skipping plot.")
-                return df_results 
-
+                return df_results
             plt.errorbar(summary_stats['mean_rmsd'], summary_stats['mean_score'],
-                         xerr=summary_stats['std_rmsd'] if add_error_bars_to_mean_plot else None,
-                         yerr=summary_stats['std_score'] if add_error_bars_to_mean_plot else None,
-                         fmt='-o', capsize=6, elinewidth=2, markeredgewidth=2,
-                         label='Mean Values (per Magnitude)', color='dodgerblue', 
-                         markerfacecolor='skyblue', markersize=12)
-            
-        else: 
-            # Single color and size for all perturbed structures
+                        xerr=summary_stats['std_rmsd'] if add_error_bars_to_mean_plot else None,
+                        yerr=summary_stats['std_score'] if add_error_bars_to_mean_plot else None,
+                        fmt='-o', capsize=6, elinewidth=2, markeredgewidth=2,
+                        label='Mean Values (per Magnitude)', color='dodgerblue',
+                        markerfacecolor='skyblue', markersize=12)
+        else:
             plt.scatter(
-                df_results['RMSD'], df_results['Score'],
-                color='blue', s=30, alpha=0.7, 
+                df_results_for_plot['RMSD'], df_results_for_plot['Score'],
+                color='blue', s=30, alpha=0.7,
                 label='Perturbed Structures'
             )
-        
-        # Plot the ground truth with red star
-        plt.scatter(
-            [self.ideal_rmsd], [self.ideal_score],
-            color='red', marker='*', s=400, edgecolor='black', linewidth=2,
-            label='Ground Truth', zorder=5
-        )
-        
-        plt.xlabel('RMSD ($\AA$)', fontsize=20, fontweight='bold')
-        plt.ylabel('Score (Negative Log Posterior)', fontsize=20, fontweight='bold')
-        plt.title(plot_title, fontsize=22, fontweight='bold', pad=15)
+
+        # Ground truth star
+        if self.ideal_rmsd <= max_rmsd_to_plot:
+            plt.scatter(
+                [self.ideal_rmsd], [self.ideal_score],
+                color='red', marker='*', s=400, edgecolor='black', linewidth=2,
+                label='Ground Truth', zorder=5
+            )
+
+        plt.xlabel('RMSD [$\\AA$]', fontsize=20, fontweight='bold')
+        plt.ylabel('Score [Negative Log Posterior]', fontsize=20, fontweight='bold')
         plt.grid(True, linestyle='-', alpha=0.3, linewidth=1.5)
-        
-        # Make tick marks bolder and larger
+
         plt.tick_params(axis='both', which='major', labelsize=16, width=2, length=6)
-        
-        # Customize legend
+
         legend = plt.legend(fontsize=16, loc='best', framealpha=0.9, edgecolor='black')
-        
+
         plt.tight_layout()
-        
-        # Save the main plot
+
         output_dir = 'output_analysis/accuracy_vs_score'
         os.makedirs(output_dir, exist_ok=True)
-        
+
         df_results.to_csv(os.path.join(output_dir, 'perturbation_analysis_results_raw.csv'), index=False)
         if plot_means_only and not summary_stats.empty:
             summary_stats.to_csv(os.path.join(output_dir, 'perturbation_analysis_summary_stats.csv'), index=False)
 
         plot_filename = os.path.join(output_dir, f'rmsd_vs_score_{plot_filename_suffix}_tetramer.png')
-        plot_filename_pdf = os.path.join(output_dir, f'rmsd_vs_score_{plot_filename_suffix}_tetramer.svg')  # Changed to SVG
-        
+        plot_filename_pdf = os.path.join(output_dir, f'rmsd_vs_score_{plot_filename_suffix}_tetramer.svg')
+
         plt.savefig(plot_filename, dpi=300)
         plt.savefig(plot_filename_pdf)
-        
         print(f"\nPlot saved to {plot_filename} and {plot_filename_pdf}")
         print(f"Raw results saved to {os.path.join(output_dir, 'perturbation_analysis_results_raw.csv')}")
         if plot_means_only and not summary_stats.empty:
             print(f"Summary statistics saved to {os.path.join(output_dir, 'perturbation_analysis_summary_stats.csv')}")
 
         plt.show()
-        
-        # --- Create a second "zoomed in" plot for RMSD in [0,2.0] ---
-        # ... existing zoomed plot setup code ...
-        
-        zoomed_df = df_results[df_results['RMSD'].between(0, 2.0)]
+
+        # Create a second "zoomed in" plot for RMSD in [0, 2.0]
+        zoomed_df = df_results_for_plot[df_results_for_plot['RMSD'].between(0, 2.0)]
         if zoomed_df.empty:
             print("No results with RMSD between 0 and 2.0, skipping zoomed plot.")
         else:
-            # Smaller figure but larger fonts for the zoomed plot
-            zoom_width = 8  # Smaller width
-            zoom_height = zoom_width / phi
+            zoom_width = 8
+            zoom_height = 8
             plt.figure(figsize=(zoom_width, zoom_height))
-            
-            # Even larger fonts for the smaller zoomed plot
+            #zoom_width = 8
+            #zoom_height = zoom_width / phi
+            #plt.figure(figsize=(zoom_width, zoom_height))
             plt.rcParams.update({
                 'font.size': 16,
                 'font.weight': 'bold',
@@ -476,15 +464,14 @@ class PerturbSystemParameters:
                 'legend.fontsize': 16,
                 'legend.title_fontsize': 18
             })
-            
-            # Create scatter plot with consistent marker size and color
+
+            # Removed plot title
             plt.scatter(
                 zoomed_df['RMSD'], zoomed_df['Score'],
                 color='blue', s=30, alpha=0.8,
                 label='Perturbed Structures'
             )
 
-            # Mark the ground truth if applicable
             if 0 <= self.ideal_rmsd <= 2.0:
                 plt.scatter(
                     [self.ideal_rmsd], [self.ideal_score],
@@ -492,30 +479,26 @@ class PerturbSystemParameters:
                     label='Ground Truth', zorder=10
                 )
 
-            plt.xlabel('RMSD ($\AA$)', fontsize=22, fontweight='bold')
-            plt.ylabel('Score (Negative Log Posterior)', fontsize=22, fontweight='bold')
-            plt.title("Zoomed RMSD ∈ [0, 2.0]", fontsize=24, fontweight='bold', pad=15)
+            plt.xlabel('RMSD [$\\AA$]', fontsize=22, fontweight='bold')
+            plt.ylabel('Score [Negative Log Posterior]', fontsize=22, fontweight='bold')
             plt.grid(True, linestyle='-', alpha=0.3, linewidth=1.5)
-            
-            # Very bold tick marks for the small zoomed plot
+
             plt.tick_params(axis='both', which='major', labelsize=18, width=2.5, length=8)
-            
-            # Bold legend
-            zoom_legend = plt.legend(fontsize=16, loc='best', framealpha=0.95, 
-                                     edgecolor='black', borderpad=1)
-            
+
+            zoom_legend = plt.legend(fontsize=16, loc='best', framealpha=0.95, edgecolor='black', borderpad=1)
+
             plt.tight_layout()
 
             zoomed_plot_path_png = os.path.join(output_dir, "zoomed_tetramer_rmsd_vs_score.png")
-            zoomed_plot_path_svg = os.path.join(output_dir, "zoomed_tetramer_rmsd_vs_score.svg")  # Changed to SVG
+            zoomed_plot_path_svg = os.path.join(output_dir, "zoomed_tetramer_rmsd_vs_score.svg")
             plt.savefig(zoomed_plot_path_png, dpi=300)
             plt.savefig(zoomed_plot_path_svg)
             print(f"\nZoomed plot saved to {zoomed_plot_path_png} and {zoomed_plot_path_svg}")
             plt.show()
 
-        # After plotting and saving main results, also save lowest-scoring structures
         self.save_lowest_scoring_structures(df_results, best_coords_for_mag)
         return df_results
+    # ...existing code below...
 
     def save_lowest_scoring_structures(self,
                                     df_results: pd.DataFrame,
