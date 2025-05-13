@@ -87,61 +87,92 @@ class ScoringSystem:
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     
     def calculate_score(
-        self,
-        pos: Dict[str, np.ndarray],  # input positions
-        sig: Dict[str, float],       # input sigma values
-        sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
-        excluded_pairs=None,
-        use_sigma_distribution=False,
-        prior_penalty_from_distribution=0.0
-    ) -> Tuple[float, float, float, float]:
-        """Calculate the log posterior for the pair-level interactions."""
-        # 1) Excluded volume contribution (from BaseMCSampler)
-        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
+            self,
+            pos: Dict[str, np.ndarray],  # input positions
+            sig: Dict[str, float],       # input sigma values
+            sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
+            excluded_pairs=None,
+            use_sigma_distribution=False,
+            prior_penalty_from_distribution=0.0,
+            debug=False,  # Whether to log detailed pair scoring info
+            debug_file="pair_score_debug.csv"  # File to write debug info to
+        ) -> Tuple[float, float, float, float]:
+            """Calculate the log posterior for the pair-level interactions."""
+            # Setup debug file if requested
+            if debug:
+                debug_fh = open(debug_file, 'w')
+                debug_fh.write("Pair Type, Particle1 Type, Particle1 Index, Particle2 Type, Particle2 Index, Distance, Target Distance, Sigma, Score\n")
+            else:
+                debug_fh = None
+                
+            # 1) Excluded volume contribution (from BaseMCSampler)
+            exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
 
-        # 2) Pairwise negative log-likelihood (pair-specific)
-        pairwise_score = 0.0
-        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
-        for type1, type2 in pair_types:
-            pair_key = f"{type1}{type2}"
-            if pair_key in self.params.pair_distances:
-                target_dist = self.params.pair_distances[pair_key]
-                sigma_value = sig[pair_key]  # Use the passed sigma
+            # 2) Pairwise negative log-likelihood (pair-specific)
+            pairwise_score = 0.0
+            #pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
+            pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]  # Define standard pair types
+            for type1, type2 in pair_types:
+                pair_key = f"{type1}{type2}"
+                if pair_key in self.params.pair_distances:
+                    target_dist = self.params.pair_distances[pair_key]
+                    sigma_value = sig[pair_key]  # Use the passed sigma
 
-                # Calculate pairwise score matrix
-                score_matrix = self.calculate_pair_scores_matrix(
-                    pos[type1],
-                    pos[type2],
-                    target_dist,
-                    sigma_value
-                )
+                    # Calculate pairwise score matrix
+                    score_matrix = self.calculate_pair_scores_matrix(
+                        pos[type1],
+                        pos[type2],
+                        target_dist,
+                        sigma_value
+                    )
+                    
+                    # For debugging, calculate the actual distances between particles
+                    if debug_fh:
+                        distance_matrix = cdist(pos[type1], pos[type2])
+                        
+                    # Mask the lower triangle and diagonal to avoid self-interactions and duplicates
+                    if type1 == type2:
+                        #just fill inf on the diagonal
+                        #score_matrix[np.diag_indices_from(score_matrix)] = np.inf
+                        score_matrix[np.tril_indices_from(score_matrix)] = np.inf
 
-                # Mask diagonal (for same-type pairs)
-                if type1 == type2:
-                    mask = np.triu(np.ones_like(score_matrix), k=1)
-                    score_matrix *= mask
+                    # Zero out excluded pairs if provided
+                    if excluded_pairs:
+                        for i in range(len(pos[type1])):
+                            for j in range(len(pos[type2])):
+                                if (type1, i, type2, j) in excluded_pairs:
+                                    score_matrix[i, j] = np.inf
 
-                # Zero out excluded pairs if provided
-                if excluded_pairs:
-                    for i in range(len(pos[type1])):
-                        for j in range(len(pos[type2])):
-                            if (type1, i, type2, j) in excluded_pairs:
-                                score_matrix[i, j] = np.inf
+                    # Find the minimum elements for each row and column
+                    row_indices = np.argmin(score_matrix, axis=1)
+                    col_indices = np.argmin(score_matrix, axis=0)
 
-                # Identify minimal row/column pairs and accumulate the score
-                row_indices = np.argmin(score_matrix, axis=1)
-                col_indices = np.argmin(score_matrix, axis=0)
-                row_pairs = {(i, row_indices[i]) for i in range(len(row_indices))}
-                col_pairs = {(col_indices[j], j) for j in range(len(col_indices))}
-                unique_pairs = row_pairs.union(col_pairs)
-                for i, j in unique_pairs:
-                    pairwise_score += self.pair_weight * score_matrix[i, j]
+                    # Create sets of unique pairs from rows and columns
+                    row_pairs = {(i, row_indices[i]) for i in range(len(row_indices)) if np.isfinite(score_matrix[i, row_indices[i]])}
+                    col_pairs = {(col_indices[j], j) for j in range(len(col_indices)) if np.isfinite(score_matrix[col_indices[j], j])}
+                    unique_pairs = row_pairs.union(col_pairs)
 
-        # 3) Prior penalty: if not using the sigma distribution, compute using Priors.
-        prior_penalty = 0.0
+                    # Log debug information for each unique pair that contributes to the score
+                    if debug_fh:
+                        for i, j in unique_pairs:
+                            distance = distance_matrix[i, j]
+                            pair_score = self.pair_weight * score_matrix[i, j]
+                            debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
 
-        total_score = exclusion_score + pairwise_score + prior_penalty
-        return total_score, exclusion_score, pairwise_score, prior_penalty
+                    # Accumulate scores
+                    for i, j in unique_pairs:
+                        pairwise_score += self.pair_weight * score_matrix[i, j]
+
+            # 3) Prior penalty: if not using the sigma distribution, compute using Priors.
+            prior_penalty = 0.0
+
+            # Clean up debug file if opened
+            if debug_fh:
+                debug_fh.close()
+                print(f"Particle pairing debug information written to {debug_file}")
+
+            total_score = exclusion_score + pairwise_score + prior_penalty
+            return total_score, exclusion_score, pairwise_score, prior_penalty
     
 
 if __name__ == "__main__":
@@ -163,15 +194,14 @@ if __name__ == "__main__":
     # 2. Create ScoringSystem instance
     scorer = ScoringSystem(system_params=sp, exclusion_weight=1.0, pair_weight=1.0, prior_type='jeffreys')
     print(f"ScoringSystem initialized with prior type: {scorer.priors.prior_type}")
-    example_sig = {"AA": 6.0, "AB": 1.0, "BC": 1.0, "CC": 6.0}
+    example_sig = {"AA": 3.0, "AB": 2.0, "BC": 1.0, "CC": 1.5}
     example_sig_range = {"AA": (0.01, 10.0), "AB": (0.01, 10.0), "BC": (0.01, 10.0), "CC": (0.01, 10.0)}
     # 6. Calculate score
     print("\nCalculating score with debug_pairs=True...")
     total_score, exclusion_s, pairwise_s, prior_s = scorer.calculate_score(
         pos=sp.ideal_coordinates,
         sig=example_sig,
-        sig_range=example_sig_range,
-        step=1 # Example step number
+        sig_range=example_sig_range
     )
 
     print("\n--- Final Score Components ---")

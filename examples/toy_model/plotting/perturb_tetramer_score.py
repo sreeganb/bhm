@@ -25,7 +25,7 @@ class PerturbSystemParameters:
     min_dists: Dict[Tuple[str, str], float] = field(default_factory=dict)
     
     #fixed_sigma: Dict[str, float] = field(default_factory=lambda: {'AA': 0.2025, 'AB': 0.5, 'BC': 0.5, 'CC': 0.2822})
-    fixed_sigma: Dict[str, float] = field(default_factory=lambda: {'AA': 0.75, 'AB': 0.45, 'BC': 0.35, 'CC': 0.65})
+    fixed_sigma: Dict[str, float] = field(default_factory=lambda: {'AA': 1.5, 'AB': 0.9, 'BC': 0.8, 'CC': 1.0})
 
     tscorer: TetramerScorer = field(default_factory=TetramerScorer)
     tets_ideal: Dict = field(default_factory=dict)

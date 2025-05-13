@@ -401,7 +401,7 @@ class PerturbSystemParameters:
             label='Ground Truth', zorder=5
         )
 
-        plt.xlabel('RMSD ($\AA$)', fontsize=20, fontweight='bold')
+        plt.xlabel(r'RMSD ($\AA$)', fontsize=20, fontweight='bold')
         plt.ylabel('Score (Negative Log Posterior)', fontsize=20, fontweight='bold')
         plt.title(plot_title, fontsize=22, fontweight='bold', pad=15)
         plt.grid(True, linestyle='-', alpha=0.3, linewidth=1.5)
@@ -461,7 +461,7 @@ class PerturbSystemParameters:
                     label='Ground Truth', zorder=10
                 )
 
-            plt.xlabel('RMSD ($\AA$)', fontsize=22, fontweight='bold')
+            plt.xlabel(r'RMSD ($\AA$)', fontsize=22, fontweight='bold')
             plt.ylabel('Score (Negative Log Posterior)', fontsize=22, fontweight='bold')
             plt.title("Zoomed RMSD ∈ [0, 2.0]", fontsize=24, fontweight='bold', pad=15)
             plt.grid(True, linestyle='-', alpha=0.3, linewidth=1.5)

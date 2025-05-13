@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from typing import Dict
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
 #from generate_coordinates import find_min_distance, scale_for_zero_overlap
 
 @dataclass
 class SystemParameters:
-    box_size: float = 2000.0
+    box_size: float = 600.0
     radii: Dict[str, float] = None
     pair_distances: Dict[str, float] = None
     component_counts: Dict[str, int] = None
@@ -17,19 +18,19 @@ class SystemParameters:
 
     def __post_init__(self):
         if self.radii is None:
-            self.radii = {'A': 20.0, 'B': 16.0, 'C': 18.0}
+            self.radii = {'A': 24.0, 'B': 14.0, 'C': 16.0}
         if self.pair_distances is None:
             self.pair_distances = {
-                'AA': 40.5,
-                'AB': 36.5,
-                'BC': 34.5,  # minimum allowed C-C distance
-                #'CC': 36.5   # note: with the following placement BC bonds won’t be exactly this long!
-                'CC': 56.5   # note: with the following placement BC bonds won’t be exactly this long!
+                'AA': 50.5,
+                'AB': 38.5,
+                'BC': 30.5,  # minimum allowed C-C distance
+                'CC': 33.5   # note: with the following placement BC bonds won’t be exactly this long!
             }
         if self.component_counts is None:
             self.component_counts = {'A': 8, 'B': 8, 'C': 16}
         if self.ideal_coordinates is None:
             self.ideal_coordinates = self.new_generate_ideal_coordinates()
+            #self.ideal_coordinates = self.torch_ideal_coords()
 
     def new_generate_ideal_coordinates(self, tol: float = 0.5) -> Dict[str, np.ndarray]:
         """
@@ -55,14 +56,14 @@ class SystemParameters:
 
         # Number of tetramers (placed at the vertices of an octagon)
         N = 8  
-        R_A = 80.0   # radius at which A and B are placed in the xy-plane
+        R_A = 65.5   # radius at which A and B are placed in the xy-plane
 
         # Set distances based on non-overlap plus tolerance.
         AB_distance = rA + rB + tol      # e.g. 20 + 16 + 0.5 = 36.5
         BC_distance = rB + rC + tol      # e.g. 16 + 18 + 0.5 = 34.5
 
         # Vertical drop between B and C centers.
-        vertical_drop = 20.0  # chosen value; adjust as needed.
+        vertical_drop = 25.5  # chosen value; adjust as needed.
         # Compute horizontal displacement delta such that:
         # sqrt(delta^2 + vertical_drop^2) = BC_distance
         delta = np.sqrt(BC_distance**2 - vertical_drop**2)
