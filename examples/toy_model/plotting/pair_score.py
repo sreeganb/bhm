@@ -94,7 +94,7 @@ class ScoringSystem:
             excluded_pairs=None,
             use_sigma_distribution=False,
             prior_penalty_from_distribution=0.0,
-            debug=False,  # Whether to log detailed pair scoring info
+            debug=True,  # Whether to log detailed pair scoring info
             debug_file="pair_score_debug.csv"  # File to write debug info to
         ) -> Tuple[float, float, float, float]:
             """Calculate the log posterior for the pair-level interactions."""
@@ -110,8 +110,8 @@ class ScoringSystem:
 
             # 2) Pairwise negative log-likelihood (pair-specific)
             pairwise_score = 0.0
-            #pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
-            pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]  # Define standard pair types
+            pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
+            #pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]  # Define standard pair types
             for type1, type2 in pair_types:
                 pair_key = f"{type1}{type2}"
                 if pair_key in self.params.pair_distances:
@@ -146,6 +146,7 @@ class ScoringSystem:
                     # Find the minimum elements for each row and column
                     row_indices = np.argmin(score_matrix, axis=1)
                     col_indices = np.argmin(score_matrix, axis=0)
+                    print(f"Row indices: {row_indices}, Column indices: {col_indices}")
 
                     # Create sets of unique pairs from rows and columns
                     row_pairs = {(i, row_indices[i]) for i in range(len(row_indices)) if np.isfinite(score_matrix[i, row_indices[i]])}
