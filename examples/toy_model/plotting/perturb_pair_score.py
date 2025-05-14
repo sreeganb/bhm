@@ -30,7 +30,7 @@ class PerturbSystemParameters:
     # Scoring related attributes from your first script's __init__
     scalc: Optional[ScoringSystem] = None # Will be initialized in __post_init__
     #fixed_sigma_for_scoring: Dict[str, float] = field(default_factory=lambda: {'AA': 0.2025, 'AB': 0.5, 'BC': 0.5, 'CC': 0.2822})
-    fixed_sigma_for_scoring: Dict[str, float] = field(default_factory=lambda: {'AA': 0.7, 'AB': 0.75, 'BC': 0.35, 'CC': 0.65})
+    fixed_sigma_for_scoring: Dict[str, float] = field(default_factory=lambda: {'AA': 3.0, 'AB': 2.0, 'BC': 1.0, 'CC': 1.5})
     sig_range_for_scoring: Dict[str, Tuple[float, float]] = field(default_factory=lambda: {"AA": (0.01, 10.0), "AB": (0.01, 10.0), "BC": (0.01, 10.0), "CC": (0.01, 10.0)})
 
     ideal_score: float = 0.0
@@ -487,12 +487,12 @@ class PerturbSystemParameters:
 if __name__ == "__main__":
     # --- Configuration for the analysis (similar to newer script) ---
     magnitudes_to_test = np.concatenate([
-        np.linspace(0.05, 0.5, 2), # Start with smaller magnitudes
-        np.linspace(0.6, 2.5, 2),
-        np.linspace(2.6, 30.0, 2)  # Max magnitude from your old script's linspace
+        np.linspace(0.05, 0.5, 10), # Start with smaller magnitudes
+        np.linspace(0.6, 2.5, 10),
+        np.linspace(2.6, 30.0, 10)  # Max magnitude from your old script's linspace
     ])
     # num_perturbations_per_mag from your old script was 20, new script example was 50. Using 20.
-    num_perturbations_per_mag = 2 
+    num_perturbations_per_mag = 10 
 
     # --- Parameters for Overlap Resolution and Scoring ---
     max_iters_overlap = 5000    # Increased from original 1000, tunable

@@ -84,7 +84,7 @@ class ScoringSystem:
     def calculate_pair_scores_matrix(self, pos1: np.ndarray, pos2: np.ndarray, target_dist: float, sigma: float) -> np.ndarray:
         """Vectorized calculation of pair scores between two sets of positions."""
         distances = cdist(pos1, pos2)
-        print(f"Distances between {pos1.shape[0]} and {pos2.shape[0]} particles:\n{distances}")
+        #print(f"Distances between {pos1.shape[0]} and {pos2.shape[0]} particles:\n{distances}")
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     
     def calculate_score(
@@ -95,7 +95,7 @@ class ScoringSystem:
             excluded_pairs=None,
             use_sigma_distribution=False,
             prior_penalty_from_distribution=0.0,
-            debug=True,  # Whether to log detailed pair scoring info
+            debug=False,  # Whether to log detailed pair scoring info
             debug_file="pair_score_debug.csv"  # File to write debug info to
         ) -> Tuple[float, float, float, float]:
             """Calculate the log posterior for the pair-level interactions."""
@@ -112,7 +112,6 @@ class ScoringSystem:
             # 2) Pairwise negative log-likelihood (pair-specific)
             pairwise_score = 0.0
             pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
-            #pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]  # Define standard pair types
             for type1, type2 in pair_types:
                 pair_key = f"{type1}{type2}"
                 if pair_key in self.params.pair_distances:
@@ -131,105 +130,39 @@ class ScoringSystem:
                     if debug_fh:
                         distance_matrix = cdist(pos[type1], pos[type2])
                         
-                    #-----------------------------------------------------------
-                    # Rewriting the scoring function to accomodate for particle pair
-                    # double counting explicity, iterate through the minimum for 
-                    # each row and column of the score matrix, once you find the minimum
-                    # element for a row and its index as (i,j) then make the element (j,i) inf
-                    # then iterate through all the rows, once that is done, start with column 1
-                    # find its minimum and its index (j,i) and make the element (i,j) inf and so on
-                    #-----------------------------------------------------------
+                    # Mask the lower triangle and diagonal to avoid self-interactions and duplicates
                     if type1 == type2:
-                        np.set_printoptions(precision=1, suppress=True, linewidth=120)
-                        print(f"Score matrix for {pair_key}:\n{score_matrix}")
-                        
-                        # make the diagonal of the score matrix inf
-                        score_matrix[np.diag_indices_from(score_matrix)] = np.inf
-                        
-                        # Zero out excluded pairs if provided
-                        if excluded_pairs:
-                            for i in range(len(pos[type1])):
-                                for j in range(len(pos[type2])):
-                                    if (type1, i, type2, j) in excluded_pairs:
-                                        score_matrix[i, j] = np.inf
-
-                        # First iterate through rows
-                        for i in range(len(score_matrix)):
-                            # Skip if row is all inf
-                            if np.all(np.isinf(score_matrix[i])):
-                                continue
-                            # Find minimum element and its index
-                            min_index = np.argmin(score_matrix[i])
-                            # Set the transpose element to inf
-                            score_matrix[min_index, i] = np.inf
-
-                        # Then iterate through columns
-                        for j in range(score_matrix.shape[1]):
-                            # Skip if column is all inf
-                            if np.all(np.isinf(score_matrix[:, j])):
-                                continue
-                            # Find minimum element and its index
-                            min_index = np.argmin(score_matrix[:, j])
-                            # Set the transpose element to inf
-                            score_matrix[j, min_index] = np.inf
-                            
+                        #just fill inf on the diagonal
+                        #score_matrix[np.diag_indices_from(score_matrix)] = np.inf
+                        score_matrix[np.tril_indices_from(score_matrix)] = np.inf
+                        # print the full score matrix for debugging
                         # write it out in a nice format
-                        
-                        print(f"Score matrix for {pair_key}:\n{score_matrix}")
-                        
-                    # find the minimum indices of each row and column of this resultant matrix
+                        np.set_printoptions(precision=1, suppress=True, linewidth=120)
+                        #print(f"Score matrix for {pair_key}:\n{score_matrix}")
+
+                    # Zero out excluded pairs if provided
+                    if excluded_pairs:
+                        for i in range(len(pos[type1])):
+                            for j in range(len(pos[type2])):
+                                if (type1, i, type2, j) in excluded_pairs:
+                                    score_matrix[i, j] = np.inf
+
+                    # Find the minimum elements for each row and column
                     row_indices = np.argmin(score_matrix, axis=1)
                     col_indices = np.argmin(score_matrix, axis=0)
-                    # now create a unition of unique pairs from the row and column indices
-                    # this will give us the unique pairs of particles that are contributing to the score
-                    # Union of unique pairs
-                    unique_pairs = set()
-                    for i, j in enumerate(row_indices):
-                        unique_pairs.add((i, j))
-                    for j, i in enumerate(col_indices):
-                        unique_pairs.add((i, j))
-                    
+                    #print(f"Row indices: {row_indices}, Column indices: {col_indices}")
+
+                    # Create sets of unique pairs from rows and columns
+                    row_pairs = {(i, row_indices[i]) for i in range(len(row_indices)) if np.isfinite(score_matrix[i, row_indices[i]])}
+                    col_pairs = {(col_indices[j], j) for j in range(len(col_indices)) if np.isfinite(score_matrix[col_indices[j], j])}
+                    unique_pairs = row_pairs.union(col_pairs)
+
                     # Log debug information for each unique pair that contributes to the score
                     if debug_fh:
                         for i, j in unique_pairs:
                             distance = distance_matrix[i, j]
                             pair_score = self.pair_weight * score_matrix[i, j]
                             debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
-                    #------------------------------------------------------------
-                        
-                    # Mask the lower triangle and diagonal to avoid self-interactions and duplicates
-#                    if type1 == type2:
-#                        #just fill inf on the diagonal
-#                        score_matrix[np.diag_indices_from(score_matrix)] = np.inf
-#                        #score_matrix[np.tril_indices_from(score_matrix)] = np.inf
-#                        # print the full score matrix for debugging
-#                        # write it out in a nice format
-#                        np.set_printoptions(precision=1, suppress=True, linewidth=120)
-#                        print(f"Score matrix for {pair_key}:\n{score_matrix}")
-#
-#                    # Zero out excluded pairs if provided
-#                    if excluded_pairs:
-#                        for i in range(len(pos[type1])):
-#                            for j in range(len(pos[type2])):
-#                                if (type1, i, type2, j) in excluded_pairs:
-#                                    score_matrix[i, j] = np.inf
-#
-#                    # Find the minimum elements for each row and column
-#                    row_indices = np.argmin(score_matrix, axis=1)
-#                    col_indices = np.argmin(score_matrix, axis=0)
-#                    print(f"Row indices: {row_indices}, Column indices: {col_indices}")
-#
-#                    # Create sets of unique pairs from rows and columns
-#                    row_pairs = {(i, row_indices[i]) for i in range(len(row_indices)) if np.isfinite(score_matrix[i, row_indices[i]])}
-#                    col_pairs = {(col_indices[j], j) for j in range(len(col_indices)) if np.isfinite(score_matrix[col_indices[j], j])}
-#                    unique_pairs = row_pairs.union(col_pairs)
-#
-#                    # Log debug information for each unique pair that contributes to the score
-#                    if debug_fh:
-#                        for i, j in unique_pairs:
-#                            distance = distance_matrix[i, j]
-#                            pair_score = self.pair_weight * score_matrix[i, j]
-#                            debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
 
                     # Accumulate scores
                     for i, j in unique_pairs:
@@ -273,8 +206,52 @@ if __name__ == "__main__":
     example_sig_range = {"AA": (0.01, 10.0), "AB": (0.01, 10.0), "BC": (0.01, 10.0), "CC": (0.01, 10.0)}
     # 6. Calculate score
     print("\nCalculating score with debug_pairs=True...")
+    
+    id_coords = {'A': np.array([[ 63.  ,   0.  ,   0.  ],
+       [ 44.55,  44.55,   0.  ],
+       [  0.  ,  63.  ,   0.  ],
+       [-44.55,  44.55,   0.  ],
+       [-63.  ,   0.  ,   0.  ],
+       [-44.55, -44.55,   0.  ],
+       [ -0.  , -63.  ,   0.  ],
+       [ 44.55, -44.55,   0.  ]]), 'B': np.array([[ 63.  ,   0.  , -38.5 ],
+       [ 44.55,  44.55, -38.5 ],
+       [  0.  ,  63.  , -38.5 ],
+       [-44.55,  44.55, -38.5 ],
+       [-63.  ,   0.  , -38.5 ],
+       [-44.55, -44.55, -38.5 ],
+       [ -0.  , -63.  , -38.5 ],
+       [ 44.55, -44.55, -38.5 ]]), 
+     'C': np.array([
+       [ 47.00,   0.00, -68.50],
+       [ 79.00,   0.00, -68.50],
+       
+       [ 55.86,  55.86, -68.50],
+       [ 33.23,  33.23, -68.50],
+       
+       [  0.00,  47.00, -68.50],
+       [  0.00,  79.00, -68.50],
+       
+       [-55.86,  55.86, -68.50],
+       [-33.23,  33.23, -68.50],
+       
+       [-47.00,   0.00, -68.50],
+       [-79.00,   0.00, -68.50],
+       
+       [-55.86, -55.86, -68.50],
+       [-33.23, -33.23, -68.50],
+       
+       [  0.00, -47.00, -68.50],
+       [  0.00, -79.00, -68.50],
+       
+       [ 55.86, -55.86, -68.50],
+       [ 33.23, -33.23, -68.50],
+])}
+
+
     total_score, exclusion_s, pairwise_s, prior_s = scorer.calculate_score(
-        pos=sp.ideal_coordinates,
+        #pos=sp.ideal_coordinates,
+        pos=id_coords,
         sig=example_sig,
         sig_range=example_sig_range
     )

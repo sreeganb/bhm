@@ -548,7 +548,7 @@ if __name__ == "__main__":
         np.linspace(0.6, 2.5, 15),
         np.linspace(2.6, 5.0, 10) 
     ])
-    num_perturbations_per_mag = 50
+    num_perturbations_per_mag = 10
 
     # --- CRITICAL PARAMETERS FOR SKIPPED CONFIGURATIONS ---
     # 1. Overlap Resolution Parameters (passed to PerturbSystemParameters)

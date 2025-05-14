@@ -220,7 +220,7 @@ class TetramerScorer:
         unique_pairs = len(tetramer_pairs)
         expected_pairs = len(tetramers) * 4
         
-        tetramer_pairs = None
+        #tetramer_pairs = None
         # 2) Calculate score excluding tetramer pairs
         result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
