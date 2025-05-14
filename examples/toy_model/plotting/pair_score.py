@@ -130,42 +130,111 @@ class ScoringSystem:
                     if debug_fh:
                         distance_matrix = cdist(pos[type1], pos[type2])
                         
-                    # Mask the lower triangle and diagonal to avoid self-interactions and duplicates
+                    #-----------------------------------------------------------
+                    # Rewriting the scoring function to accomodate for particle pair
+                    # double counting explicity, iterate through the minimum for 
+                    # each row and column of the score matrix, once you find the minimum
+                    # element for a row and its index as (i,j) then make the element (j,i) inf
+                    # then iterate through all the rows, once that is done, start with column 1
+                    # find its minimum and its index (j,i) and make the element (i,j) inf and so on
+                    #-----------------------------------------------------------
                     if type1 == type2:
-                        #just fill inf on the diagonal
-                        #score_matrix[np.diag_indices_from(score_matrix)] = np.inf
-                        score_matrix[np.tril_indices_from(score_matrix)] = np.inf
+                        # make the diagonal of the score matrix inf
+                        score_matrix[np.diag_indices_from(score_matrix)] = np.inf
+                        # Zero out excluded pairs if provided
+                        if excluded_pairs:
+                            for i in range(len(pos[type1])):
+                                for j in range(len(pos[type2])):
+                                    if (type1, i, type2, j) in excluded_pairs:
+                                        score_matrix[i, j] = np.inf
 
-                    # Zero out excluded pairs if provided
-                    if excluded_pairs:
-                        for i in range(len(pos[type1])):
-                            for j in range(len(pos[type2])):
-                                if (type1, i, type2, j) in excluded_pairs:
-                                    score_matrix[i, j] = np.inf
+                        # First iterate through rows
+                        for i in range(len(score_matrix)):
+                            # Skip if row is all inf
+                            if np.all(np.isinf(score_matrix[i])):
+                                continue
+                            # Find minimum element and its index
+                            min_index = np.argmin(score_matrix[i])
+                            # Set the transpose element to inf
+                            score_matrix[min_index, i] = np.inf
 
-                    # Find the minimum elements for each row and column
+                        # Then iterate through columns
+                        for j in range(score_matrix.shape[1]):
+                            # Skip if column is all inf
+                            if np.all(np.isinf(score_matrix[:, j])):
+                                continue
+                            # Find minimum element and its index
+                            min_index = np.argmin(score_matrix[:, j])
+                            # Set the transpose element to inf
+                            score_matrix[j, min_index] = np.inf
+                            
+                        # write it out in a nice format
+                        np.set_printoptions(precision=1, suppress=True, linewidth=120)
+                        print(f"Score matrix for {pair_key}:\n{score_matrix}")
+                        
+                    # find the minimum indices of each row and column of this resultant matrix
                     row_indices = np.argmin(score_matrix, axis=1)
                     col_indices = np.argmin(score_matrix, axis=0)
-                    print(f"Row indices: {row_indices}, Column indices: {col_indices}")
-
-                    # Create sets of unique pairs from rows and columns
-                    row_pairs = {(i, row_indices[i]) for i in range(len(row_indices)) if np.isfinite(score_matrix[i, row_indices[i]])}
-                    col_pairs = {(col_indices[j], j) for j in range(len(col_indices)) if np.isfinite(score_matrix[col_indices[j], j])}
-                    unique_pairs = row_pairs.union(col_pairs)
-
+                    # now create a unition of unique pairs from the row and column indices
+                    # this will give us the unique pairs of particles that are contributing to the score
+                    # Union of unique pairs
+                    unique_pairs = set()
+                    for i, j in enumerate(row_indices):
+                        unique_pairs.add((i, j))
+                    for j, i in enumerate(col_indices):
+                        unique_pairs.add((i, j))
+                    
                     # Log debug information for each unique pair that contributes to the score
                     if debug_fh:
                         for i, j in unique_pairs:
                             distance = distance_matrix[i, j]
                             pair_score = self.pair_weight * score_matrix[i, j]
                             debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
+                    #------------------------------------------------------------
+                        
+                    # Mask the lower triangle and diagonal to avoid self-interactions and duplicates
+#                    if type1 == type2:
+#                        #just fill inf on the diagonal
+#                        score_matrix[np.diag_indices_from(score_matrix)] = np.inf
+#                        #score_matrix[np.tril_indices_from(score_matrix)] = np.inf
+#                        # print the full score matrix for debugging
+#                        # write it out in a nice format
+#                        np.set_printoptions(precision=1, suppress=True, linewidth=120)
+#                        print(f"Score matrix for {pair_key}:\n{score_matrix}")
+#
+#                    # Zero out excluded pairs if provided
+#                    if excluded_pairs:
+#                        for i in range(len(pos[type1])):
+#                            for j in range(len(pos[type2])):
+#                                if (type1, i, type2, j) in excluded_pairs:
+#                                    score_matrix[i, j] = np.inf
+#
+#                    # Find the minimum elements for each row and column
+#                    row_indices = np.argmin(score_matrix, axis=1)
+#                    col_indices = np.argmin(score_matrix, axis=0)
+#                    print(f"Row indices: {row_indices}, Column indices: {col_indices}")
+#
+#                    # Create sets of unique pairs from rows and columns
+#                    row_pairs = {(i, row_indices[i]) for i in range(len(row_indices)) if np.isfinite(score_matrix[i, row_indices[i]])}
+#                    col_pairs = {(col_indices[j], j) for j in range(len(col_indices)) if np.isfinite(score_matrix[col_indices[j], j])}
+#                    unique_pairs = row_pairs.union(col_pairs)
+#
+#                    # Log debug information for each unique pair that contributes to the score
+#                    if debug_fh:
+#                        for i, j in unique_pairs:
+#                            distance = distance_matrix[i, j]
+#                            pair_score = self.pair_weight * score_matrix[i, j]
+#                            debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
 
                     # Accumulate scores
                     for i, j in unique_pairs:
                         pairwise_score += self.pair_weight * score_matrix[i, j]
 
-            # 3) Prior penalty: if not using the sigma distribution, compute using Priors.
-            prior_penalty = 0.0
+            # 3) Prior penalty: if not using the sigma distribution, compute using Priors
+            if not use_sigma_distribution:
+                prior_penalty = self.priors.neg_log_prior(sig, sig_range)
+            else:
+                prior_penalty = prior_penalty_from_distribution
 
             # Clean up debug file if opened
             if debug_fh:

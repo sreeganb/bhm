@@ -64,8 +64,6 @@ class PerturbSystemParameters:
         self.ideal_rmsd = 0.0     # By definition
         print(f"Initialized Ideal Structure: Score = {self.ideal_score:.4f}")
 
-# ...existing code above...
-
     def _check_final_overlaps(self, current_coords: Dict[str, np.ndarray], print_details: bool = False) -> bool:
         """Helper to check for overlaps and optionally print details."""
         final_overlap_exists = False
@@ -489,12 +487,12 @@ class PerturbSystemParameters:
 if __name__ == "__main__":
     # --- Configuration for the analysis (similar to newer script) ---
     magnitudes_to_test = np.concatenate([
-        np.linspace(0.05, 0.5, 5), # Start with smaller magnitudes
-        np.linspace(0.6, 2.5, 15),
-        np.linspace(2.6, 30.0, 40)  # Max magnitude from your old script's linspace
+        np.linspace(0.05, 0.5, 2), # Start with smaller magnitudes
+        np.linspace(0.6, 2.5, 2),
+        np.linspace(2.6, 30.0, 2)  # Max magnitude from your old script's linspace
     ])
     # num_perturbations_per_mag from your old script was 20, new script example was 50. Using 20.
-    num_perturbations_per_mag = 20 
+    num_perturbations_per_mag = 2 
 
     # --- Parameters for Overlap Resolution and Scoring ---
     max_iters_overlap = 5000    # Increased from original 1000, tunable
