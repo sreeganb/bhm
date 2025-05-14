@@ -84,6 +84,7 @@ class ScoringSystem:
     def calculate_pair_scores_matrix(self, pos1: np.ndarray, pos2: np.ndarray, target_dist: float, sigma: float) -> np.ndarray:
         """Vectorized calculation of pair scores between two sets of positions."""
         distances = cdist(pos1, pos2)
+        print(f"Distances between {pos1.shape[0]} and {pos2.shape[0]} particles:\n{distances}")
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     
     def calculate_score(
@@ -139,8 +140,12 @@ class ScoringSystem:
                     # find its minimum and its index (j,i) and make the element (i,j) inf and so on
                     #-----------------------------------------------------------
                     if type1 == type2:
+                        np.set_printoptions(precision=1, suppress=True, linewidth=120)
+                        print(f"Score matrix for {pair_key}:\n{score_matrix}")
+                        
                         # make the diagonal of the score matrix inf
                         score_matrix[np.diag_indices_from(score_matrix)] = np.inf
+                        
                         # Zero out excluded pairs if provided
                         if excluded_pairs:
                             for i in range(len(pos[type1])):
@@ -169,7 +174,7 @@ class ScoringSystem:
                             score_matrix[j, min_index] = np.inf
                             
                         # write it out in a nice format
-                        np.set_printoptions(precision=1, suppress=True, linewidth=120)
+                        
                         print(f"Score matrix for {pair_key}:\n{score_matrix}")
                         
                     # find the minimum indices of each row and column of this resultant matrix
