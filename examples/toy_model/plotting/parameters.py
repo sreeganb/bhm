@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Dict
 import numpy as np
 import matplotlib.pyplot as plt
-import torch
 #from generate_coordinates import find_min_distance, scale_for_zero_overlap
 
 @dataclass
