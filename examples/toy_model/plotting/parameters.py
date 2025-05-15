@@ -20,11 +20,20 @@ class SystemParameters:
             self.radii = {'A': 24.0, 'B': 14.0, 'C': 16.0}
         if self.pair_distances is None:
             self.pair_distances = {
-                'AA': 49.5,
-                'AB': 39.5,
-                'BC': 31.5,  # minimum allowed C-C distance
-                'CC': 33.5   # note: with the following placement BC bonds won’t be exactly this long!
+                'AA': 48.22,
+                'AB': 38.5,
+                'BC': 34.0,  # minimum allowed C-C distance
+                'CC': 32.0   # note: with the following placement BC bonds won’t be exactly this long!
             }
+#        if self.radii is None:
+#            self.radii = {'A': 40.0, 'B': 10.0, 'C': 16.0}
+#        if self.pair_distances is None:
+#            self.pair_distances = {
+#                'AA': 80.0,
+#                'AB': 50.1,
+#                'BC': 26.1,  # minimum allowed C-C distance
+#                'CC': 32.5   # note: with the following placement BC bonds won’t be exactly this long!
+#            }
         if self.component_counts is None:
             self.component_counts = {'A': 8, 'B': 8, 'C': 16}
         if self.ideal_coordinates is None:
@@ -273,6 +282,49 @@ class SystemParameters:
             [ 55.86, -55.86, -68.50],
             [ 33.23, -33.23, -68.50],
             ])
+        
+                
+#        array_A = np.array([
+#            [ 104.63,    0.00,    0.00],
+#            [  73.97,   73.97,    0.00],
+#            [   0.00,  104.63,    0.00],
+#            [ -73.97,   73.97,    0.00],
+#            [-104.63,    0.00,    0.00],
+#            [ -73.97,  -73.97,    0.00],
+#            [   0.00, -104.63,    0.00],
+#            [  73.97,  -73.97,    0.00],
+#        ])
+#
+#        array_B = np.array([
+#            [ 104.63,    0.00,  -50.20],
+#            [  73.97,   73.97,  -50.20],
+#            [   0.00,  104.63,  -50.20],
+#            [ -73.97,   73.97,  -50.20],
+#            [-104.63,    0.00,  -50.20],
+#            [ -73.97,  -73.97,  -50.20],
+#            [   0.00, -104.63,  -50.20],
+#            [  73.97,  -73.97,  -50.20],
+#        ])
+#
+#        array_C = np.array([
+#            [ 115.99,   11.39,  -73.20],
+#            [  93.28,  -11.39,  -73.20],
+#            [  85.28,   85.28,  -73.20],
+#            [  62.58,   62.58,  -73.20],
+#            [  11.39,  115.99,  -73.20],
+#            [ -11.39,   93.28,  -73.20],
+#            [ -62.58,   85.28,  -73.20],
+#            [ -85.28,   62.58,  -73.20],
+#            [-115.99,   11.39,  -73.20],
+#            [ -93.28,  -11.39,  -73.20],
+#            [ -85.28,  -85.28,  -73.20],
+#            [ -62.58,  -62.58,  -73.20],
+#            [ -11.39, -115.99,  -73.20],
+#            [  11.39,  -93.28,  -73.20],
+#            [  62.58,  -85.28,  -73.20],
+#            [  85.28,  -62.58,  -73.20],
+#        ])
+#
         
         return {'A': array_A, 'B': array_B, 'C': array_C}
 

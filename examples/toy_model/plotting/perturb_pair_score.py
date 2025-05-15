@@ -487,12 +487,12 @@ class PerturbSystemParameters:
 if __name__ == "__main__":
     # --- Configuration for the analysis (similar to newer script) ---
     magnitudes_to_test = np.concatenate([
-        np.linspace(0.05, 0.5, 10), # Start with smaller magnitudes
-        np.linspace(0.6, 2.5, 10),
-        np.linspace(2.6, 30.0, 10)  # Max magnitude from your old script's linspace
+        np.linspace(0.05, 0.5, 30), # Start with smaller magnitudes
+        np.linspace(0.6, 2.5, 30),
+        np.linspace(2.6, 300.0, 30)  # Max magnitude from your old script's linspace
     ])
     # num_perturbations_per_mag from your old script was 20, new script example was 50. Using 20.
-    num_perturbations_per_mag = 10 
+    num_perturbations_per_mag = 30 
 
     # --- Parameters for Overlap Resolution and Scoring ---
     max_iters_overlap = 5000    # Increased from original 1000, tunable

@@ -7,7 +7,7 @@ from pair_score import ScoringSystem
 # This class is used to perturb the coordinates of a system of particles
 
 class PerturbCoords:
-    def __init__(self, coords, move_size=1.2):
+    def __init__(self, coords, move_size=1.0):
         self.move_size = move_size
         self.params = SystemParameters()
         self.coords = coords
@@ -19,37 +19,63 @@ class PerturbCoords:
     def perturb(self):
         success = False
         while success == False:
-            # Randomly select a particle type
-            particle_type = np.random.choice(list(self.coords.keys()))
-            # Get the coordinates for the selected particle type
-            coords_for_type = self.coords[particle_type]
-            # Randomly select a particle within that type to move
-            particle_index = np.random.randint(0, len(coords_for_type))
-            # Randomly select a direction to move in
-            direction = np.random.choice([-1, 1], size=3)
-            # Randomly select a distance to move
-            distance = np.random.uniform(0, self.move_size)
-            # Move the particle
-            old_coords = coords_for_type[particle_index].copy()
-            coords_for_type[particle_index] += direction * distance
+            # choose how many particles to move from the set 1, 2 or 3 with probabilities 0.5, 0.3, 0.2
+            n_particles = np.random.choice([1, 2, 3], p=[0.8, 0.15, 0.05])
+            # randomly select n_particles from the set of particles
+            # Get the particle types
+            particle_types = list(self.coords.keys())
+            # Randomly select n_particles from the particle types
+            selected_types = np.random.choice(particle_types, n_particles, replace=False)
+            
+            moved_particles = []
+            old_coords = {}
+            
+            # Randomly select particles to move
+            for particle_type in selected_types:
+                coords_for_type = self.coords[particle_type]
+                particle_index = np.random.randint(0, len(coords_for_type))
+                moved_particles.append((particle_type, particle_index))
+                old_coords[(particle_type, particle_index)] = coords_for_type[particle_index].copy()
+                
+            # Move the selected particles
+            for particle_type, particle_index in moved_particles:
+                coords_for_type = self.coords[particle_type]
+                direction = np.random.choice([-1, 1], size=3)
+                distance = np.random.uniform(0, self.move_size)
+                coords_for_type[particle_index] += direction * distance
+            
             # Check for excluded volume
             overlap = False
-            for other_type, other_coords in self.coords.items():
-                for i in range(len(other_coords)):
-                    dist = np.linalg.norm(coords_for_type[particle_index] - other_coords[i])
-                    # Get radii for the particle types
-                    r1 = self.radii[particle_type]
-                    r2 = self.radii[other_type]
-                    if dist < (r1 + r2) and (particle_type != other_type or i != particle_index):
-                        # this means that the particles are overlapping
-                        # so go back to the original coordinates and continue the MCMC
-                        # move the particle back
-                        coords_for_type[particle_index] = old_coords
-                        overlap = True
+            for p1_type, p1_index in moved_particles:
+                coords_1 = self.coords[p1_type][p1_index]
+                r1 = self.radii[p1_type]
+                
+                for other_type in self.coords.keys():
+                    other_coords = self.coords[other_type]
+                    for i in range(len(other_coords)):
+                        r2 = self.radii[other_type]
+                        dist = np.linalg.norm(coords_1 - other_coords[i])
+                        
+                        # Check for overlap, excluding the particle itself
+                        if dist < (r1 + r2):
+                            if other_type == p1_type and i == p1_index:
+                                continue  # Skip self-comparison
+                            
+                            # this means that the particles are overlapping
+                            # so go back to the original coordinates and continue the MCMC
+                            # move the particle back
+                            overlap = True
+                            break
+                    if overlap:
                         break
                 if overlap:
                     break
-            if not overlap:
+            
+            # If overlap, revert all moved particles to their original positions
+            if overlap:
+                for particle_type, particle_index in moved_particles:
+                    self.coords[particle_type][particle_index] = old_coords[(particle_type, particle_index)]
+            else:
                 success = True
         return self.coords
     
@@ -96,19 +122,21 @@ class PerturbCoords:
 if __name__ == "__main__":
     # Initially pass the ideal coordinates for iteration 1, after that keep perturbing the structure that got 
     # returned
-    n_perturbations = 40
+    n_perturbations = 20
     score_list = []
     rmsd_list = []
-    perturb = PerturbCoords(SystemParameters().ideal_coordinates)
+    coords = SystemParameters().latest_ideal()
+    perturb = PerturbCoords(coords)
     for i in range(n_perturbations):
         if i == 0:
             # Use the ideal coordinates for the first iteration
-            coords = SystemParameters().ideal_coordinates
+            #coords = SystemParameters().ideal_coordinates
             # calculate score and rmsd for the ideal coordinates
             total_score, exclusion_score, pairwise_score, prior_penalty = perturb.score_calculator(coords)
             rmsd = perturb.calculate_rmsd(coords)
             score_list.append(total_score)
             rmsd_list.append(rmsd)
+            print("ideal coordinates")
             print(f"Iteration {i+1}: Score: {total_score}, RMSD: {rmsd}")
         else:
             # Use the perturbed coordinates from the previous iteration

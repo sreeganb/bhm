@@ -120,20 +120,20 @@ class TetramerScorer:
         ab_dists = np.sqrt(np.sum((pos_a - pos_b)**2, axis=1))
         bc1_dists = np.sqrt(np.sum((pos_b - pos_c1)**2, axis=1))
         bc2_dists = np.sqrt(np.sum((pos_b - pos_c2)**2, axis=1))
-        cc_dists = np.sqrt(np.sum((pos_c1 - pos_c2)**2, axis=1))
+#        cc_dists = np.sqrt(np.sum((pos_c1 - pos_c2)**2, axis=1))
         
         # Cache target distances for performance
         ab_target = self.params.pair_distances['AB']
         bc_target = self.params.pair_distances['BC']
-        cc_target = self.params.pair_distances['CC']
+#        cc_target = self.params.pair_distances['CC']
         
         # Calculate scores individually to enable detailed logging
         ab_scores = ((ab_dists - ab_target)**2)/(2*sig['AB']**2) + np.log(2 * np.pi *sig['AB'])
         bc1_scores = ((bc1_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
         bc2_scores = ((bc2_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
-        cc_scores = ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
+#        cc_scores = ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
         
-        scores = ab_scores + bc1_scores + bc2_scores + cc_scores
+        scores = ab_scores + bc1_scores + bc2_scores #+ cc_scores
         
         # Log all distances, sigmas, and scores if debug_logging is enabled
         if debug_logging:
@@ -153,7 +153,7 @@ class TetramerScorer:
                 log_file.write("Target distances:\n")
                 log_file.write(f"  AB: {ab_target:.4f}\n")
                 log_file.write(f"  BC: {bc_target:.4f}\n")
-                log_file.write(f"  CC: {cc_target:.4f}\n\n")
+                #log_file.write(f"  CC: {cc_target:.4f}\n\n")
                 
                 # Write detailed information for each tetramer
                 log_file.write("Detailed tetramer information:\n")
@@ -162,22 +162,22 @@ class TetramerScorer:
                             f"{'AB score':^8} | {'BC1 score':^8} | {'BC2 score':^8} | {'CC score':^8} | {'Total':^8}\n")
                 log_file.write("-"*150 + "\n")
                 
-                for i in range(len(tetramers)):
-                    log_file.write(f"{i:^10} | {a_indices[i]:^6} | {b_indices[i]:^6} | {c1_indices[i]:^6} | {c2_indices[i]:^6} | " +
-                                f"{ab_dists[i]:8.3f} | {bc1_dists[i]:8.3f} | {bc2_dists[i]:8.3f} | {cc_dists[i]:8.3f} | " +
-                                f"{ab_scores[i]:8.3f} | {bc1_scores[i]:8.3f} | {bc2_scores[i]:8.3f} | {cc_scores[i]:8.3f} | {scores[i]:8.3f}\n")
+                #for i in range(len(tetramers)):
+                #    log_file.write(f"{i:^10} | {a_indices[i]:^6} | {b_indices[i]:^6} | {c1_indices[i]:^6} | {c2_indices[i]:^6} | " +
+                #                f"{ab_dists[i]:8.3f} | {bc1_dists[i]:8.3f} | {bc2_dists[i]:8.3f} | {cc_dists[i]:8.3f} | " +
+                #                f"{ab_scores[i]:8.3f} | {bc1_scores[i]:8.3f} | {bc2_scores[i]:8.3f} | {cc_scores[i]:8.3f} | {scores[i]:8.3f}\n")
                 
                 # Write summary statistics
                 log_file.write("\nSummary Statistics:\n")
                 log_file.write(f"  Mean AB distance: {np.mean(ab_dists):.4f} (target: {ab_target:.4f})\n")
                 log_file.write(f"  Mean BC1 distance: {np.mean(bc1_dists):.4f} (target: {bc_target:.4f})\n")
                 log_file.write(f"  Mean BC2 distance: {np.mean(bc2_dists):.4f} (target: {bc_target:.4f})\n")
-                log_file.write(f"  Mean CC distance: {np.mean(cc_dists):.4f} (target: {cc_target:.4f})\n\n")
+                #log_file.write(f"  Mean CC distance: {np.mean(cc_dists):.4f} (target: {cc_target:.4f})\n\n")
                 
                 log_file.write(f"  Mean AB score: {np.mean(ab_scores):.4f}\n")
                 log_file.write(f"  Mean BC1 score: {np.mean(bc1_scores):.4f}\n")
                 log_file.write(f"  Mean BC2 score: {np.mean(bc2_scores):.4f}\n")
-                log_file.write(f"  Mean CC score: {np.mean(cc_scores):.4f}\n")
+                #log_file.write(f"  Mean CC score: {np.mean(cc_scores):.4f}\n")
                 log_file.write(f"  Mean total score: {np.mean(scores):.4f}\n")
                 log_file.write(f"  Total tetramer score: {np.sum(scores):.4f}\n")
                 log_file.write("="*80 + "\n")
@@ -209,18 +209,18 @@ class TetramerScorer:
             ab_pair = ('A', a_idx, 'B', b_idx)
             bc1_pair = ('B', b_idx, 'C', c1_idx)
             bc2_pair = ('B', b_idx, 'C', c2_idx)
-            cc_pair = ('C', c1_idx, 'C', c2_idx)
+            #cc_pair = ('C', c1_idx, 'C', c2_idx)
             
             tetramer_pairs.add(ab_pair)
             tetramer_pairs.add(bc1_pair)
             tetramer_pairs.add(bc2_pair)
-            tetramer_pairs.add(cc_pair)
+            #tetramer_pairs.add(cc_pair)
 
         # Log statistics about tetramer pairs only when debug is True
-        unique_pairs = len(tetramer_pairs)
-        expected_pairs = len(tetramers) * 4
+        #unique_pairs = len(tetramer_pairs)
+        #expected_pairs = len(tetramers) * 4
         
-        #tetramer_pairs = None
+        tetramer_pairs = None
         # 2) Calculate score excluding tetramer pairs
         result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
@@ -266,18 +266,13 @@ if __name__ == "__main__":
 
     # Example ideal coordinates    
     tets = scorer.get_tetramers(ideal_coords)
-    sample_sigma = {
-        'AA': 6.0,
-        'AB': 1.0,
-        'BC': 1.0,
-        'CC': 6.0
-    }
-    
+    example_sig = {"AA": 3.0, "AB": 2.0, "BC": 1.0, "CC": 1.5}
+    example_sig_range = {"AA": (0.01, 10.0), "AB": (0.01, 10.0), "BC": (0.01, 10.0), "CC": (0.01, 10.0)}
     
     score, _, _, _ = scorer.neg_log_posterior(
         positions=ideal_coords,
         tetramers=tets,
-        sig=sample_sigma,
+        sig=example_sig,
         exclusion_weight=1.0,
         pair_weight=1.0,
         tetramer_weight=1.0,
