@@ -111,7 +111,8 @@ class ScoringSystem:
 
             # 2) Pairwise negative log-likelihood (pair-specific)
             pairwise_score = 0.0
-            pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
+            #pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
+            pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
             for type1, type2 in pair_types:
                 pair_key = f"{type1}{type2}"
                 if pair_key in self.params.pair_distances:

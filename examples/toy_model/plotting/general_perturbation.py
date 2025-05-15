@@ -1,13 +1,20 @@
 import numpy as np
 import torch
 from parameters import SystemParameters
+from typing import Dict
+from scipy.spatial.transform import Rotation
+from pair_score import ScoringSystem
+# This class is used to perturb the coordinates of a system of particles
 
 class PerturbCoords:
-    def __init__(self, coords, move_size=0.1):
-        self.coords = coords
+    def __init__(self, coords, move_size=1.2):
         self.move_size = move_size
         self.params = SystemParameters()
+        self.coords = coords
         self.radii = self.params.radii
+        self.ps = ScoringSystem(self.params)
+        self.fix_sigma = {'AA' : 1.8, 'AB' : 1.5, 'BC': 2.0, 'CC' : 2.5}
+        self.fix_sigma_range = {'AA' : [0.1, 20.0], 'AB' : [0.1, 20.0], 'BC': [0.1, 20.0], 'CC' : [0.1, 20.0]}
 
     def perturb(self):
         success = False
@@ -46,52 +53,71 @@ class PerturbCoords:
                 success = True
         return self.coords
     
-    def calculate_rmsd(self, coords):
-        """
-        ideal structure from parameters. this is a dictionary"""
+    def calculate_rmsd(self, perturbed_coords: Dict[str, np.ndarray]) -> float:
+        keys = sorted(self.params.ideal_coordinates.keys())
+        
+        # Ensure all components expected in ideal_coordinates are present in perturbed_coords
+        # and have the same number of atoms. This is critical.
+        for k in keys:
+            if k not in perturbed_coords or self.params.ideal_coordinates[k].shape != perturbed_coords[k].shape:
+                raise ValueError(f"Component {k} shape mismatch or missing in perturbed_coords for RMSD.")
+
+        ideal_coords_flat = np.concatenate([self.params.ideal_coordinates[k] for k in keys])
+        perturbed_coords_flat = np.concatenate([perturbed_coords[k] for k in keys])
+
+        if ideal_coords_flat.shape[0] == 0: # Handle empty structures
+             return 0.0 if perturbed_coords_flat.shape[0] == 0 else np.inf
+
+
+        ideal_centroid = np.mean(ideal_coords_flat, axis=0)
+        perturbed_centroid = np.mean(perturbed_coords_flat, axis=0)
+        ideal_centered = ideal_coords_flat - ideal_centroid
+        perturbed_centered = perturbed_coords_flat - perturbed_centroid
+        
+        try:
+            # Rotation.align_vectors returns rotation and RMSD
+            # The old script calculated RMSD manually after alignment, this is more direct
+            rot, rmsd_val = Rotation.align_vectors(perturbed_centered, ideal_centered)
+            return rmsd_val 
+        except Exception as e: # Catch potential errors in alignment (e.g. too few points, collinear points)
+            print(f"Error during Rotation.align_vectors: {e}. Calculating non-aligned RMSD as fallback.")
+            return np.sqrt(np.mean(np.sum((ideal_centered - perturbed_centered) ** 2, axis=1)))
+        
+    def score_calculator(self, coords):
+        # Calculate the score for the perturbed coordinates
+        # This is a placeholder function, replace with actual scoring logic
+        total_score, exclusion_score, pairwise_score, prior_penalty = self.ps.calculate_score(coords, 
+                                                                                              self.fix_sigma, 
+                                                                                              self.fix_sigma_range)
+        return total_score, exclusion_score, pairwise_score, prior_penalty
+        
     
 # Example usage
 if __name__ == "__main__":
-    coords = {
-        'A': np.array([
-            [63.  ,   0.  ,   0.  ],
-            [44.55,  44.55,   0.  ],
-            [ 0.  ,  63.  ,   0.  ],
-            [-44.55,  44.55,   0.  ],
-            [-63.  ,   0.  ,   0.  ],
-            [-44.55, -44.55,   0.  ],
-            [ -0.  , -63.  ,   0.  ],
-            [44.55, -44.55,   0.  ]
-        ]),
-        'B': np.array([
-            [63.  ,   0.  , -38.5 ],
-            [44.55,  44.55, -38.5 ],
-            [ 0.  ,  63.  , -38.5 ],
-            [-44.55,  44.55, -38.5 ],
-            [-63.  ,   0.  , -38.5 ],
-            [-44.55, -44.55, -38.5 ],
-            [ -0.  , -63.  , -38.5 ],
-            [44.55, -44.55, -38.5 ]
-        ]),
-        'C': np.array([
-            [ 47.00,   0.00, -68.50],
-            [ 79.00,   0.00, -68.50],
-            [ 55.86,  55.86, -68.50],
-            [ 33.23,  33.23, -68.50],
-            [  0.00,  47.00, -68.50],
-            [  0.00,  79.00, -68.50],
-            [-55.86,  55.86, -68.50],
-            [-33.23,  33.23, -68.50],
-            [-47.00,   0.00, -68.50],
-            [-79.00,   0.00, -68.50],
-            [-55.86, -55.86, -68.50],
-            [-33.23, -33.23, -68.50],
-            [  0.00, -47.00, -68.50],
-            [  0.00, -79.00, -68.50],
-            [ 55.86, -55.86, -68.50],
-            [ 33.23, -33.23, -68.50],
-        ])
-    }
-    perturb = PerturbCoords(coords)
-    new_coords = perturb.perturb()
-    print(new_coords)
+    # Initially pass the ideal coordinates for iteration 1, after that keep perturbing the structure that got 
+    # returned
+    n_perturbations = 40
+    score_list = []
+    rmsd_list = []
+    perturb = PerturbCoords(SystemParameters().ideal_coordinates)
+    for i in range(n_perturbations):
+        if i == 0:
+            # Use the ideal coordinates for the first iteration
+            coords = SystemParameters().ideal_coordinates
+            # calculate score and rmsd for the ideal coordinates
+            total_score, exclusion_score, pairwise_score, prior_penalty = perturb.score_calculator(coords)
+            rmsd = perturb.calculate_rmsd(coords)
+            score_list.append(total_score)
+            rmsd_list.append(rmsd)
+            print(f"Iteration {i+1}: Score: {total_score}, RMSD: {rmsd}")
+        else:
+            # Use the perturbed coordinates from the previous iteration
+            coords = new_coords
+        # perturb the coordinates
+        new_coords = perturb.perturb()
+        # calculate score and rmsd for the perturbed coordinates
+        total_score, exclusion_score, pairwise_score, prior_penalty = perturb.score_calculator(new_coords)
+        rmsd = perturb.calculate_rmsd(new_coords)
+        score_list.append(total_score)
+        rmsd_list.append(rmsd)
+        print(f"Iteration {i+1}: Score: {total_score}, RMSD: {rmsd}")
