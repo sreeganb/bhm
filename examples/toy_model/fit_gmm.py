@@ -159,7 +159,7 @@ def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_n
     plt.savefig(os.path.join(output_dir, f"gmm_combined_plot_{sigma_type}_{sampler_name}.png"))
     plt.close()
 
-def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3, do_trace_plots: bool = True, do_gmm_fits: bool = True):
+def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5, do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
     Analyzes MCMC data, including trace plots, R-hat statistics, and GMM fitting.
 

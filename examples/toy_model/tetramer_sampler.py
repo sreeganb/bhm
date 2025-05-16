@@ -38,8 +38,8 @@ class TetramerSampler(BaseMCSampler):
         self.use_sigma_distribution = use_sigma_distribution
         
         # Initialize features for tetramer-specific sampling
-        self.tetramer_trans_step = 0.04
-        self.tetramer_rot_step = 0.04
+        self.tetramer_trans_step = 0.05
+        self.tetramer_rot_step = 0.05
         self.target_acceptance = 0.5
         self.tet_trans_acc_rate = self.target_acceptance
         self.sigma_prior_dist = {}
@@ -379,8 +379,8 @@ class TetramerSampler(BaseMCSampler):
         centroid = np.mean(coords, axis=0)
 
         # Smaller base step sizes for large radii/distances
-        base_trans_step = 0.1  # Example: reduce from 0.1
-        base_rot_step   = 0.1  # Example: reduce from 0.1
+        base_trans_step = 0.05  # Example: reduce from 0.1
+        base_rot_step   = 0.05  # Example: reduce from 0.1
 
         # Adaptive step factor with narrower clipping
         factor = np.clip(1.0 + 1.5 * (acceptance_rate - self.target_acceptance), 0.6, 1.6)

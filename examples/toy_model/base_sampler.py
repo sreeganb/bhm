@@ -44,8 +44,8 @@ class BaseMCSampler:
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.035 * sum_radii
-            upper_bound = 0.35 * sum_radii
+            lower_bound = 0.02 * sum_radii
+            upper_bound = 0.2 * sum_radii
             # Propose sigma in log-space for a uniform proposal in that space.
             sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
             sigma[pair_type] = sigma_val
@@ -119,7 +119,7 @@ class BaseMCSampler:
         log_current = np.log(sigma[pair_type])
 
         # Smaller base step size and narrower factor
-        base_step_size = 0.05 # switching from 0.002 to 0.004
+        base_step_size = 0.005 # switching from 0.002 to 0.004
         step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
         step_size = base_step_size * step_factor
 
@@ -157,7 +157,7 @@ class BaseMCSampler:
         type_names = list(self.params.component_counts.keys())
         type_name = random.choice(type_names)
 
-        base_step = self.params.radii[type_name] * 0.25
+        base_step = self.params.radii[type_name] * 0.1
         # Adaptive factor, with a zero-mean Gaussian ensuring symmetry
         adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.1, 2.75)
         step_size = base_step * adjustment

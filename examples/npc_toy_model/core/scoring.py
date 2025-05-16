@@ -7,6 +7,11 @@ from typing import Dict, List, Tuple, Set, Optional, Any, Union
 import numba as nb
 from functools import lru_cache
 
+#************************************
+# Imports from files here
+#************************************
+from parameters import SystemParameters
+
 #--------------------------------------------------------------------------------
 # Utility functions
 #--------------------------------------------------------------------------------

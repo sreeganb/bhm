@@ -1,5 +1,5 @@
 # run_simulation.py
-from parameters import SystemParametersTorch
+from core.parameters import SystemParameters
 from core.system import setup_system
 from core.sigma import initialize_sigma
 from samplers.pair import run_pair_sampling

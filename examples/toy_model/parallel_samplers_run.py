@@ -19,11 +19,13 @@ from base_sampler import BaseMCSampler
 from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
 from visualization import visualize_3d_configuration
+from octet_sampler import OctetSampler
 
 # Map of sampler names to their classes
 SAMPLER_MAP = {
     "PairSampler": PairSampler,
     "TetramerSampler": TetramerSampler,
+    "OctetSampler": OctetSampler
 }
 
 # Default configuration
@@ -201,12 +203,12 @@ def main():
     # Define the sequence of samplers to run and their steps
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "pair_sampler"]
     #mcmc_steps = [10000, 5000, 10000]
-    sampler_sequence = ["pair_sampler", "tetramer_sampler"]
-    mcmc_steps = [300000, 300000]
+    #sampler_sequence = ["pair_sampler", "tetramer_sampler"]
+    #mcmc_steps = [500000, 500000]
     #sampler_sequence = ["tetramer_sampler"]
     #mcmc_steps = [25000]
-    #sampler_sequence = ["octet_sampler"]
-    #mcmc_steps = [25000]
+    sampler_sequence = ["tetramer_sampler", "octet_sampler"]
+    mcmc_steps = [500000, 500000]
     #sampler_sequence = ["pair_sampler"]
     #mcmc_steps = [100000]
     
@@ -224,13 +226,14 @@ def main():
             "run": True,
             "n_chains": 8 if sampler_key == "pair_sampler" else 8,
             "n_steps": mcmc_steps[idx],
-            "save_freq": 300,
+            "save_freq": 500,
             "use_sigma_dist": False if is_first else True
         }
         
         # Get sampler class from name
         sampler_name = sampler_key.replace("_sampler", "").capitalize() + "Sampler"
         sampler_class = SAMPLER_MAP.get(sampler_name)
+        print("sampler class: ", sampler_class)
         if not sampler_class:
             print(f"Error: Unknown sampler '{sampler_name}'. Skipping.")
             continue

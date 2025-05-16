@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from typing import Dict, Any, Optional, List, Tuple, Sequence
-from .state import SystemState
 
 class SystemState:
     """Lightweight container for system state that can be efficiently passed between samplers"""
@@ -69,17 +68,14 @@ class SystemState:
 
     @property
     def octets(self) -> List[Tuple]:
-        """Get octets, calculating if needed and if sampler sequence requires it"""
-        # Only compute octets if "octet" appears before or at current sampler
+        """Always compute tetramers and octets if octet sampler is active"""
         if self._octets is None:
-            if self._should_compute('octet'):
-                from samplers.octet import get_octets
-                # ensure tetramers computed if needed by octet
-                tets = self.tetramers
-                self._octets = get_octets(self.positions, tets)
-            else:
-                self._octets = []
+            from samplers.octet import get_octets
+
+            # Always recompute tetramers when octets are needed
+            self._octets, self._tetramers = get_octets(self.positions)
         return self._octets
+
 
     def _should_compute(self, target: str) -> bool:
         """

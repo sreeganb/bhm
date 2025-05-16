@@ -1,147 +1,200 @@
 import os
-import pickle
+import re
 import json
+import random
 import numpy as np
-from typing import Dict, Tuple, Optional, Sequence, Any, Union
-from .state import SystemState
+from typing import Dict, List, Tuple
 
-class SigmaBuilder:
+class GMMSigmaProvider:
     """
-    Class-based initializer for sigma values in SystemState, supporting
-    default, explicit values, or GMM-derived sigmas.  When using GMM,
-    it also stores the loaded GMM parameters in state.metadata['gmm_params'].
+    Provides sigma values from GMM fits and calculates negative log priors.
+    Works with PairSampler, TetramerSampler, and OctetSampler outputs.
     """
-    def __init__(
-        self,
-        state: SystemState,
-        sigma_source: str = "default",
-        sigma_values: Optional[Dict[str, float]] = None,
-        sigma_ranges: Optional[Dict[str, Tuple[float, float]]] = None,
-        gmm_file: Optional[str] = None,
-        sigma_keys: Optional[Sequence[str]] = None,
-        gmm_folder: str = "output_analysis/gmm_parameters",
-        sampler_name: Optional[str] = None
-    ):
-        self.state = state
-        self.source = sigma_source
-        self.values = sigma_values or {}
-        self.ranges = sigma_ranges
-        self.gmm_file = gmm_file
-        self.gmm_folder = gmm_folder
+    # Define sampler source mappings
+    SAMPLER_SOURCES = {
+        "PairSampler": "pairsampler",
+        "TetramerSampler": "pairsampler",
+        "OctetSampler": "tetramersampler"
+    }
+    
+    # Default sigma values if GMM not available
+    DEFAULT_SIGMA = {
+        "AA": 2.0, 
+        "AB": 2.0, 
+        "BC": 2.0,
+        "CC": 2.0
+    }
+    
+    def __init__(self, sampler_name: str = "PairSampler"):
+        """
+        Initialize the sigma provider for a specific sampler type.
+        
+        Args:
+            sampler_name: Name of the sampler ('PairSampler', 'TetramerSampler', 'OctetSampler')
+        """
         self.sampler_name = sampler_name
-        # determine which keys to initialize
-        self.keys = list(sigma_keys) if sigma_keys is not None else list(self.state.sigma_range.keys())
-
-    def build(self) -> None:
-        """
-        Initialize state.sigma, state.sigma_range, state.use_sigma_distribution,
-        and store any GMM parameters in state.metadata['gmm_params'].
-        """
-        # set ranges
-        if self.ranges is None:
-            # default ranges
-            self.ranges = {k: (1.0, 10.0) for k in self.keys}
-        self.state.sigma_range = {k: self.ranges[k] for k in self.keys}
-
-        if self.source == "default":
-            # midpoint of range
-            mid = {k: 0.5 * (self.ranges[k][0] + self.ranges[k][1]) for k in self.keys}
-            self.state.update_sigma(mid)
-            self.state.use_sigma_distribution = False
-
-        elif self.source == "values":
-            if not self.values:
-                raise ValueError("sigma_values must be provided when sigma_source='values'")
-            self.state.update_sigma({k: self.values[k] for k in self.keys})
-            self.state.use_sigma_distribution = False
-
-        elif self.source == "gmm":
-            # mark distribution usage
-            self.state.use_sigma_distribution = True
-            # locate gmm file if not explicit
-            gmm_path = self.gmm_file or self._auto_select_gmm()
-            # load parameters
-            gmm_params = self._load_gmm_params(gmm_path)
-            # store full gmm_params in metadata
-            self.state.metadata['gmm_params'] = gmm_params
-            # extract sigma
-            sig_dict = {}
-            for k in self.keys:
-                if k in gmm_params:
-                    params = gmm_params[k]
-                    sig_dict[k] = self._extract_sigma_from_params(params)
-                else:
-                    # fallback mid-range
-                    sig_dict[k] = 0.5 * (self.ranges[k][0] + self.ranges[k][1])
-            self.state.update_sigma(sig_dict)
-
-        else:
-            raise ValueError(f"Invalid sigma_source: {self.source}")
-
-    def _load_gmm_params(self, path: str) -> Dict[str, Any]:
-        """
-        Load GMM parameters from a file, supporting both pickle and JSON formats.
-        """
-        if path.endswith('.json'):
-            # Extract parameter key from filename (e.g., 'AA' from gmm_fit_AA_chain_1.json)
-            param_key = os.path.basename(path).split('_')[2]
-            with open(path, 'r') as f:
-                json_data = json.load(f)
-                
-            # Convert JSON format to a structure compatible with our code
-            return {param_key: {
-                'means_': np.array([[m] for m in json_data['means']]),
-                'covariances_': np.array([[c] for c in json_data['covariances']]),
-                'weights_': np.array(json_data['weights']),
-                'n_components': json_data['n_components']
-            }}
-        else:
-            # Original pickle format
-            with open(path, 'rb') as f:
-                return pickle.load(f)
-
-    def _extract_sigma_from_params(self, params: Dict[str, Any]) -> float:
-        """
-        Extract sigma value from GMM parameters, handling both pickle-loaded
-        sklearn models and our custom JSON format.
-        """
-        if hasattr(params, 'weights_'):  # sklearn GMM model from pickle
-            comp = np.argmax(params.weights_)
-            return float(params.means_[comp][0])
-        else:  # Our JSON-derived format
-            comp = np.argmax(params['weights_'])
-            return float(params['means_'][comp][0])
-
-    def _auto_select_gmm(self) -> str:
-        """
-        Pick the latest GMM file for sampler_name in gmm_folder.
-        """
-        if not self.sampler_name:
-            raise ValueError("sampler_name must be provided to auto-select GMM file")
+        self.pair_types = ["AA", "AB", "BC"]
         
-        # Find all files/directories that match the pattern
-        gmm_files = []
-        for root, _, files in os.walk(self.gmm_folder):
-            for file in files:
-                if file.startswith(f"gmm_fit_{self.sampler_name}_chain_") and (file.endswith('.json') or file.endswith('.pkl')):
-                    gmm_files.append(os.path.join(root, file))
+        # Determine source folder for GMM files
+        source_sampler = self.SAMPLER_SOURCES.get(sampler_name, "pairsampler")
+        self.output_dir = os.path.join(os.getcwd(), f"output_analysis/{source_sampler}_results")
         
-        if not gmm_files:
-            # Fallback to previous directory-based logic
-            chains = [d for d in os.listdir(self.gmm_folder)
-                    if d.startswith(self.sampler_name)]
-            if not chains:
-                raise FileNotFoundError(f"No GMM chains for {self.sampler_name} in {self.gmm_folder}")
-            # pick highest numerical suffix
-            best = sorted(chains, key=lambda d: int(d.split('_')[-1]))[-1]
-            path = os.path.join(self.gmm_folder, best)
-        else:
-            # Sort by chain number to get the latest one
-            path = sorted(
-                gmm_files,
-                key=lambda f: int(os.path.basename(f).split('_chain_')[1].split('.')[0])
-            )[-1]
+        # Load GMM parameters
+        self.gmm_params = self._load_gmm_parameters()
+        
+    def _load_gmm_parameters(self) -> Dict:
+        """Load GMM parameters from JSON files for a randomly selected chain."""
+        gmm_params = {sigma_type: None for sigma_type in self.pair_types}
+        
+        if not os.path.exists(self.output_dir):
+            print(f"Output directory not found: {self.output_dir}")
+            return gmm_params
+        
+        # Find all GMM files
+        pattern = re.compile(r"gmm_fit_(AA|AB|BC)_chain_(\d+)\.json")
+        chain_files = {}
+        
+        for filename in os.listdir(self.output_dir):
+            match = pattern.match(filename)
+            if match:
+                sigma_type, chain = match.group(1), int(match.group(2))
+                if chain not in chain_files:
+                    chain_files[chain] = []
+                chain_files[chain].append(sigma_type)
+        
+        if not chain_files:
+            print(f"No GMM fit files found in {self.output_dir}")
+            return gmm_params
+        
+        # Select random chain with the most sigma types
+        chains_by_completeness = sorted(
+            chain_files.keys(), 
+            key=lambda c: len(chain_files[c]), 
+            reverse=True
+        )
+        selected_chain = chains_by_completeness[0]
+        print(f"Using GMM parameters from chain {selected_chain}")
+        
+        # Load GMM files for the selected chain
+        for sigma_type in self.pair_types:
+            file_path = os.path.join(self.output_dir, f"gmm_fit_{sigma_type}_chain_{selected_chain}.json")
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r') as f:
+                        gmm_params[sigma_type] = json.load(f)
+                        print(f"Loaded GMM parameters for {sigma_type}")
+                except Exception as e:
+                    print(f"Error loading {file_path}: {e}")
+        
+        return gmm_params
+
+    def sample_sigma_values(self) -> Dict[str, float]:
+        """Sample sigma values from the loaded GMMs or use defaults."""
+        sigma = {}
+        
+        for pair_type in self.pair_types:
+            gmm_info = self.gmm_params.get(pair_type)
             
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"GMM file not found: {path}")
-        return path
+            # Use default if no valid GMM data
+            if not gmm_info or not all(k in gmm_info for k in ['n_components', 'means', 'covariances', 'weights']):
+                sigma[pair_type] = self.DEFAULT_SIGMA[pair_type]
+                continue
+                
+            try:
+                # Extract GMM parameters
+                n_components = gmm_info['n_components']
+                means = np.asarray(gmm_info['means']).reshape(n_components, 1)
+                covariances = np.asarray(gmm_info['covariances'])
+                weights = np.asarray(gmm_info['weights'])
+                
+                # Normalize weights
+                weights = weights / np.sum(weights)
+                
+                # Sample from GMM
+                component = np.random.choice(n_components, p=weights)
+                mean_value = means[component].flatten()
+                cov_value = float(covariances[component])
+                
+                # Sample from normal distribution
+                sampled_value = np.random.normal(loc=mean_value, scale=np.sqrt(cov_value))
+                sigma[pair_type] = float(sampled_value)
+            except Exception as e:
+                print(f"Error sampling GMM for {pair_type}: {e}. Using default.")
+                sigma[pair_type] = self.DEFAULT_SIGMA[pair_type]
+        
+        return sigma
+    
+    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
+        """Calculate negative log prior across all sigma values."""
+        if not sigma:
+            return np.inf
+            
+        log_priors = []
+        for pair_type, value in sigma.items():
+            log_prob = self._calculate_gmm_log_prob(value, pair_type)
+            if log_prob > -np.inf:
+                log_priors.append(log_prob)
+        
+        if not log_priors:
+            return 100000.0  # Large penalty for all invalid priors
+            
+        return -np.sum(log_priors)
+    
+    def _calculate_gmm_log_prob(self, sigma_value: float, pair_type: str) -> float:
+        """Calculate log probability for a sigma value given a GMM."""
+        if pair_type not in self.gmm_params or not self.gmm_params[pair_type]:
+            return -np.inf
+            
+        gmm_info = self.gmm_params[pair_type]
+        
+        try:
+            n_components = gmm_info['n_components']
+            means = np.asarray(gmm_info['means']).reshape(n_components, 1)
+            covariances = np.asarray(gmm_info['covariances']).reshape(n_components, 1, 1) 
+            weights = np.asarray(gmm_info['weights'])
+            
+            # Ensure numerical stability
+            covariances = np.maximum(covariances, 1e-10)
+            
+            # Vectorized component log probability calculation
+            x = np.array(sigma_value).reshape(1)
+            diff = x - means.flatten()
+            exponents = -0.5 * (diff**2 / covariances.flatten())
+            norms = np.log(weights) - 0.5 * np.log(2 * np.pi * covariances.flatten())
+            component_log_probs = norms + exponents
+            
+            # Numerically stable log-sum-exp
+            max_log_prob = np.max(component_log_probs)
+            return max_log_prob + np.log(np.sum(np.exp(component_log_probs - max_log_prob)))
+            
+        except Exception as e:
+            print(f"Error calculating GMM log probability for {pair_type}: {e}")
+            return -np.inf
+
+# Simple function for sampling sigma values from a specified sampler
+def get_sigma_values(sampler_name="PairSampler"):
+    """
+    Get sigma values for the specified sampler.
+    
+    Args:
+        sampler_name: 'PairSampler', 'TetramerSampler', or 'OctetSampler'
+        
+    Returns:
+        Tuple: (sigma_values, negative_log_prior)
+    """
+    provider = GMMSigmaProvider(sampler_name)
+    sigma_values = provider.sample_sigma_values()
+    neg_log_prior = provider.calculate_negative_log_prior(sigma_values)
+    
+    print(f"\nSampled sigma values for {sampler_name}:")
+    for key, value in sigma_values.items():
+        print(f"  {key}: {value:.4f}")
+    print(f"Negative log prior: {neg_log_prior:.4f}")
+    
+    return sigma_values, neg_log_prior
+
+# Example usage
+if __name__ == "__main__":
+    import sys
+    sampler = "PairSampler" if len(sys.argv) < 2 else sys.argv[1]
+    get_sigma_values(sampler)

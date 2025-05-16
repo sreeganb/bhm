@@ -5,8 +5,8 @@ import numpy as np
 import h5py
 import torch
 from typing import Dict, Optional, Sequence
-from .state import SystemState
-from parameters import SystemParametersTorch
+from core.state import SystemState
+from core.parameters import SystemParameters
 
 
 class SystemBuilder:
@@ -16,7 +16,7 @@ class SystemBuilder:
     """
     def __init__(
         self,
-        params: SystemParametersTorch,
+        params: SystemParameters,
         sampler_sequence: Sequence[str],
         current_sampler: str,
         source: str = "ideal",
