@@ -438,20 +438,20 @@ class TetramerSampler(BaseMCSampler):
         ab_dists = np.sqrt(np.sum((pos_a - pos_b)**2, axis=1))
         bc1_dists = np.sqrt(np.sum((pos_b - pos_c1)**2, axis=1))
         bc2_dists = np.sqrt(np.sum((pos_b - pos_c2)**2, axis=1))
-        cc_dists = np.sqrt(np.sum((pos_c1 - pos_c2)**2, axis=1))
+        #cc_dists = np.sqrt(np.sum((pos_c1 - pos_c2)**2, axis=1))
         
         # Cache target distances for performance
         ab_target = self.params.pair_distances['AB']
         bc_target = self.params.pair_distances['BC']
-        cc_target = self.params.pair_distances['CC']
+        #cc_target = self.params.pair_distances['CC']
         
         # Calculate scores individually to enable detailed logging
         ab_scores = ((ab_dists - ab_target)**2)/(2*sig['AB']**2) + np.log(2 * np.pi *sig['AB'])
         bc1_scores = ((bc1_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
         bc2_scores = ((bc2_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
-        cc_scores = ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
+        #cc_scores = ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
         
-        scores = ab_scores + bc1_scores + bc2_scores + cc_scores
+        scores = ab_scores + bc1_scores + bc2_scores #+ cc_scores
 #        
         return scores
 #-----------------------------------------------------------------------
@@ -501,52 +501,52 @@ class TetramerSampler(BaseMCSampler):
             return score, ex_score, pair_score, 0.0
         
         # 1) Build set of tetramer pairs
-        tetramer_pairs = set()
+#        tetramer_pairs = set()
         
         # Process all tetramers
-        for t_idx, (a_idx, b_idx, c1_idx, c2_idx) in enumerate(tetramers):
+#        for t_idx, (a_idx, b_idx, c1_idx, c2_idx) in enumerate(tetramers):
             # Add pairs to excluded set (these are scored separately as tetramer pairs)
-            ab_pair = ('A', a_idx, 'B', b_idx)
-            bc1_pair = ('B', b_idx, 'C', c1_idx)
-            bc2_pair = ('B', b_idx, 'C', c2_idx)
-            cc_pair = ('C', c1_idx, 'C', c2_idx)
+#            ab_pair = ('A', a_idx, 'B', b_idx)
+#            bc1_pair = ('B', b_idx, 'C', c1_idx)
+#            bc2_pair = ('B', b_idx, 'C', c2_idx)
+#            cc_pair = ('C', c1_idx, 'C', c2_idx)
             
-            tetramer_pairs.add(ab_pair)
-            tetramer_pairs.add(bc1_pair)
-            tetramer_pairs.add(bc2_pair)
-            tetramer_pairs.add(cc_pair)
+#            tetramer_pairs.add(ab_pair)
+#            tetramer_pairs.add(bc1_pair)
+#            tetramer_pairs.add(bc2_pair)
+#            tetramer_pairs.add(cc_pair)
             
             # Only log when debug is True
-            if debug:
+#            if debug:
                 # Log to file
-                with open(tetramer_pairs_log, "a") as log_file:
-                    log_file.write(f"Tetramer {t_idx}:\n")
-                    log_file.write(f"  A({a_idx})-B({b_idx})\n")
-                    log_file.write(f"  B({b_idx})-C({c1_idx})\n")
-                    log_file.write(f"  B({b_idx})-C({c2_idx})\n")
-                    log_file.write(f"  C({c1_idx})-C({c2_idx})\n")
+#                with open(tetramer_pairs_log, "a") as log_file:
+#                    log_file.write(f"Tetramer {t_idx}:\n")
+#                    log_file.write(f"  A({a_idx})-B({b_idx})\n")
+#                    log_file.write(f"  B({b_idx})-C({c1_idx})\n")
+#                    log_file.write(f"  B({b_idx})-C({c2_idx})\n")
+#                    log_file.write(f"  C({c1_idx})-C({c2_idx})\n")
                 
                 # Log to console
-                print(f"Tetramer {t_idx}:")
-                print(f"  A({a_idx})-B({b_idx})")
-                print(f"  B({b_idx})-C({c1_idx})")
-                print(f"  B({b_idx})-C({c2_idx})")
-                print(f"  C({c1_idx})-C({c2_idx})")
+#                print(f"Tetramer {t_idx}:")
+#                print(f"  A({a_idx})-B({b_idx})")
+#                print(f"  B({b_idx})-C({c1_idx})")
+#                print(f"  B({b_idx})-C({c2_idx})")
+#                print(f"  C({c1_idx})-C({c2_idx})")
 
         # Log statistics about tetramer pairs only when debug is True
-        unique_pairs = len(tetramer_pairs)
-        expected_pairs = len(tetramers) * 4
+#        unique_pairs = len(tetramer_pairs)
+#        expected_pairs = len(tetramers) * 4
         
-        if debug:
-            with open(tetramer_pairs_log, "a") as log_file:
-                log_file.write(f"Total unique tetramer pairs: {unique_pairs} (expected {expected_pairs})\n")
-                if unique_pairs != expected_pairs:
-                    log_file.write("WARNING: Some tetramers share components - potential source of problems!\n")
+#        if debug:
+#            with open(tetramer_pairs_log, "a") as log_file:
+#                log_file.write(f"Total unique tetramer pairs: {unique_pairs} (expected {expected_pairs})\n")
+#                if unique_pairs != expected_pairs:
+#                    log_file.write("WARNING: Some tetramers share components - potential source of problems!\n")
             
-            print(f"Total unique tetramer pairs: {unique_pairs} (expected {expected_pairs})")
-            if unique_pairs != expected_pairs:
-                print("WARNING: Some tetramers share components - potential source of problems!")
-        
+#            print(f"Total unique tetramer pairs: {unique_pairs} (expected {expected_pairs})")
+#            if unique_pairs != expected_pairs:
+#                print("WARNING: Some tetramers share components - potential source of problems!")
+        tetramer_pairs = None
         # 2) Calculate score excluding tetramer pairs
         result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
@@ -563,7 +563,10 @@ class TetramerSampler(BaseMCSampler):
 
         # 3) Calculate tetramer score using vectorized batch method 
         # Pass debug flag to control debugging in the batch method
-        scores_array = self.calculate_tetramer_scores_batch(positions, tetramers, sigma, debug_logging=debug)
+        scores_array = self.calculate_tetramer_scores_batch(positions, 
+                                                            tetramers, 
+                                                            sigma, 
+                                                            debug_logging=debug)
         total_tet_score = scores_array.sum()
         
         # Apply weighting and return all score components

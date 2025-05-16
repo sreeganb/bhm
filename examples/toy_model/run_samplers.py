@@ -87,7 +87,7 @@ def run_hierarchical_sampling(
         print(f"{level} sampling complete ({sampler_name}):")
         print(f"Final sigma values: {sampler.sigma}")
 
-        visualize_3d_configuration(best_positions, params.radii, f"Final {level} configuration")
+        #visualize_3d_configuration(best_positions, params.radii, f"Final {level} configuration")
         #visualize_trajectory_plotly(trajectory, params.box_size, params.radii)
 
         results[level] = {
@@ -104,16 +104,16 @@ def main():
             #"run": False,
             "run": True,
             "n_chains": 1,
-            "n_steps": 10,
-            "save_freq": 1,
+            "n_steps": 50000,
+            "save_freq": 50,
             "use_sigma_dist": False, # Example of sampler-specific parameter
         },
         "tetramer_sampler": {
             "run": True,
             #"run": False,
             "n_chains": 1,
-            "n_steps": 50000,
-            "save_freq": 50,
+            "n_steps": 200000,
+            "save_freq": 200,
             "use_sigma_dist": True, # Example of sampler-specific parameter
         },
          "octet_sampler": { # Example configuration for OctamerSampler
@@ -133,8 +133,8 @@ def main():
 
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
     #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
-    #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
-    sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
+    sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    #sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
 
     # Profile the output 

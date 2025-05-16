@@ -43,8 +43,8 @@ class PairSampler(BaseMCSampler):
             self.sigma = sig_passed
             self.sigma_range = sig_range_passed
             self.positions_ps = pos_passed
-            print("PairSampler initialized with passed sigma values.")        
-                
+            print("PairSampler initialized with passed sigma values.")   
+                 
     def calculate_score(
         self,
         pos: Dict[str, np.ndarray],  # input positions
@@ -52,15 +52,27 @@ class PairSampler(BaseMCSampler):
         sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
         excluded_pairs=None,
         use_sigma_distribution=False,
-        prior_penalty_from_distribution=0.0
+        prior_penalty_from_distribution=0.0,
+        debug=False,  # Whether to log detailed pair scoring info
+        debug_file="pair_score_debug.csv"  # File to write debug info to
     ) -> Tuple[float, float, float, float]:
         """Calculate the log posterior for the pair-level interactions."""
+        # Setup debug file if requested
+        if debug:
+            debug_fh = open(debug_file, 'w')
+            debug_fh.write("Pair Type, Particle1 Type, Particle1 Index, Particle2 Type, Particle2 Index, Distance, Target Distance, Sigma, Score\n")
+        else:
+            debug_fh = None
+            
         # 1) Excluded volume contribution (from BaseMCSampler)
         exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
-
+        np.set_printoptions(precision=1, suppress=True, linewidth=120)
+        
+                    
         # 2) Pairwise negative log-likelihood (pair-specific)
         pairwise_score = 0.0
-        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
+        #pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
+        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
         for type1, type2 in pair_types:
             pair_key = f"{type1}{type2}"
             if pair_key in self.params.pair_distances:
@@ -74,37 +86,143 @@ class PairSampler(BaseMCSampler):
                     target_dist,
                     sigma_value
                 )
-
-                # Mask diagonal (for same-type pairs)
-                if type1 == type2:
-                    mask = np.triu(np.ones_like(score_matrix), k=1)
-                    score_matrix *= mask
-
+                # ----------------------------------------------------------------------
                 # Zero out excluded pairs if provided
+                # ----------------------------------------------------------------------
                 if excluded_pairs:
-                    for i in range(len(pos[type1])):
-                        for j in range(len(pos[type2])):
-                            if (type1, i, type2, j) in excluded_pairs:
-                                score_matrix[i, j] = np.inf
+                    print(f"Exclusion pairs: {excluded_pairs}")
+                    for i_idx in range(len(pos[type1])):
+                        for j_idx in range(len(pos[type2])):
+                            # Check if (type1, i_idx, type2, j_idx) or the reverse is in excluded_pairs
+                            if ((type1, i_idx, type2, j_idx) in excluded_pairs or
+                            (type2, j_idx, type1, i_idx) in excluded_pairs):
+                                score_matrix[i_idx, j_idx] = np.inf
+                #print(f"Pairwise score matrix for {pair_key}:\n{score_matrix}")
+                # For debugging, calculate the actual distances between particles
+                if debug_fh:
+                    distance_matrix = cdist(pos[type1], pos[type2])
 
-                # Identify minimal row/column pairs and accumulate the score
-                row_indices = np.argmin(score_matrix, axis=1)
-                col_indices = np.argmin(score_matrix, axis=0)
-                row_pairs = {(i, row_indices[i]) for i in range(len(row_indices))}
-                col_pairs = {(col_indices[j], j) for j in range(len(col_indices))}
-                unique_pairs = row_pairs.union(col_pairs)
-                for i, j in unique_pairs:
-                    pairwise_score += self.pair_weight * score_matrix[i, j]
+                # Mask the lower triangle and diagonal to avoid self-interactions and duplicates
+                if type1 == type2:
+                #----------------------------------------------------------------------
+                # For same type particles, use loops to only consider upper triangle - diagonal elements 
+                # for each row and column, get the minimum element
+                # do not fill matrix with inf 
+                #----------------------------------------------------------------------
+                    np.fill_diagonal(score_matrix, np.inf)
+                    m,n = score_matrix.shape
+                    selected_scores = []
+                    selected_indices = []
+                    # for each row i, find the minimum element in columns > i
+                    for i in range(m):
+                        # only consider j > i in that row
+                        if i < n-1:
+                            row_segment = score_matrix[i, i+1:]
+                            # If all inf, skip
+                            if np.all(np.isinf(row_segment)):
+                                continue
+                            j_offset = np.argmin(row_segment)
+                            j = i + 1 + j_offset
+                            selected_scores.append(score_matrix[i, j])
+                            selected_indices.append((i, j))
+                    # detailed debug information for each selected pair 
+                    if debug_fh:
+                        for i, j in selected_indices:
+                            distance = distance_matrix[i, j]
+                            pair_score = self.pair_weight * score_matrix[i, j]
+                            debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
+                else:
+                    # For different types, use argmin (indices), not min (values)
+                    row_min_indices = np.argmin(score_matrix, axis=1)
+                    col_min_indices = np.argmin(score_matrix, axis=0)
 
-        # 3) Prior penalty
+                    # Collect unique index pairs
+                    U = set()
+                    for i, min_idx in enumerate(row_min_indices):
+                        U.add((i, min_idx))
+                    for j, min_idx in enumerate(col_min_indices):
+                        U.add((min_idx, j))
+
+                    # Now gather the scores for those index pairs
+                    selected_scores = [score_matrix[i, j] for (i, j) in U if i < score_matrix.shape[0] and j < score_matrix.shape[1]]
+
+                # Sum up the selected scores
+                pairwise_score_part = np.sum(selected_scores)
+                pairwise_score += self.pair_weight * pairwise_score_part
+                #----------------------------------------------------------------------
+        # 3) Prior penalty: if not using the sigma distribution, compute using Priors
         if not use_sigma_distribution:
             prior_penalty = self.priors.neg_log_prior(sig, sig_range)
         else:
             prior_penalty = prior_penalty_from_distribution
-        
+
+        # Clean up debug file if opened
+        if debug_fh:
+            debug_fh.close()
+            print(f"Particle pairing debug information written to {debug_file}")
+
         total_score = exclusion_score + pairwise_score + prior_penalty
-        
-        return total_score, exclusion_score, pairwise_score, prior_penalty
+        return total_score, exclusion_score, pairwise_score, prior_penalty                
+#    def calculate_score(
+#        self,
+#        pos: Dict[str, np.ndarray],  # input positions
+#        sig: Dict[str, float],       # input sigma values
+#        sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
+#        excluded_pairs=None,
+#        use_sigma_distribution=False,
+#        prior_penalty_from_distribution=0.0
+#    ) -> Tuple[float, float, float, float]:
+#        """Calculate the log posterior for the pair-level interactions."""
+#        # 1) Excluded volume contribution (from BaseMCSampler)
+#        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
+#
+#        # 2) Pairwise negative log-likelihood (pair-specific)
+#        pairwise_score = 0.0
+#        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C'), ('C', 'C')]
+#        for type1, type2 in pair_types:
+#            pair_key = f"{type1}{type2}"
+#            if pair_key in self.params.pair_distances:
+#                target_dist = self.params.pair_distances[pair_key]
+#                sigma_value = sig[pair_key]  # Use the passed sigma
+#
+#                # Calculate pairwise score matrix
+#                score_matrix = self.calculate_pair_scores_matrix(
+#                    pos[type1],
+#                    pos[type2],
+#                    target_dist,
+#                    sigma_value
+#                )
+#
+#                # Mask diagonal (for same-type pairs)
+#                if type1 == type2:
+#                    mask = np.triu(np.ones_like(score_matrix), k=1)
+#                    score_matrix *= mask
+#
+#                # Zero out excluded pairs if provided
+#                if excluded_pairs:
+#                    for i in range(len(pos[type1])):
+#                        for j in range(len(pos[type2])):
+#                            if (type1, i, type2, j) in excluded_pairs:
+#                                score_matrix[i, j] = np.inf
+#
+#                # Identify minimal row/column pairs and accumulate the score
+#                row_indices = np.argmin(score_matrix, axis=1)
+#                col_indices = np.argmin(score_matrix, axis=0)
+#                row_pairs = {(i, row_indices[i]) for i in range(len(row_indices))}
+#                col_pairs = {(col_indices[j], j) for j in range(len(col_indices))}
+#                unique_pairs = row_pairs.union(col_pairs)
+#                for i, j in unique_pairs:
+#                    pairwise_score += self.pair_weight * score_matrix[i, j]
+#
+#        # 3) Prior penalty
+#        if not use_sigma_distribution:
+#            prior_penalty = self.priors.neg_log_prior(sig, sig_range)
+#        else:
+#            prior_penalty = prior_penalty_from_distribution
+#        
+#        total_score = exclusion_score + pairwise_score + prior_penalty
+#        
+#        return total_score, exclusion_score, pairwise_score, prior_penalty
     #----------------------------------------------------------------------
     def run_mc(
         self,
