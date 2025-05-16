@@ -214,7 +214,8 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
             # --- Sigma trace plots ---
             for chain_idx, chain_id in enumerate(all_sigma_histories):
                 plt.figure(figsize=(12, 8))
-                for i, sigma_type in enumerate(["AA", "AB", "BC", "CC"]):
+                #for i, sigma_type in enumerate(["AA", "AB", "BC", "CC"]):
+                for i, sigma_type in enumerate(["AA", "AB", "BC"]):
                     if sigma_type in all_sigma_histories[chain_id]:
                         plt.plot(all_sigma_histories[chain_id][sigma_type], label=sigma_type, color=palette[i])
                 plt.title(f'Combined Sigma Trace Plot - Chain {chain_idx} ({sampler_name})', fontsize=16)
@@ -423,7 +424,8 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.3
     if do_gmm_fits:
         pdf_filename_gmm = os.path.join(sampler_output_dir, f"{sampler_name}_combined_gmm_plots.pdf")
         with PdfPages(pdf_filename_gmm) as pdf:
-            sigma_types = ["AA", "AB", "BC", "CC"]
+            #sigma_types = ["AA", "AB", "BC", "CC"]
+            sigma_types = ["AA", "AB", "BC"]
             for sigma_type in sigma_types:
                 all_data_for_type = {}
                 all_gmms_for_type = {}

@@ -20,7 +20,8 @@ class GMMSigmaProvider:
             specific_chain: Load from a specific chain number (default: random selection)
         """
         self.sampler_name = sampler_name
-        self.pair_types = ["AA", "AB", "BC", "CC"]
+        #self.pair_types = ["AA", "AB", "BC", "CC"]
+        self.pair_types = ["AA", "AB", "BC"]
         
         # Set output directory
         if output_dir is None:
@@ -44,7 +45,7 @@ class GMMSigmaProvider:
             "AA": 2.0,
             "AB": 2.0,
             "BC": 2.0,
-            "CC": 2.0
+            #"CC": 2.0
         }
         
     def _load_gmm_parameters(self) -> Dict:

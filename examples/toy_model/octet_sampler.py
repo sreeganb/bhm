@@ -21,6 +21,7 @@ from typing import Dict, List, Tuple
 from scipy.stats import multivariate_normal
 from pair_sampler import PairSampler
 import h5py  # For reading HDF5 files
+import networkx as nx  # For graph operations
 #-----------------------------------------------------------------------
 class OctetSampler(BaseMCSampler):
     """
@@ -31,11 +32,10 @@ class OctetSampler(BaseMCSampler):
         super().__init__()  # Call BaseMCSampler constructor
         self.use_sigma_distribution = use_sigma_distribution
         self.params = SystemParameters()  # Initialize system parameters
-        self._initialize_step_sizes()
 
         # Basic sampler parameters
-        self.octet_trans_step = 0.01
-        self.octet_rot_step = 0.01
+        self.octet_trans_step = 0.05
+        self.octet_rot_step = 0.05
         self.octet_trans_acc_rate = 0.5
         self.target_acceptance = 0.5
 
@@ -130,7 +130,7 @@ class OctetSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
         
-    def propose_octet_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def propose_octet_move(self, positions: Dict[str, np.ndarray], octets) -> Dict[str, np.ndarray]:
         """
         Propose a move for a randomly selected octet by applying a small translation and rotation.
         This version does not apply periodic boundary conditions.
@@ -139,8 +139,8 @@ class OctetSampler(BaseMCSampler):
         new_pos = {k: v.copy() for k, v in positions.items()}
         
         # Get tetramers and then form octets
-        tetramers = self.ts.get_tetramers(new_pos) # Use new_pos in case get_tetramers modifies it
-        octets = self.get_octets(new_pos, tetramers)
+        #tetramers = self.ts.get_tetramers(new_pos) # Use new_pos in case get_tetramers modifies it
+        #octets = self.get_octets(new_pos, tetramers)
         
         if not octets:
             return new_pos # No octets to move, return original positions
@@ -199,15 +199,6 @@ class OctetSampler(BaseMCSampler):
             
         return new_pos
     
-    def _initialize_step_sizes(self):
-        """Set much smaller initial step sizes for better acceptance rates"""
-        self.octet_trans_step = 0.04  # Start with very small steps
-        self.octet_rot_step = 0.02
-        self.step_adaptation_factor = 0.95
-        self.min_step = 0.001  # Even smaller minimum
-        self.max_step = 0.2    # More conservative maximum
-        self.octet_trans_acc_rate = 0.1  # Start with a more realistic value
-
     def adapt_step_sizes(self, acceptance_rate):
         """
         Adapt step sizes based on acceptance rate to target ~30% acceptance
@@ -226,20 +217,16 @@ class OctetSampler(BaseMCSampler):
         # Enforce bounds
         self.octet_trans_step = max(self.min_step, min(self.max_step, self.octet_trans_step))
         self.octet_rot_step = max(self.min_step, min(self.max_step, self.octet_rot_step))
+    
+    def get_octets(self, positions: Dict[str, np.ndarray]) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
+        tetramers = self.ts.get_tetramers(positions)
+        #print("tetramers: ", tetramers)
 
-    def get_octets(self, positions: Dict[str, np.ndarray], tetramers=None, temp=0.9) -> List[Tuple]:
-        """
-        Group tetramers into octets (pairs of tetramers) with temperature-based selection.
-        Vectorized implementation for better performance.
-        """
-        if tetramers is None:
-            tetramers = self.ts.get_tetramers(positions)
-        
         if len(tetramers) < 2:
-            return []
-        
-        # Calculate tetramer centers using vectorized operations
-        centers = np.zeros((len(tetramers), 3))
+            return [], tetramers
+
+        # 1) Compute geometric centers for each tetramer
+        centers = np.zeros((len(tetramers), 3), dtype=np.float64)
         for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
             coords = np.vstack([
                 positions['A'][a_idx],
@@ -248,46 +235,98 @@ class OctetSampler(BaseMCSampler):
                 positions['C'][c_idx2]
             ])
             centers[i] = np.mean(coords, axis=0)
-        
-        # Form octets by pairing tetramers
+
+        # 2) If only one tetramer or fewer, no pairs possible
+        if len(tetramers) < 2:
+            return [], tetramers
+
+        # 3) Build a graph of tetramers (nodes) with edge weights = distances
+        G = nx.Graph()
+        for i_t in range(len(tetramers)):
+            G.add_node(i_t)
+        for i_t in range(len(tetramers)):
+            for j_t in range(i_t + 1, len(tetramers)):
+                dist_ij = np.linalg.norm(centers[i_t] - centers[j_t])
+                G.add_edge(i_t, j_t, weight=dist_ij)
+
+        # 4) Negate the weights to convert min-weight to max-weight problem
+        for u, v, d in G.edges(data=True):
+            d['weight'] = -d['weight']
+
+        # 5) Compute the maximum-weight perfect matching (which minimizes original distances)
+        matching = nx.algorithms.matching.max_weight_matching(G, maxcardinality=True)
+
+        # 6) Convert the matching (set of edges) into a list of octets
         octets = []
-        available = list(range(len(tetramers)))
-        box_size = self.params.box_size
-        
-        while len(available) >= 2:
-            # Pick first tetramer randomly
-            idx1 = np.random.choice(available)
-            available.remove(idx1)
-            
-            # Calculate all distances at once using vectorized operations
-            indices = np.array(available)
-            center1 = centers[idx1]
-            deltas = centers[indices] - center1
-            
-            # Periodic boundary correction (vectorized)
-            mask = np.abs(deltas) > box_size/2
-            deltas[mask] -= np.sign(deltas[mask]) * box_size
-            
-            # Calculate distances (vectorized)
-            distances = np.linalg.norm(deltas, axis=1)
-            
-            # Calculate selection probabilities
-            probs = np.exp(-distances / temp)
-            probs_sum = probs.sum()
-            
-            # Select second tetramer
-            if probs_sum > 1e-10:
-                probs = probs / probs_sum
-                idx2_rel = np.random.choice(len(available), p=probs)
-                idx2 = available[idx2_rel]
-            else:
-                idx2 = np.random.choice(available)
-            
-            # Add the pair to octets and remove from available
-            octets.append((tetramers[idx1], tetramers[idx2]))
-            available.remove(idx2)
-        
-        return octets
+        for i_t, j_t in matching:
+            # Sort the node IDs for consistency
+            i_t, j_t = sorted([i_t, j_t])
+            octets.append((tetramers[i_t], tetramers[j_t]))
+
+        #print(f"Octets: {octets}")
+        return octets, tetramers
+    
+#    def get_octets(self, positions: Dict[str, np.ndarray], tetramers=None, temp=0.9) -> List[Tuple]:
+#        """
+#        Group tetramers into octets (pairs of tetramers) with temperature-based selection.
+#        Vectorized implementation for better performance.
+#        """
+#        if tetramers is None:
+#            tetramers = self.ts.get_tetramers(positions)
+#        
+#        if len(tetramers) < 2:
+#            return []
+#        
+#        # Calculate tetramer centers using vectorized operations
+#        centers = np.zeros((len(tetramers), 3))
+#        for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
+#            coords = np.vstack([
+#                positions['A'][a_idx],
+#                positions['B'][b_idx],
+#                positions['C'][c_idx1],
+#                positions['C'][c_idx2]
+#            ])
+#            centers[i] = np.mean(coords, axis=0)
+#        
+#        # Form octets by pairing tetramers
+#        octets = []
+#        available = list(range(len(tetramers)))
+#        box_size = self.params.box_size
+#        
+#        while len(available) >= 2:
+#            # Pick first tetramer randomly
+#            idx1 = np.random.choice(available)
+#            available.remove(idx1)
+#            
+#            # Calculate all distances at once using vectorized operations
+#            indices = np.array(available)
+#            center1 = centers[idx1]
+#            deltas = centers[indices] - center1
+#            
+#            # Periodic boundary correction (vectorized)
+#            mask = np.abs(deltas) > box_size/2
+#            deltas[mask] -= np.sign(deltas[mask]) * box_size
+#            
+#            # Calculate distances (vectorized)
+#            distances = np.linalg.norm(deltas, axis=1)
+#            
+#            # Calculate selection probabilities
+#            probs = np.exp(-distances / temp)
+#            probs_sum = probs.sum()
+#            
+#            # Select second tetramer
+#            if probs_sum > 1e-10:
+#                probs = probs / probs_sum
+#                idx2_rel = np.random.choice(len(available), p=probs)
+#                idx2 = available[idx2_rel]
+#            else:
+#                idx2 = np.random.choice(available)
+#            
+#            # Add the pair to octets and remove from available
+#            octets.append((tetramers[idx1], tetramers[idx2]))
+#            available.remove(idx2)
+#        
+#        return octets
     
     def _random_unit_vector(self):
         """Generate a random unit vector."""
@@ -342,15 +381,15 @@ class OctetSampler(BaseMCSampler):
         # --- Initialize state ---
         current_positions = self.positions_os # Use the initial positions
         current_sigma = self.sigma.copy()
-        current_tetramers = self.ts.get_tetramers(current_positions)
-        current_octets = self.get_octets(current_positions, current_tetramers)
+        #current_tetramers = self.ts.get_tetramers(current_positions)
+        current_octets, current_tetramers = self.get_octets(current_positions)
 
         # Calculate initial prior penalty
         current_prior = (self.sig_provider.calculate_negative_log_prior(current_sigma) if self.use_sigma_distribution
                         else self.base_priors.neg_log_prior(current_sigma, self.sigma_range))
 
         # Calculate initial score
-        current_score, curr_ex, curr_tet, curr_oct = self.neg_log_posterior(
+        current_score, curr_ex, curr_pair, curr_tet, curr_oct = self.neg_log_posterior(
             current_positions, current_tetramers, current_octets, current_prior, current_sigma) # Debug initial state
 
         if not np.isfinite(current_score):
@@ -405,21 +444,21 @@ class OctetSampler(BaseMCSampler):
                                                                    accepts['tetramer'] / max(1, attempts['tetramer']))
             else:  # octet move
                 # Octet move proposes new positions
-                proposed_positions = self.propose_octet_move(current_positions)
+                proposed_positions = self.propose_octet_move(current_positions, current_octets)
 
             # --- Calculate components for the proposed state ---
             # Get tetramers and octets for the proposed configuration
             # Recalculate even if only sigma changed, as get_octets might depend on positions implicitly
             # (though ideally it shouldn't if only sigma changes)
-            proposed_tetramers = self.ts.get_tetramers(proposed_positions)
-            proposed_octets = self.get_octets(proposed_positions, proposed_tetramers)
+            #proposed_tetramers = self.ts.get_tetramers(proposed_positions)
+            proposed_octets, proposed_tetramers = self.get_octets(proposed_positions)
 
             # Calculate proposed prior penalty
             proposed_prior = (self.sig_provider.calculate_negative_log_prior(proposed_sigma) if self.use_sigma_distribution
                              else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
 
             # Calculate proposed total score and its components
-            proposed_score, prop_ex, prop_tet, prop_oct = self.neg_log_posterior(
+            proposed_score, prop_ex, prop_pair, prop_tet, prop_oct = self.neg_log_posterior(
                 proposed_positions, proposed_tetramers, proposed_octets, proposed_prior, proposed_sigma)
 
             # --- Check for non-finite scores ---
@@ -466,7 +505,6 @@ class OctetSampler(BaseMCSampler):
                  f.write(f"{total_moves},{move_type},{'ACCEPTED' if accept else 'REJECTED'},"
                          f"{temp:.3f},{current_score:.4f},{proposed_score:.4f},{delta:.4f},"
                          f"{log_ex:.4f},{log_tet:.4f},{log_oct:.4f},{log_prior:.4f}\n")
-
 
             # --- Update state if accepted ---
             if accept:
@@ -518,7 +556,7 @@ class OctetSampler(BaseMCSampler):
 
                      oct_rate = accepts['octet'] / max(1, attempts['octet'])
                      self.octet_trans_acc_rate = oct_rate # Update rate used by propose_octet_move
-                     self.adapt_step_sizes(oct_rate) # Adapt octet steps
+                     #self.adapt_step_sizes(oct_rate) # Adapt octet steps
                      print(f"Adapting step sizes: PosRate={pos_rate:.2f}, TetRate={tet_rate:.2f}, OctRate={oct_rate:.2f}")
                      print(f"--> New Octet steps: trans={self.octet_trans_step:.4f}, rot={self.octet_rot_step:.4f}")
 
@@ -539,93 +577,38 @@ class OctetSampler(BaseMCSampler):
         print(f"Final sigma values: {current_sigma}") # Print the last accepted sigma
 
         return best_positions, trajectory_file
-
+    
     def calculate_octet_scores_batch(self, positions, octets, sig):
-        """
-        Efficiently calculate octet scores with minimal memory allocations and vectorized operations.
-        
-        Args:
-            positions: Dictionary of particle positions
-            octets: List of pairs of tetramers [(tet1, tet2), ...]
-            sig: Dictionary of sigma values
-        
-        Returns:
-            np.ndarray: Array of octet scores (one per octet)
-        """
+        """Calculate scores for all octets (pairs of adjacent tetramers) with optional debugging."""
         if not octets:
-            return np.array([])  # Empty array with default float64 precision
+            return np.array([], dtype=np.float32)
         
         n_octets = len(octets)
         
-        # Extract all pairs in one pass to minimize object creation
-        a1, b1, c1a, c1b = [], [], [], []
-        a2, b2, c2a, c2b = [], [], [], []
+        # for the two chosen tetramers use the ts.
         
-        for tet1, tet2 in octets:
-            a1.append(tet1[0])
-            b1.append(tet1[1])
-            c1a.append(tet1[2])
-            c1b.append(tet1[3])
-            
-            a2.append(tet2[0])
-            b2.append(tet2[1])
-            c2a.append(tet2[2])
-            c2b.append(tet2[3])
+        # Extract indices for A particles in each tetramer pair
+        a1_indices = np.array([tet1[0] for tet1, tet2 in octets], dtype=np.int32)
+        a2_indices = np.array([tet2[0] for tet1, tet2 in octets], dtype=np.int32)
         
-        # Convert to arrays (int is more efficient than int32/int64 here)
-        a1, b1, c1a, c1b = map(np.array, [a1, b1, c1a, c1b])
-        a2, b2, c2a, c2b = map(np.array, [a2, b2, c2a, c2b])
+        # Get A particle positions
+        pos_a1 = positions['A'][a1_indices]
+        pos_a2 = positions['A'][a2_indices]
         
-        # Get positions (single lookup per type)
-        posA1 = positions['A'][a1]
-        posB1 = positions['B'][b1]
-        posC1a = positions['C'][c1a]
-        posC1b = positions['C'][c1b]
+        # Calculate distances between A1 and A2 in each octet
+        aa_dists = np.sqrt(np.sum((pos_a1 - pos_a2)**2, axis=1))
+        #print(f"AA distances: {aa_dists}")
         
-        posA2 = positions['A'][a2]
-        posB2 = positions['B'][b2]
-        posC2a = positions['C'][c2a]
-        posC2b = positions['C'][c2b]
+        # Define target distance for A-A between adjacent tetramers
+        aa_inter_tetramer_target = self.params.pair_distances['AA']
         
-        # Preallocate the results array
-        octet_scores = np.zeros(n_octets)
+        # Calculate scores
+        aa_scores = ((aa_dists - aa_inter_tetramer_target)**2) / (2 * sig['AA']**2) + np.log(2 * np.pi * sig['AA'])
         
-        # Compute all distances in one vectorized pass per pair type
-        # Correct Gaussian NLL with proper sigma² term
-        def score_pairs(pos1, pos2, target_dist, sigma_val):
-            delta = pos1 - pos2
-            dist = np.sqrt(np.sum(delta**2, axis=1))
-            return ((dist - target_dist)**2)/(2.0*sigma_val**2) + 0.5*np.log(2.0*np.pi*sigma_val**2)
+        # Total octet scores (currently just A-A; add more specific pairs if needed)
+        scores = aa_scores
         
-        # 1. A-A interactions
-        octet_scores += score_pairs(posA1, posA2, self.params.pair_distances['AA'], sig['AA'])
-        
-        # 2. A-B interactions (both directions)
-        octet_scores += score_pairs(posA1, posB2, self.params.pair_distances['AB'], sig['AB'])
-        octet_scores += score_pairs(posB1, posA2, self.params.pair_distances['AB'], sig['AB'])
-        
-        # 3. B-C interactions (four combinations, vectorized)
-        bc_target = self.params.pair_distances['BC']
-        bc_sigma = sig['BC']
-        
-        # B1-C2a, B1-C2b
-        octet_scores += score_pairs(posB1, posC2a, bc_target, bc_sigma)
-        octet_scores += score_pairs(posB1, posC2b, bc_target, bc_sigma)
-        
-        # C1a-B2, C1b-B2
-        octet_scores += score_pairs(posC1a, posB2, bc_target, bc_sigma)
-        octet_scores += score_pairs(posC1b, posB2, bc_target, bc_sigma)
-        
-        # 4. C-C interactions (all four combinations)
-        cc_target = self.params.pair_distances['CC']
-        cc_sigma = sig['CC']
-        
-        octet_scores += score_pairs(posC1a, posC2a, cc_target, cc_sigma)
-        octet_scores += score_pairs(posC1a, posC2b, cc_target, cc_sigma)
-        octet_scores += score_pairs(posC1b, posC2a, cc_target, cc_sigma)
-        octet_scores += score_pairs(posC1b, posC2b, cc_target, cc_sigma)
-        
-        return octet_scores
+        return scores
 
     def neg_log_posterior(
         self,
@@ -636,6 +619,7 @@ class OctetSampler(BaseMCSampler):
         sig: Dict[str, float] = None,
         exclusion_weight: float = 1.0,
         pair_weight: float = 1.0,
+        tetramer_weight: float = 1.0,
         octet_weight: float = 1.0,
     ) -> Tuple[float, float, float, float]:
         """
@@ -655,61 +639,9 @@ class OctetSampler(BaseMCSampler):
             )
             return score, ex_score, pair_score, 0.0
 
-        # Use a dict-based structure first (faster for insertions)
-        # Format: {(type1, idx1, type2, idx2): True}
-        excluded_dict = {}
-        
-        # Helper to add a pair to exclusions only once
-        def add_pair(t1, i1, t2, i2):
-            excluded_dict[(t1, i1, t2, i2)] = True
-        
-        # 1) Process tetramers (intra-tetramer pairs)
-        for a, b, c1, c2 in tetramers:
-            # A-B connections (both directions)
-            add_pair('A', a, 'B', b)
-            add_pair('B', b, 'A', a)
-            
-            # B-C connections 
-            for c in [c1, c2]:
-                add_pair('B', b, 'C', c)
-                add_pair('C', c, 'B', b)
-            
-            # C1-C2 connection
-            add_pair('C', c1, 'C', c2)
-            add_pair('C', c2, 'C', c1)
-        
-        # 2) Process octets (inter-tetramer pairs)
-        for (a1, b1, c1a, c1b), (a2, b2, c2a, c2b) in octets:
-            # A-A connection
-            add_pair('A', a1, 'A', a2)
-            add_pair('A', a2, 'A', a1)
-            
-            # A-B cross-connections
-            add_pair('A', a1, 'B', b2)
-            add_pair('B', b2, 'A', a1)
-            add_pair('A', a2, 'B', b1)
-            add_pair('B', b1, 'A', a2)
-            
-            # B-C cross-connections
-            for c2 in [c2a, c2b]:
-                add_pair('B', b1, 'C', c2)
-                add_pair('C', c2, 'B', b1)
-            
-            for c1 in [c1a, c1b]:
-                add_pair('B', b2, 'C', c1)
-                add_pair('C', c1, 'B', b2)
-            
-            # C-C cross-connections (4 pairs)
-            for c1 in [c1a, c1b]:
-                for c2 in [c2a, c2b]:
-                    add_pair('C', c1, 'C', c2)
-                    add_pair('C', c2, 'C', c1)
-        
-        # Convert to set only once at the end
-        excluded_pairs = set(excluded_dict.keys())
         excluded_pairs = None
         
-        # 3) Calculate scores with minimum memory overhead
+        # 3) Calculate pair scores
         score, ex_score, pair_score, _ = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
             excluded_pairs=excluded_pairs,
@@ -717,9 +649,19 @@ class OctetSampler(BaseMCSampler):
             prior_penalty_from_distribution=prior_penalty
         )
         
-        # 4) Calculate octet score efficiently
-        octet_scores = self.calculate_octet_scores_batch(positions, octets, sigma)
-        weighted_octet_score = octet_weight * np.sum(octet_scores)
-        total_score = score + weighted_octet_score
+        # 2) Calculate tetramer scores 
+        tetramer_score = 0.0
+        tet_score = self.ts.calculate_tetramer_scores_batch(positions, tetramers, 
+                                                            sigma)
+        tetramer_score = tetramer_weight * tet_score.sum()
         
-        return total_score, ex_score, pair_score, weighted_octet_score
+        # 3) Octet score
+        octet_score = 0.0
+        octet_scores = self.calculate_octet_scores_batch(positions, octets, sigma)
+        octet_score = octet_weight * octet_scores.sum()
+        
+        # 4) Total score
+        total_score = score + tetramer_score + octet_score
+            
+        #return total_score, ex_score, pair_score, weighted_octet_score
+        return total_score, ex_score, pair_score, tetramer_score, octet_score

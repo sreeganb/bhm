@@ -46,7 +46,8 @@ class TetramerSampler(BaseMCSampler):
         self.sig_provider = GMMSigmaProvider('TetramerSampler')
         
         # Validate required pair types
-        required_pairs = {"AA", "AB", "BC", "CC"}
+        #required_pairs = {"AA", "AB", "BC", "CC"}
+        required_pairs = {"AA", "AB", "BC"}
         if not required_pairs.issubset(self.params.pair_distances.keys()):
             raise ValueError("Missing required pair types for tetramer sampling.")
         
