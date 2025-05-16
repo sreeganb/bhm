@@ -5,6 +5,7 @@ import pandas as pd
 from parameters import SystemParameters
 from pair_score import ScoringSystem
 from tetramer_score import TetramerScorer
+import networkx as nx
 
 class OctetScorer:
     def __init__(self):
@@ -18,19 +19,16 @@ class OctetScorer:
             'AB': 1.0,
             'BC': 1.0,
             'CC': 1.0
-        }
-    
-    def get_octets(self, positions: Dict[str, np.ndarray], temp: float = 0.99999) -> List[Tuple[Tuple[int, ...], Tuple[int, ...]]]:
-        """
-        Group tetramers into octets with temperature-based selection, ignoring periodic boundaries.
-        """
- 
+        }    
+
+    def get_octets(self, positions: Dict[str, np.ndarray]) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
         tetramers = self.ts.get_tetramers(positions)
+        print("tetramers: ", tetramers)
 
         if len(tetramers) < 2:
-            return []
+            return [], tetramers
 
-        # Compute each tetramer's geometric center
+        # 1) Compute geometric centers for each tetramer
         centers = np.zeros((len(tetramers), 3), dtype=np.float64)
         for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
             coords = np.vstack([
@@ -41,33 +39,36 @@ class OctetScorer:
             ])
             centers[i] = np.mean(coords, axis=0)
 
+        # 2) If only one tetramer or fewer, no pairs possible
+        if len(tetramers) < 2:
+            return [], tetramers
+
+        # 3) Build a graph of tetramers (nodes) with edge weights = distances
+        G = nx.Graph()
+        for i_t in range(len(tetramers)):
+            G.add_node(i_t)
+        for i_t in range(len(tetramers)):
+            for j_t in range(i_t + 1, len(tetramers)):
+                dist_ij = np.linalg.norm(centers[i_t] - centers[j_t])
+                G.add_edge(i_t, j_t, weight=dist_ij)
+
+        # 4) Negate the weights to convert min-weight to max-weight problem
+        for u, v, d in G.edges(data=True):
+            d['weight'] = -d['weight']
+
+        # 5) Compute the maximum-weight perfect matching (which minimizes original distances)
+        matching = nx.algorithms.matching.max_weight_matching(G, maxcardinality=True)
+
+        # 6) Convert the matching (set of edges) into a list of octets
         octets = []
-        available = list(range(len(tetramers)))
+        for i_t, j_t in matching:
+            # Sort the node IDs for consistency
+            i_t, j_t = sorted([i_t, j_t])
+            octets.append((tetramers[i_t], tetramers[j_t]))
 
-        while len(available) >= 2:
-            idx1 = np.random.choice(available)
-            available.remove(idx1)
-
-            indices = np.array(available)
-            center1 = centers[idx1]
-            deltas = centers[indices] - center1
-            distances = np.linalg.norm(deltas, axis=1)
-
-            # Temperature-based probabilities
-            probs = np.exp(-distances / temp)
-            probs_sum = probs.sum()
-            if probs_sum > 1e-10:
-                probs /= probs_sum
-                idx2_rel = np.random.choice(len(available), p=probs)
-                idx2 = available[idx2_rel]
-            else:
-                idx2 = np.random.choice(available)
-
-            octets.append((tetramers[idx1], tetramers[idx2]))
-            available.remove(idx2)
-
-        return octets, tetramers 
-
+        print(f"Octets: {octets}")
+        return octets, tetramers
+    
     def calculate_octet_scores_batch(self, positions, octets, sig, debug_logging=True):
         """Calculate scores for all octets (pairs of adjacent tetramers) with optional debugging."""
         if not octets:
@@ -87,6 +88,7 @@ class OctetScorer:
         
         # Calculate distances between A1 and A2 in each octet
         aa_dists = np.sqrt(np.sum((pos_a1 - pos_a2)**2, axis=1))
+        print(f"AA distances: {aa_dists}")
         
         # Define target distance for A-A between adjacent tetramers
         aa_inter_tetramer_target = self.params.pair_distances['AA']
@@ -97,10 +99,7 @@ class OctetScorer:
         # Total octet scores (currently just A-A; add more specific pairs if needed)
         scores = aa_scores
         
-        # sum the scores for all octets
-        final_score = np.sum(scores)
-        
-        return final_score
+        return scores
 
     def neg_log_posterior(
         self,
@@ -111,7 +110,7 @@ class OctetScorer:
         pair_weight: float = 1.0,
         tetramer_weight: float = 1.0,
         octet_weight: float = 1.0,
-        debug: bool = False
+        debug: bool = True
     ) -> Tuple[float, float, float, float, float]:
         sigma = sig if sig is not None else self.sigma
         
@@ -130,7 +129,8 @@ class OctetScorer:
         octets, tetramers = self.get_octets(positions)
         
         tetramer_score = 0.0
-        tet_score = self.ts.calculate_tetramer_scores_batch(positions, tetramers, sigma, debug_logging=debug)
+        tet_score = self.ts.calculate_tetramer_scores_batch(positions, tetramers, 
+                                                            sigma, debug_logging=debug)
         tetramer_score = tetramer_weight * tet_score.sum()
         
         # Octet score
@@ -149,3 +149,24 @@ class OctetScorer:
             print(f"Total Score: {total_score:.2f}")
         
         return total_score, ex_score, pair_score, tetramer_score, octet_score
+    
+if __name__ == "__main__":
+    os = OctetScorer()
+    sp = SystemParameters()
+    ideal_coords = sp.ideal_coordinates
+    sigma_fixed = {
+        'AA': 1.0,
+        'AB': 1.0,
+        'BC': 1.0,
+        'CC': 1.0
+    }
+    os.neg_log_posterior(
+        ideal_coords,
+        prior_penalty_from_distribution=0.0,
+        sig=sigma_fixed,
+        exclusion_weight=1.0,
+        pair_weight=1.0,
+        tetramer_weight=1.0,
+        octet_weight=1.0,
+        debug=True
+    )

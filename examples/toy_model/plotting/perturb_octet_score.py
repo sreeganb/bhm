@@ -24,7 +24,7 @@ class PerturbSystemParameters:
     radii: Dict[str, float] = field(default_factory=dict)
     pair_distances: Dict = field(default_factory=dict)
     min_dists: Dict[Tuple[str, str], float] = field(default_factory=dict)
-    fixed_sigma: Dict[str, float] = field(default_factory=lambda: {'AA': 0.75, 'AB': 0.45, 'BC': 0.35, 'CC': 0.65})
+    fixed_sigma: Dict[str, float] = field(default_factory=lambda: {'AA': 1.5, 'AB': 0.9, 'BC': 0.8, 'CC': 1.0})
 
     # Replace TetramerScorer with OctetScorer
     tscorer: OctetScorer = field(default_factory=OctetScorer)
@@ -48,19 +48,17 @@ class PerturbSystemParameters:
         
         # Use the OctetScorer's default tetramer generator, then form octets
         #self.tets_ideal = self.tscorer._get_default_tetramers(self.ideal_coordinates)
-        self.tets_ideal = self.ts.get_tetramers(self.ideal_coordinates)
-        self.octets_ideal = self.tscorer.get_octets(self.ideal_coordinates, tetramers=self.tets_ideal)
+        #self.tets_ideal = self.ts.get_tetramers(self.ideal_coordinates)
+        #self.octets_ideal, _ = self.tscorer.get_octets(self.ideal_coordinates)
 
         score_tuple = self.tscorer.neg_log_posterior(
             positions=self.ideal_coordinates,
-            tetramers=self.tets_ideal,
-            octets=self.octets_ideal,
             sig=self.fixed_sigma,
             exclusion_weight=1.0,
             pair_weight=1.0,
             octet_weight=1.0
         )
-        self.tscorer.calculate_pairwise_distances(self.ideal_coordinates)
+        #self.tscorer.calculate_pairwise_distances(self.ideal_coordinates)
         self.ideal_score = score_tuple[0]
         print(f"Initialized Ideal Structure: Score = {self.ideal_score:.4f}")
 
@@ -282,13 +280,11 @@ class PerturbSystemParameters:
                 num_successful_perturbations_for_mag += 1
                 # Default tetramers, then octets from those
                 #tets_perturbed = self.tscorer._get_default_tetramers(perturbed_coords)
-                tets_perturbed = self.ts.get_tetramers(perturbed_coords)
-                octets_perturbed = self.tscorer.get_octets(perturbed_coords, tetramers=tets_perturbed)
+                #tets_perturbed = self.ts.get_tetramers(perturbed_coords)
+                #octets_perturbed, _ = self.tscorer.get_octets(perturbed_coords)
 
                 score_vals = self.tscorer.neg_log_posterior(
                     positions=perturbed_coords,
-                    tetramers=tets_perturbed,
-                    octets=octets_perturbed,
                     sig=self.fixed_sigma,
                     exclusion_weight=exclusion_w,
                     pair_weight=pair_w,
@@ -511,9 +507,9 @@ class PerturbSystemParameters:
 
 if __name__ == "__main__":
     magnitudes_to_test = np.concatenate([
-        np.linspace(0.05, 0.5, 10),
-        np.linspace(0.6, 2.5, 15),
-        np.linspace(2.6, 5.0, 10)
+        np.linspace(0.05, 0.5, 20),
+        np.linspace(0.6, 2.5, 20),
+        np.linspace(2.6, 10.0, 20)
     ])
     num_perturbations_per_mag = 50
 
