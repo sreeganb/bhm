@@ -223,6 +223,7 @@ class TetramerSampler(BaseMCSampler):
     def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/tetramersampler_results/"):
         """
         Monte Carlo sampling with position, sigma, and tetramer moves.
+        Runs for a fixed number of total steps (accepted + rejected).
         Simplified for better performance and readability.
         """
         # Setup output directory
@@ -237,42 +238,32 @@ class TetramerSampler(BaseMCSampler):
         sigma_history = {key: np.zeros(n_steps // save_freq + 1) for key in self.sigma}
         accepts = {'position': 0, 'sigma': 0, 'tetramer': 0}
         attempts = {'position': 0, 'sigma': 0, 'tetramer': 0}
+        accepted_moves = 0  # Track total accepted moves
         
         # Initialize state
         current_tetramers = self.get_tetramers(self.positions_ts)
         prior_penalty = (self.sig_provider.calculate_negative_log_prior(self.sigma) if self.use_sigma_distribution 
                         else self.base_priors.neg_log_prior(self.sigma, self.sigma_range))
-#        current_score, curr_ex, curr_pair, curr_tet = self.neg_log_posterior(
-#            self.positions_ts, current_tetramers, prior_penalty, self.sigma)
-        # And also for the initial score calculation at the beginning:
         current_score, curr_ex, curr_pair, curr_tet = self.neg_log_posterior(
-            self.positions_ts, current_tetramers, prior_penalty, self.sigma, 
-            debug=False  # Debug the initial state
-        )
+            self.positions_ts, current_tetramers, prior_penalty, self.sigma, debug=False)
         
         # Store initial sigma values
         for key in self.sigma:
             sigma_history[key][0] = self.sigma[key]
         
-        # Main MCMC loop
+        # Main MCMC loop: run for exactly n_steps total moves
         move_types = ['position', 'sigma', 'tetramer']
         move_probs = [0.4, 0.1, 0.5]  # position, sigma, tetramer
         
-        # Simple cooling schedule
+        # Simple cooling schedule based on total steps
         temp_start, temp_end = 5.0, 1.0
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
-        print(f"Starting MCMC sampling for {n_steps} steps...")
+        print(f"Starting MCMC sampling for {n_steps} total steps...")
         
-        accepted_moves = 0
-        total_moves = 0
-        max_iterations = n_steps * 30  # Safety cap
-        
-        while accepted_moves < n_steps and total_moves < max_iterations:
-            total_moves += 1
-            
-            # Temperature schedule
-            temp = temp_start * (temp_decay ** accepted_moves)
+        for step in range(1, n_steps + 1):
+            # Temperature schedule based on total steps
+            temp = temp_start * (temp_decay ** step)
             
             # Select move type
             move_type = np.random.choice(move_types, p=move_probs)
@@ -280,15 +271,15 @@ class TetramerSampler(BaseMCSampler):
             
             # Propose move
             if move_type == 'position':
-                proposed_positions = self.propose_position_move(self.positions_ts, accepts['position'] / max(1, accepted_moves))
+                proposed_positions = self.propose_position_move(self.positions_ts, accepts['position'] / max(1, step))
                 proposed_sigma = self.sigma
                 proposed_tetramers = self.get_tetramers(proposed_positions)
             elif move_type == 'sigma':
                 proposed_positions = self.positions_ts
-                proposed_sigma, _ = self.propose_sigma_move(self.sigma, accepts['sigma'] / max(1, accepted_moves))
+                proposed_sigma, _ = self.propose_sigma_move(self.sigma, accepts['sigma'] / max(1, step))
                 proposed_tetramers = current_tetramers  # Reuse
             else:  # tetramer move
-                proposed_positions = self.propose_tetramer_move(self.positions_ts, accepts['tetramer'] / max(1, accepted_moves))
+                proposed_positions = self.propose_tetramer_move(self.positions_ts, accepts['tetramer'] / max(1, step))
                 proposed_sigma = self.sigma
                 proposed_tetramers = self.get_tetramers(proposed_positions)
             
@@ -297,12 +288,8 @@ class TetramerSampler(BaseMCSampler):
                         else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
             
             # Calculate new score
-#            proposed_score, prop_ex, prop_pair, prop_tet = self.neg_log_posterior(
-#                proposed_positions, proposed_tetramers, new_prior, proposed_sigma)
             proposed_score, prop_ex, prop_pair, prop_tet = self.neg_log_posterior(
-                proposed_positions, proposed_tetramers, new_prior, proposed_sigma, 
-                debug=False  # Enable debug when score is too high
-            )
+                proposed_positions, proposed_tetramers, new_prior, proposed_sigma, debug=False)
             
             # Metropolis criterion
             delta = proposed_score - current_score
@@ -323,26 +310,26 @@ class TetramerSampler(BaseMCSampler):
                 
                 accepts[move_type] += 1
                 accepted_moves += 1
+            
+            # Save state every save_freq total steps
+            if step % save_freq == 0:
+                # Store sigma history
+                save_idx = step // save_freq
+                if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
+                    for key in self.sigma:
+                        sigma_history[key][save_idx] = self.sigma[key]
                 
-                # Save state periodically
-                if accepted_moves % save_freq == 0:
-                    # Store sigma history
-                    save_idx = accepted_moves // save_freq
-                    if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
-                        for key in self.sigma:
-                            sigma_history[key][save_idx] = self.sigma[key]
-                    
-                    # Save to disk using existing method
-                    self.save_state_to_disk(
-                        accepted_moves, self.positions_ts, self.sigma, current_score,
-                        prior_score=new_prior, pair_score=curr_pair,
-                        exvol_score=curr_ex, tet_score=curr_tet,
-                        traj_file=trajectory_file
-                    )
-                    
-                    # Print progress
-                    acceptance_rate = accepted_moves / total_moves
-                    print(f"Step {accepted_moves}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={acceptance_rate:.2f}")
+                # Save to disk using existing method
+                self.save_state_to_disk(
+                    step, self.positions_ts, self.sigma, current_score,
+                    prior_score=new_prior, pair_score=curr_pair,
+                    exvol_score=curr_ex, tet_score=curr_tet,
+                    traj_file=trajectory_file
+                )
+                
+                # Print progress
+                acceptance_rate = accepted_moves / step
+                print(f"Step {step}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={acceptance_rate:.2f}")
         
         # Save sigma history
         import pandas as pd
@@ -354,6 +341,10 @@ class TetramerSampler(BaseMCSampler):
         for move_type in move_types:
             rate = accepts[move_type] / max(1, attempts[move_type])
             print(f"- {move_type}: {rate:.2f} acceptance ({accepts[move_type]}/{attempts[move_type]})")
+        print(f"- Total steps: {n_steps}")
+        print(f"- Accepted moves: {accepted_moves}")
+        print(f"- Overall acceptance rate: {accepted_moves / n_steps:.2f}")
+        print(f"- Best score: {best_score:.2f}")
         
         return best_positions, trajectory_file
 #-----------------------------------------------------------------------

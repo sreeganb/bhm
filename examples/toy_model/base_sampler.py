@@ -129,7 +129,7 @@ class BaseMCSampler:
         log_current = np.log(sigma[pair_type])
 
         # MUCH LARGER step size - this is critical
-        base_step_size = 0.1  # 10x larger than your current value (0.009)
+        base_step_size = 0.15  # 10x larger than your current value (0.009)
         
         # Use more substantial adaptation
         if accept_rate < 0.2:

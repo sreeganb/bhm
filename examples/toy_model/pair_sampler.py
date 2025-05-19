@@ -174,6 +174,7 @@ class PairSampler(BaseMCSampler):
     ) -> Tuple[Dict[str, np.ndarray], str]:
         """
         Monte Carlo sampling with position and sigma moves.
+        Runs for a fixed number of total steps (accepted + rejected).
         Optimized for performance and reduced memory usage.
         """
         # Setup output directory
@@ -188,12 +189,12 @@ class PairSampler(BaseMCSampler):
         sigma_history = {key: np.zeros(n_steps // save_freq + 1) for key in self.sigma}
         accepts = {'position': 0, 'sigma': 0}
         attempts = {'position': 0, 'sigma': 0}
+        accepted_moves = 0  # Track total accepted moves
         
         # Initial score calculation
         current_score, curr_excl, curr_pair, curr_prior = self.calculate_score(
             self.positions_ps, self.sigma, self.sigma_range, 
-            set(), False, 0.0,
-           # debug_pairs=(debug and True)
+            set(), False, 0.0
         )
         
         # Store initial sigma values
@@ -211,25 +212,19 @@ class PairSampler(BaseMCSampler):
             with open(self.pairs_log_file, "w") as f:
                 f.write("# MCMC Pair Selection Log\n")
         
-        # Main MCMC loop
+        # Main MCMC loop: run for exactly n_steps total moves
         move_types = ['position', 'sigma']
         move_probs = [0.9, 0.1]  # position, sigma
         
-        # Simple cooling schedule
+        # Simple cooling schedule based on total steps
         temp_start, temp_end = 5.0, 1.0
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
-        print(f"Starting MCMC sampling for {n_steps} steps...")
+        print(f"Starting MCMC sampling for {n_steps} total steps...")
         
-        accepted_moves = 0
-        total_moves = 0
-        max_iterations = n_steps * 30  # Safety cap
-        
-        while accepted_moves < n_steps and total_moves < max_iterations:
-            total_moves += 1
-            
-            # Temperature schedule
-            temp = temp_start * (temp_decay ** accepted_moves)
+        for step in range(1, n_steps + 1):
+            # Temperature schedule based on total steps
+            temp = temp_start * (temp_decay ** step)
             
             # Select move type
             move_type = np.random.choice(move_types, p=move_probs)
@@ -239,21 +234,20 @@ class PairSampler(BaseMCSampler):
             if move_type == 'position':
                 proposed_positions = self.propose_position_move(
                     self.positions_ps, 
-                    accepts['position'] / max(1, accepted_moves)
+                    accepts['position'] / max(1, step)
                 )
                 proposed_sigma = self.sigma
             else:  # sigma move
                 proposed_positions = self.positions_ps
                 proposed_sigma, _ = self.propose_sigma_move(
                     self.sigma, 
-                    accepts['sigma'] / max(1, accepted_moves)
+                    accepts['sigma'] / max(1, step)
                 )
             
             # Calculate new score
             proposed_score, prop_excl, prop_pair, prop_prior = self.calculate_score(
                 proposed_positions, proposed_sigma, self.sigma_range,
-                set(), False, 0.0,
-            #    debug_pairs=(debug and accepted_moves % save_freq == 0)
+                set(), False, 0.0
             )
             
             # Metropolis criterion
@@ -274,31 +268,31 @@ class PairSampler(BaseMCSampler):
                 
                 accepts[move_type] += 1
                 accepted_moves += 1
+            
+            # Save state every save_freq total steps
+            if step % save_freq == 0:
+                # Store sigma history
+                save_idx = step // save_freq
+                if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
+                    for key in self.sigma:
+                        sigma_history[key][save_idx] = self.sigma[key]
                 
-                # Save state periodically
-                if accepted_moves % save_freq == 0:
-                    # Store sigma history
-                    save_idx = accepted_moves // save_freq
-                    if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
-                        for key in self.sigma:
-                            sigma_history[key][save_idx] = self.sigma[key]
-                    
-                    # Save to disk using existing method
-                    self.save_state_to_disk(
-                        accepted_moves, self.positions_ps, self.sigma, current_score,
-                        prior_score=curr_prior, pair_score=curr_pair,
-                        exvol_score=curr_excl, tet_score=0.0,
-                        traj_file=trajectory_file
-                    )
-                    
-                    # Log to CSV
-                    acceptance_rate = accepted_moves / total_moves
-                    with open(csv_log_file, "a") as f:
-                        f.write(f"{accepted_moves},{curr_prior:.3f},{curr_excl:.3f},"
-                                f"{curr_pair:.3f},{current_score:.3f},{acceptance_rate:.3f}\n")
-                    
-                    # Print progress
-                    print(f"Step {accepted_moves}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={acceptance_rate:.2f}")
+                # Save to disk using existing method
+                self.save_state_to_disk(
+                    step, self.positions_ps, self.sigma, current_score,
+                    prior_score=curr_prior, pair_score=curr_pair,
+                    exvol_score=curr_excl, tet_score=0.0,
+                    traj_file=trajectory_file
+                )
+                
+                # Log to CSV
+                acceptance_rate = accepted_moves / step
+                with open(csv_log_file, "a") as f:
+                    f.write(f"{step},{curr_prior:.3f},{curr_excl:.3f},"
+                            f"{curr_pair:.3f},{current_score:.3f},{acceptance_rate:.3f}\n")
+                
+                # Print progress
+                print(f"Step {step}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={acceptance_rate:.2f}")
         
         # Save sigma history
         sigma_history_df = pd.DataFrame(sigma_history)
@@ -313,6 +307,9 @@ class PairSampler(BaseMCSampler):
         for move_type in move_types:
             rate = accepts[move_type] / max(1, attempts[move_type])
             print(f"- {move_type}: {rate:.2f} acceptance ({accepts[move_type]}/{attempts[move_type]})")
+        print(f"- Total steps: {n_steps}")
+        print(f"- Accepted moves: {accepted_moves}")
+        print(f"- Overall acceptance rate: {accepted_moves / n_steps:.2f}")
         print(f"- Best score: {best_score:.2f}")
         
         # Return best positions if found, otherwise current positions
