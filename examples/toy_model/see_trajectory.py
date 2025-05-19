@@ -122,6 +122,36 @@ def visualize_trajectory_plotly(
         start, end = frame_range
         trajectory = trajectory[start:end]
 
+    # Calculate a scaling factor to make particle sizes proportional to box
+    # This converts physical units to reasonable display sizes
+    scaling_factor = box_size / 100  # Adjust divisor to taste
+    
+    # Create initial frame data - this ensures particles show correctly on page load
+    frame_data = []
+    initial_state = trajectory[0]
+    
+    # Add particles for each type to initial view
+    for type_name in initial_state['positions'].keys():
+        config = particle_config.get(type_name, {'radius': 0.5, 'color': 'gray', 'opacity': 0.9})
+        
+        # Scale marker size to preserve relative proportions with box size
+        scaled_size = config['radius'] / scaling_factor
+        
+        frame_data.append(go.Scatter3d(
+            x=initial_state['positions'][type_name][:, 0],
+            y=initial_state['positions'][type_name][:, 1],
+            z=initial_state['positions'][type_name][:, 2],
+            mode='markers',
+            marker=dict(
+                size=scaled_size,  # Apply scaling
+                color=config['color'],
+                opacity=config['opacity'],
+                symbol='circle',
+                sizemode='diameter',  # Confirm we're treating size as diameter
+            ),
+            name=f"{type_name} (N={len(initial_state['positions'][type_name])})"
+        ))
+        
     # Initialize figure with subplots if statistics are displayed
     if show_statistics:
         fig = make_subplots(
@@ -168,7 +198,35 @@ def visualize_trajectory_plotly(
         bonds = compute_bonds(initial_state['positions'], bond_distance_cutoff, particle_config)
         for bond_trace in bonds:
             fig.add_trace(bond_trace, row=1, col=1)
-    
+
+    # Create animation frames
+    print("Creating animation frames...")
+    frames = []
+    for i, state in enumerate(tqdm(trajectory)):
+        frame_data = []
+        
+        # Add particles
+        for type_name in state['positions'].keys():
+            config = particle_config.get(type_name, {'radius': 0.5, 'color': 'gray', 'opacity': 0.9})
+            
+            # Scale marker size here too
+            scaled_size = config['radius'] / scaling_factor
+            
+            frame_data.append(go.Scatter3d(
+                x=state['positions'][type_name][:, 0],
+                y=state['positions'][type_name][:, 1],
+                z=state['positions'][type_name][:, 2],
+                mode='markers',
+                marker=dict(
+                    size=scaled_size,  # Apply scaling
+                    color=config['color'],
+                    opacity=config['opacity'],
+                    symbol='circle',
+                    sizemode='diameter',
+                ),
+                name=f"{type_name} (N={len(state['positions'][type_name])})"
+            ))
+            
     # Add statistics plot if enabled
     if show_statistics:
         stats_df = extract_trajectory_statistics(trajectory)

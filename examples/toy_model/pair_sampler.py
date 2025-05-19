@@ -65,10 +65,27 @@ class PairSampler(BaseMCSampler):
         else:
             debug_fh = None
             
-        # 1) Excluded volume contribution (from BaseMCSampler)
+    def calculate_score(
+        self,
+        pos: Dict[str, np.ndarray],  # input positions
+        sig: Dict[str, float],       # input sigma values
+        sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
+        excluded_pairs=None,
+        use_sigma_distribution=False,
+        prior_penalty_from_distribution=0.0,
+        debug=False,  # Whether to log detailed pair scoring info
+        debug_file="pair_score_debug.csv"  # File to write debug info to
+    ) -> Tuple[float, float, float, float]:
+        """Calculate the log posterior for the pair-level interactions."""
+        # Setup debug file if requested
+        if debug:
+            debug_fh = open(debug_file, 'w')
+            debug_fh.write("Pair Type, Particle1 Type, Particle1 Index, Particle2 Type, Particle2 Index, Distance, Target Distance, Sigma, Score\n")
+        else:
+            debug_fh = None
+            
+        # 1) Excluded volume contribution
         exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
-        np.set_printoptions(precision=1, suppress=True, linewidth=120)
-        
                     
         # 2) Pairwise negative log-likelihood (pair-specific)
         pairwise_score = 0.0
@@ -170,12 +187,11 @@ class PairSampler(BaseMCSampler):
         n_steps: int = 50000,
         save_freq: int = 100,
         output_dir: str = "output_analysis/pairsampler_results/",
-        debug: bool = False
+        debug: bool = True
     ) -> Tuple[Dict[str, np.ndarray], str]:
         """
         Monte Carlo sampling with position and sigma moves.
         Runs for a fixed number of total steps (accepted + rejected).
-        Optimized for performance and reduced memory usage.
         """
         # Setup output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -231,6 +247,7 @@ class PairSampler(BaseMCSampler):
             attempts[move_type] += 1
             
             # Propose move
+            pair_type = None  # Will track which sigma parameter was modified
             if move_type == 'position':
                 proposed_positions = self.propose_position_move(
                     self.positions_ps, 
@@ -239,7 +256,7 @@ class PairSampler(BaseMCSampler):
                 proposed_sigma = self.sigma
             else:  # sigma move
                 proposed_positions = self.positions_ps
-                proposed_sigma, _ = self.propose_sigma_move(
+                proposed_sigma, pair_type = self.propose_sigma_move(
                     self.sigma, 
                     accepts['sigma'] / max(1, step)
                 )
@@ -250,8 +267,19 @@ class PairSampler(BaseMCSampler):
                 set(), False, 0.0
             )
             
-            # Metropolis criterion
+            # Metropolis criterion with Jacobian correction for sigma moves
             delta = proposed_score - current_score
+            
+            # Add Jacobian correction for sigma moves (log(sigma'/sigma))
+            if move_type == 'sigma' and pair_type is not None:
+                # Add log(sigma'/sigma) to delta for proper detailed balance
+                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
+                delta += jacobian_term
+                if debug and step % save_freq == 0:
+                    print(f"  Sigma move: {pair_type} {self.sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
+                        f"Jacobian term: {jacobian_term:.4f}")
+            
+            # Acceptance probability
             accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
             
             if accept:

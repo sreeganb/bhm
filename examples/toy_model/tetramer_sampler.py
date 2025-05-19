@@ -136,7 +136,7 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.95) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
         """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
             # Quick validation
@@ -220,7 +220,7 @@ class TetramerSampler(BaseMCSampler):
             print(f"Error in tetramer generation: {e}")
             return []
 #-----------------------------------------------------------------------  
-    def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/tetramersampler_results/"):
+    def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/tetramersampler_results/", debug=False):
         """
         Monte Carlo sampling with position, sigma, and tetramer moves.
         Runs for a fixed number of total steps (accepted + rejected).
@@ -270,13 +270,14 @@ class TetramerSampler(BaseMCSampler):
             attempts[move_type] += 1
             
             # Propose move
+            pair_type = None  # Will track which sigma parameter was modified
             if move_type == 'position':
                 proposed_positions = self.propose_position_move(self.positions_ts, accepts['position'] / max(1, step))
                 proposed_sigma = self.sigma
                 proposed_tetramers = self.get_tetramers(proposed_positions)
             elif move_type == 'sigma':
                 proposed_positions = self.positions_ts
-                proposed_sigma, _ = self.propose_sigma_move(self.sigma, accepts['sigma'] / max(1, step))
+                proposed_sigma, pair_type = self.propose_sigma_move(self.sigma, accepts['sigma'] / max(1, step))
                 proposed_tetramers = current_tetramers  # Reuse
             else:  # tetramer move
                 proposed_positions = self.propose_tetramer_move(self.positions_ts, accepts['tetramer'] / max(1, step))
@@ -291,8 +292,19 @@ class TetramerSampler(BaseMCSampler):
             proposed_score, prop_ex, prop_pair, prop_tet = self.neg_log_posterior(
                 proposed_positions, proposed_tetramers, new_prior, proposed_sigma, debug=False)
             
-            # Metropolis criterion
+            # Metropolis criterion with Jacobian correction for sigma moves
             delta = proposed_score - current_score
+            
+            # Add Jacobian correction for sigma moves (log(sigma'/sigma))
+            if move_type == 'sigma' and pair_type is not None:
+                # Add log(sigma'/sigma) to delta for proper detailed balance
+                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
+                delta += jacobian_term
+                if debug and step % save_freq == 0:
+                    print(f"  Sigma move: {pair_type} {self.sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
+                        f"Jacobian term: {jacobian_term:.4f}")
+            
+            # Acceptance probability
             accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
             
             if accept:
@@ -370,11 +382,11 @@ class TetramerSampler(BaseMCSampler):
         centroid = np.mean(coords, axis=0)
 
         # Smaller base step sizes for large radii/distances
-        base_trans_step = 0.05  # Example: reduce from 0.1
-        base_rot_step   = 0.05  # Example: reduce from 0.1
+        base_trans_step = 0.095  # Example: reduce from 0.1
+        base_rot_step   = 0.095  # Example: reduce from 0.1
 
         # Adaptive step factor with narrower clipping
-        factor = np.clip(1.0 + 1.5 * (acceptance_rate - self.target_acceptance), 0.6, 1.6)
+        factor = np.clip(1.0 + 1.5 * (acceptance_rate - self.target_acceptance), 0.75, 1.75)
 
         # Symmetric translation (Gaussian around 0)
         trans_step = base_trans_step * factor
@@ -538,7 +550,7 @@ class TetramerSampler(BaseMCSampler):
 #            print(f"Total unique tetramer pairs: {unique_pairs} (expected {expected_pairs})")
 #            if unique_pairs != expected_pairs:
 #                print("WARNING: Some tetramers share components - potential source of problems!")
-        tetramer_pairs = None
+        tetramer_pairs = set()
         # 2) Calculate score excluding tetramer pairs
         result = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
