@@ -7,28 +7,39 @@ from parameters import SystemParameters
 import h5py
 import os
 #---------------------------------------------------------------------------
+# Modify Priors class to have a stronger uniform option
 class Priors:
-    '''Defines different priors for the sigma parameter.'''
-    def __init__(self, prior_type: str):
-        self.prior_type = prior_type
+    """Calculate prior penalties for parameters."""
     
+    def __init__(self, prior_type="uniform"):
+        self.prior_type = prior_type
+        
     def neg_log_prior(self, sigma: Dict[str, float], sigma_range: Dict[str, Tuple[float, float]]) -> float:
-        # for all the pair types loop over and find the total negative log prior
-        total_prior = 0.0
-        for pair_type in sigma.keys():
-            if sigma[pair_type] <= sigma_range[pair_type][0] or sigma[pair_type] >= sigma_range[pair_type][1]:
-                return np.inf
-            
-            if self.prior_type == 'uniform':
-                total_prior += 0.0
-            elif self.prior_type == 'jeffreys':
-                total_prior += np.log(sigma[pair_type])
-            elif self.prior_type == 'halfcauchy':
-                scale = 1.0
-                total_prior += np.log(1 + (sigma[pair_type] / scale) ** 2)
-            else:
-                raise ValueError(f"Unknown prior type: {self.prior_type}")
-        return total_prior
+        """Calculate negative log prior for all sigma values."""
+        penalty = 0.0
+        
+        for key, value in sigma.items():
+            if key in sigma_range:
+                min_val, max_val = sigma_range[key]
+                
+                if self.prior_type == "uniform":
+                    # Hard uniform prior
+                    if value < min_val or value > max_val:
+                        penalty += 1e6  # Extreme penalty for out-of-bounds
+                    # Add small penalty as sigma approaches bounds
+                    elif value < min_val * 1.1:
+                        penalty += 100 * (min_val * 1.1 - value) / min_val
+                    elif value > max_val * 0.9:
+                        penalty += 100 * (value - max_val * 0.9) / max_val
+                
+                elif self.prior_type == "jeffreys":
+                    # Jeffreys prior (proportional to 1/sigma)
+                    if value < min_val or value > max_val:
+                        penalty += 1e6
+                    else:
+                        penalty += np.log(value)
+                        
+        return penalty
 #---------------------------------------------------------------------------
 class BaseMCSampler:
     def __init__(self):
@@ -44,8 +55,8 @@ class BaseMCSampler:
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.02 * sum_radii
-            upper_bound = 0.2 * sum_radii
+            lower_bound = 0.01 * sum_radii
+            upper_bound = 0.4 * sum_radii
             # Propose sigma in log-space for a uniform proposal in that space.
             sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
             sigma[pair_type] = sigma_val
@@ -110,7 +121,6 @@ class BaseMCSampler:
     def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
         """
         Propose a move for one sigma parameter using symmetrical sampling in log-space.
-        If the proposed sigma is outside [min_sigma, max_sigma], the prior penalty likely rejects it.
         """
         import random
         pair_type = random.choice(list(sigma.keys()))
@@ -118,13 +128,26 @@ class BaseMCSampler:
         # Current value in log-space
         log_current = np.log(sigma[pair_type])
 
-        # Smaller base step size and narrower factor
-        base_step_size = 0.005 # switching from 0.002 to 0.004
-        step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, -0.1, 0.3))
+        # MUCH LARGER step size - this is critical
+        base_step_size = 0.1  # 10x larger than your current value (0.009)
+        
+        # Use more substantial adaptation
+        if accept_rate < 0.2:
+            # Decrease step if acceptance is too low
+            step_factor = 0.5
+        elif accept_rate > 0.5:
+            # Increase step if acceptance is too high
+            step_factor = 2.0
+        else:
+            # Normal range
+            step_factor = 1.0
+            
         step_size = base_step_size * step_factor
 
+        # Generate proposal
         log_proposed = log_current + np.random.normal(0, step_size)
 
+        # Create new sigma dictionary
         new_sigma = dict(sigma)
         new_sigma[pair_type] = np.exp(log_proposed)
 
@@ -157,7 +180,7 @@ class BaseMCSampler:
         type_names = list(self.params.component_counts.keys())
         type_name = random.choice(type_names)
 
-        base_step = self.params.radii[type_name] * 0.1
+        base_step = self.params.radii[type_name] * 0.05
         # Adaptive factor, with a zero-mean Gaussian ensuring symmetry
         adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.1, 2.75)
         step_size = base_step * adjustment
