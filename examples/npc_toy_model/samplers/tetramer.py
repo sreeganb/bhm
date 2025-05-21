@@ -62,7 +62,7 @@ def neg_log_posterior(
     
     return total_score, exclusion_score, pair_score, prior_penalty
 
-def run_pair_sampling(
+def run_tetramer_sampling(
     state: SystemState,
     n_steps: int = 1000,
     output_dir: str = "output/pair_sampler",

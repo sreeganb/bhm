@@ -6,34 +6,12 @@ import numpy as np
 from typing import Dict, List, Tuple, Set, Optional, Any, Union
 import numba as nb
 from functools import lru_cache
+from scipy.spatial.distance import cdist
 
 #************************************
 # Imports from files here
 #************************************
-from parameters import SystemParameters
-
-#--------------------------------------------------------------------------------
-# Utility functions
-#--------------------------------------------------------------------------------
-def get_system_parameters():
-    """Get system parameters from cached or default values"""
-    # This could be replaced with a singleton or cached version
-    # for now, just returning default values
-    return {
-        'pair_distances': {
-            'AA': 4.0,
-            'AB': 3.0,
-            'BC': 2.0,
-            'CC': 2.5
-        },
-        'radii': {
-            'A': 0.5,
-            'B': 0.5, 
-            'C': 0.5
-        },
-        'box_size': 10.0,
-        'excluded_volume_scale': 1000.0
-    }
+from core.parameters import SystemParameters
 
 #--------------------------------------------------------------------------------
 # Base scoring components
@@ -43,122 +21,100 @@ def calculate_excluded_volume(
     params: Optional[Dict[str, Any]] = None
 ) -> float:
     """
-    Calculate excluded volume score efficiently using vectorized operations.
-    
+    Calculate excluded volume score with a quadratic penalty for overlapping particles.
+
     Args:
         positions: Dictionary mapping particle types to position arrays (shape: Nx3)
-        params: Optional parameters dictionary
-        
+        params: Optional parameters dictionary containing 'radii'
+
     Returns:
         Excluded volume score (higher for overlapping particles)
     """
     if params is None:
-        params = get_system_parameters()
+        params = SystemParameters()  # Assumes this function exists
     
     ex_score = 0.0
-    radii = params['radii']
-    box_size = params.get('box_size', 10.0)
-    scale = params.get('excluded_volume_scale', 1000.0)
+    radii = params.radii
+    sigma = 0.1  # Penalty strength, matching excluded_volume_nll
     
-    # Calculate score for each pair of particle types
-    particle_types = list(positions.keys())
+#    particle_types = list(positions.keys())
     
-    for i, type1 in enumerate(particle_types):
-        pos1 = positions[type1]
-        if len(pos1) == 0:
-            continue
-            
-        r1 = radii[type1]
-        
-        # Calculate intra-type interactions (particles of same type)
-        if len(pos1) > 1:
-            # Compute all pairwise distances using broadcasting
-            delta = pos1[:, np.newaxis, :] - pos1[np.newaxis, :, :]
-            
-            # Apply periodic boundary conditions (assuming cubic box)
-            delta = np.where(delta > box_size/2, delta - box_size, delta)
-            delta = np.where(delta < -box_size/2, delta + box_size, delta)
-            
-            # Calculate squared distances (avoid sqrt for performance)
-            sq_dist = np.sum(delta**2, axis=2)
-            
-            # Set diagonal to infinity to exclude self-interactions
-            np.fill_diagonal(sq_dist, np.inf)
-            
-            # Calculate overlap penalties where distance < 2*radius
-            min_dist = 2 * r1
-            overlap = np.maximum(0, min_dist**2 - sq_dist)
-            ex_score += scale * np.sum(overlap) / 2  # Divide by 2 to avoid double counting
-        
-        # Calculate inter-type interactions (particles of different types)
-        for j, type2 in enumerate(particle_types[i+1:], i+1):
-            pos2 = positions[type2]
-            if len(pos2) == 0:
-                continue
+    for type1, pos1 in positions.items():
+        for type2, pos2 in positions.items():
+            if type1 <= type2:
+                min_dist = radii[type1] + radii[type2]
+                distances = cdist(pos1, pos2)
                 
-            r2 = radii[type2]
-            min_dist = r1 + r2
-            
-            # Calculate all pairwise distances between different types
-            delta = pos1[:, np.newaxis, :] - pos2[np.newaxis, :, :]
-            
-            # Apply periodic boundary conditions
-            delta = np.where(delta > box_size/2, delta - box_size, delta)
-            delta = np.where(delta < -box_size/2, delta + box_size, delta)
-            
-            sq_dist = np.sum(delta**2, axis=2)
-            
-            # Calculate overlap penalties
-            overlap = np.maximum(0, min_dist**2 - sq_dist)
-            ex_score += scale * np.sum(overlap)
+                # handle self-interactions
+                if type1 == type2:
+                    # use upper triangle to avoid double-counting
+                    mask = np.tril(np.ones_like(distances), k=-1)
+                    viol_mask = (distances < min_dist) & (mask > 0)
+                else:
+                    viol_mask = distances < min_dist
+                    
+                if np.any(viol_mask):
+                    overlaps = min_dist - distances[viol_mask]
+                    ex_score += np.sum((overlaps**2) / (sigma**2))
+    
+#    for i, type1 in enumerate(particle_types):
+#        pos1 = positions[type1]
+#        if len(pos1) == 0:
+#            continue
+#        r1 = radii[type1]
+#        
+#        # Intra-type interactions
+#        if len(pos1) > 1:
+#            delta = pos1[:, np.newaxis, :] - pos1[np.newaxis, :, :]
+#            distances = np.sqrt(np.sum(delta**2, axis=2))
+#            np.fill_diagonal(distances, np.inf)  # Exclude self-interactions
+#            min_dist = 2 * r1
+#            overlaps = np.maximum(0, min_dist - distances)
+#            # Use upper triangle to avoid double-counting
+#            triu_mask = np.triu(np.ones_like(overlaps), k=1)
+#            ex_score += np.sum((overlaps**2 * triu_mask) / (sigma**2))
+#        
+#        # Inter-type interactions
+#        for type2 in particle_types[i+1:]:
+#            pos2 = positions[type2]
+#            if len(pos2) == 0:
+#                continue
+#            r2 = radii[type2]
+#            min_dist = r1 + r2
+#            delta = pos1[:, np.newaxis, :] - pos2[np.newaxis, :, :]
+#            distances = np.sqrt(np.sum(delta**2, axis=2))
+#            overlaps = np.maximum(0, min_dist - distances)
+#            ex_score += np.sum((overlaps**2) / (sigma**2))
     
     return ex_score
 
-def calculate_pairwise_distances(
-    positions: Dict[str, np.ndarray], 
-    pair_types: List[Tuple[str, str]],
-    box_size: float = 10.0
-) -> Dict[Tuple[str, str], np.ndarray]:
+def calculate_pair_scores_matrix(
+    pos1: np.ndarray,
+    pos2: np.ndarray,
+    target_dist: float,
+    sigma: float
+) -> np.ndarray:
     """
-    Calculate pairwise distance matrices for specified particle type pairs.
+    Calculate pairwise score matrix between two sets of positions.
     
     Args:
-        positions: Dictionary mapping particle types to position arrays
-        pair_types: List of (type1, type2) pairs to calculate
-        box_size: Size of periodic box
+        pos1: Positions of first particle type (shape: Nx3)
+        pos2: Positions of second particle type (shape: Mx3)
+        target_dist: Target distance between particles
+        sigma: Standard deviation for the distance
         
     Returns:
-        Dictionary mapping (type1, type2) to distance matrix
+        Score matrix of shape (N, M)
     """
-    distances = {}
+    # Calculate distance matrix
+    delta = pos1[:, np.newaxis, :] - pos2[np.newaxis, :, :]
+    distances = np.sqrt(np.sum(delta**2, axis=2))
     
-    for type1, type2 in pair_types:
-        pos1 = positions[type1]
-        pos2 = positions[type2]
-        
-        if len(pos1) == 0 or len(pos2) == 0:
-            # Create empty matrix if no particles of this type
-            distances[(type1, type2)] = np.zeros((0, 0))
-            continue
-        
-        # Calculate all pairwise differences
-        delta = pos1[:, np.newaxis, :] - pos2[np.newaxis, :, :]
-        
-        # Apply periodic boundary conditions
-        delta = np.where(delta > box_size/2, delta - box_size, delta)
-        delta = np.where(delta < -box_size/2, delta + box_size, delta)
-        
-        # Calculate Euclidean distances
-        dist_matrix = np.sqrt(np.sum(delta**2, axis=2))
-        
-        # Store in dictionary
-        distances[(type1, type2)] = dist_matrix
-        
-    return distances
+    # Calculate Gaussian log-likelihood
+    score_matrix = ((distances - target_dist)**2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
+    
+    return score_matrix
 
-#--------------------------------------------------------------------------------
-# Pair scoring
-#--------------------------------------------------------------------------------
 def calculate_pair_scores(
     positions: Dict[str, np.ndarray],
     sigma: Dict[str, float],
@@ -180,152 +136,118 @@ def calculate_pair_scores(
         Total pairwise score
     """
     if params is None:
-        params = get_system_parameters()
+        params = SystemParameters()  # Get default parameters
     
-    pair_distances = params['pair_distances']
-    box_size = params.get('box_size', 10.0)
+    # Get pair distances from parameters
+    pair_distances = params.pair_distances
     
-    # Initialize score and tracked pairs
+    # Default pair types to consider
+    pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
+    
+    # Initialize score and excluded pairs set
     total_score = 0.0
+    if excluded_pairs is None:
+        excluded_pairs = set()
     
-    # Convert excluded_pairs to a more efficient lookup structure
-    excluded_lookup = {}
-    if excluded_pairs:
-        for type1, idx1, type2, idx2 in excluded_pairs:
-            key = (type1, type2)
-            if key not in excluded_lookup:
-                excluded_lookup[key] = set()
-            excluded_lookup[key].add((idx1, idx2))
+    # Debug file handling
+    debug_fh = None
+    if debug:
+        import tempfile
+        debug_file = tempfile.NamedTemporaryFile(delete=False, prefix="pair_scores_", suffix=".csv").name
+        debug_fh = open(debug_file, "w")
+        debug_fh.write("pair_key,type1,idx1,type2,idx2,distance,target,sigma,score\n")
     
-    # Calculate scores for each pair type
-    for pair_key, target_dist in pair_distances.items():
-        # Skip if this pair type doesn't have a sigma
-        if pair_key not in sigma:
-            if debug:
-                print(f"Warning: No sigma for pair type {pair_key}, skipping")
+    # Process each pair type
+    for type1, type2 in pair_types:
+        pair_key = f"{type1}{type2}"
+        
+        # Skip if particle types don't exist or we don't have a target distance
+        if (type1 not in positions or type2 not in positions or 
+            len(positions[type1]) == 0 or len(positions[type2]) == 0 or
+            pair_key not in pair_distances):
             continue
         
-        # Parse pair type
-        if len(pair_key) == 2:
-            type1, type2 = pair_key
-        else:
-            # Handle case like 'AA', 'AB', etc.
-            type1, type2 = pair_key[0], pair_key[1]
+        # Get target distance and sigma
+        target_dist = pair_distances[pair_key]
+        sigma_value = sigma[pair_key]
         
-        # Skip if either particle type doesn't exist
-        if type1 not in positions or type2 not in positions:
-            if debug:
-                print(f"Warning: Missing particle type(s) for {pair_key}, skipping")
-            continue
+        # Calculate score matrix and distances
+        score_matrix = calculate_pair_scores_matrix(
+            positions[type1],
+            positions[type2],
+            target_dist,
+            sigma_value
+        )
         
-        pos1 = positions[type1]
-        pos2 = positions[type2]
-        
-        # Skip if no particles
-        if len(pos1) == 0 or len(pos2) == 0:
-            continue
-            
-        # Handle self-interaction differently
+        # Process differently based on whether types are the same
         if type1 == type2:
-            # Calculate all pairwise differences
-            delta = pos1[:, np.newaxis, :] - pos1[np.newaxis, :, :]
+            # For same type, handle special case
+            np.fill_diagonal(score_matrix, np.inf)  # Exclude self-interactions
+            m, n = score_matrix.shape
+            selected_scores = []
+            selected_indices = []
             
-            # Apply periodic boundary conditions
-            delta = np.where(delta > box_size/2, delta - box_size, delta)
-            delta = np.where(delta < -box_size/2, delta + box_size, delta)
-            
-            # Calculate distances
-            distances = np.sqrt(np.sum(delta**2, axis=2))
-            np.fill_diagonal(distances, np.inf)  # Avoid self-interactions
-            
-            # Create mask for excluded pairs
-            mask = np.ones_like(distances, dtype=bool)
-            if pair_key in excluded_lookup:
-                for i, j in excluded_lookup[pair_key]:
-                    if i < len(pos1) and j < len(pos1):
-                        mask[i, j] = False
-                        mask[j, i] = False  # Also exclude the reverse pair
-            
-            # Apply mask
-            masked_distances = np.where(mask, distances, np.inf)
-            
-            # Find minimum distances in each row/column
-            row_min_idx = np.argmin(masked_distances, axis=1)
-            col_min_idx = np.argmin(masked_distances, axis=0)
-            
-            # Collect unique pairs
-            pairs = set()
-            for i, j in enumerate(row_min_idx):
-                if masked_distances[i, j] < np.inf:
-                    pairs.add((min(i, j), max(i, j)))  # Ordered pair to avoid duplicates
-            
-            for j, i in enumerate(col_min_idx):
-                if masked_distances[i, j] < np.inf:
-                    pairs.add((min(i, j), max(i, j)))
+            # For each row i, find minimum element in columns j > i
+            for i in range(m):
+                if i < n-1:  # Check if there are columns to the right
+                    row_segment = score_matrix[i, i+1:]
+                    # Skip if all values are infinity
+                    if np.all(np.isinf(row_segment)):
+                        continue
                     
-            # Calculate score for each pair
-            sigma_val = sigma[pair_key]
-            for i, j in pairs:
-                dist = distances[i, j]
-                # Gaussian score
-                pair_score = ((dist - target_dist)**2) / (2 * sigma_val**2) + np.log(2 * np.pi * sigma_val)
-                total_score += pair_score
-                
-                if debug and pair_score > 10:
-                    print(f"High score: {type1}({i})-{type2}({j}): {pair_score:.2f} (dist={dist:.2f}, target={target_dist:.2f})")
-        
+                    # Find minimum element
+                    j_offset = np.argmin(row_segment)
+                    j = i + 1 + j_offset
+                    
+                    # Check if this pair is excluded
+                    if ((type1, i, type2, j) not in excluded_pairs and
+                        (type2, j, type1, i) not in excluded_pairs):
+                        selected_scores.append(score_matrix[i, j])
+                        selected_indices.append((i, j))
+            
+            # Debug output
+            if debug_fh:
+                for i, j in selected_indices:
+                    pair_score = score_matrix[i, j]
+                    debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
+                    
         else:
-            # Inter-type interactions
-            # Calculate all pairwise differences
-            delta = pos1[:, np.newaxis, :] - pos2[np.newaxis, :, :]
+            # For different types, find mutual best matches
+            row_min_indices = np.argmin(score_matrix, axis=1)
+            col_min_indices = np.argmin(score_matrix, axis=0)
             
-            # Apply periodic boundary conditions
-            delta = np.where(delta > box_size/2, delta - box_size, delta)
-            delta = np.where(delta < -box_size/2, delta + box_size, delta)
-            
-            # Calculate distances
-            distances = np.sqrt(np.sum(delta**2, axis=2))
-            
-            # Create mask for excluded pairs
-            mask = np.ones_like(distances, dtype=bool)
-            if (type1, type2) in excluded_lookup:
-                for i, j in excluded_lookup[(type1, type2)]:
-                    if i < len(pos1) and j < len(pos2):
-                        mask[i, j] = False
-                        
-            # Also check reverse direction
-            if (type2, type1) in excluded_lookup:
-                for j, i in excluded_lookup[(type2, type1)]:
-                    if i < len(pos1) and j < len(pos2):
-                        mask[i, j] = False
-            
-            # Apply mask
-            masked_distances = np.where(mask, distances, np.inf)
-            
-            # Find minimum distances in each row/column
-            row_min_idx = np.argmin(masked_distances, axis=1)
-            col_min_idx = np.argmin(masked_distances, axis=0)
-            
-            # Collect unique pairs
-            pairs = set()
-            for i, j in enumerate(row_min_idx):
-                if masked_distances[i, j] < np.inf:
-                    pairs.add((i, j))
+            # Collect unique index pairs
+            unique_pairs = set()
+            for i, j in enumerate(row_min_indices):
+                if ((type1, i, type2, j) not in excluded_pairs and
+                    (type2, j, type1, i) not in excluded_pairs):
+                    unique_pairs.add((i, j))
                     
-            for j, i in enumerate(col_min_idx):
-                if masked_distances[j, i] < np.inf:
-                    pairs.add((i, j))
+            for j, i in enumerate(col_min_indices):
+                if ((type1, i, type2, j) not in excluded_pairs and
+                    (type2, j, type1, i) not in excluded_pairs):
+                    unique_pairs.add((i, j))
             
-            # Calculate score for each pair
-            sigma_val = sigma[pair_key]
-            for i, j in pairs:
-                dist = distances[i, j]
-                # Gaussian score
-                pair_score = ((dist - target_dist)**2) / (2 * sigma_val**2) + np.log(2 * np.pi * sigma_val)
-                total_score += pair_score
-                
-                if debug and pair_score > 10:
-                    print(f"High score: {type1}({i})-{type2}({j}): {pair_score:.2f} (dist={dist:.2f}, target={target_dist:.2f})")
+            # Get scores for unique index pairs
+            selected_scores = [score_matrix[i, j] for i, j in unique_pairs 
+                               if i < score_matrix.shape[0] and j < score_matrix.shape[1]]
+            
+            # Debug output
+            if debug_fh:
+                for i, j in unique_pairs:
+                    if i < score_matrix.shape[0] and j < score_matrix.shape[1]:
+                        pair_score = score_matrix[i, j]
+                        debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
+        
+        # Sum selected scores and add to total
+        if selected_scores:
+            pairwise_score_part = np.sum(selected_scores)
+            total_score += pairwise_score_part
+    
+    # Clean up debug file if opened
+    if debug_fh:
+        debug_fh.close()
+        print(f"Particle pairing debug information written to {debug_file}")
     
     return total_score
 
@@ -350,10 +272,9 @@ def get_tetramers(
         List of tetramers as (a_idx, b_idx, c1_idx, c2_idx) tuples
     """
     if params is None:
-        params = get_system_parameters()
+        params = SystemParameters()  # Assumes this function exists
     
-    pair_distances = params['pair_distances']
-    box_size = params.get('box_size', 10.0)
+    pair_distances = params.pair_distances
     
     # Verify required particle types exist
     for particle_type in ['A', 'B', 'C']:
@@ -367,15 +288,15 @@ def get_tetramers(
     
     # Calculate distance matrices
     ab_distances = calculate_pairwise_distances(
-        positions, [('A', 'B')], box_size
+        positions, [('A', 'B')]
     )[('A', 'B')]
     
     bc_distances = calculate_pairwise_distances(
-        positions, [('B', 'C')], box_size
+        positions, [('B', 'C')]
     )[('B', 'C')]
     
     cc_distances = calculate_pairwise_distances(
-        positions, [('C', 'C')], box_size
+        positions, [('C', 'C')]
     )[('C', 'C')]
     
     # Identify potential AB connections
@@ -428,10 +349,9 @@ def calculate_tetramer_scores(
         return np.array([], dtype=np.float32)
     
     if params is None:
-        params = get_system_parameters()
+        params = SystemParameters()  # Assumes this function exists
         
-    pair_distances = params['pair_distances']
-    box_size = params.get('box_size', 10.0)
+    pair_distances = params.pair_distances
     
     n_tetramers = len(tetramers)
     
@@ -452,12 +372,7 @@ def calculate_tetramer_scores(
     bc1_delta = pos_b - pos_c1
     bc2_delta = pos_b - pos_c2
     cc_delta = pos_c1 - pos_c2
-    
-    # Apply periodic boundary conditions
-    for delta in [ab_delta, bc1_delta, bc2_delta, cc_delta]:
-        delta[delta > box_size/2] -= box_size
-        delta[delta < -box_size/2] += box_size
-    
+        
     # Calculate all distances at once
     ab_dists = np.sqrt(np.sum(ab_delta**2, axis=1))
     bc1_dists = np.sqrt(np.sum(bc1_delta**2, axis=1))
@@ -547,9 +462,7 @@ def get_octets(
         List of (tetramer1, tetramer2) pairs forming octets
     """
     if params is None:
-        params = get_system_parameters()
-        
-    box_size = params.get('box_size', 10.0)
+        params = SystemParameters()
     
     # Calculate tetramers if not provided
     if tetramers is None:
@@ -584,10 +497,6 @@ def get_octets(
         
         # Calculate distances to all other tetramers
         diffs = centers[available] - centers[idx1]
-        
-        # Apply periodic boundary conditions
-        diffs = np.where(diffs > box_size/2, diffs - box_size, diffs)
-        diffs = np.where(diffs < -box_size/2, diffs + box_size, diffs)
         
         # Calculate distances and sort
         distances = np.sqrt(np.sum(diffs**2, axis=1))
@@ -727,7 +636,7 @@ def calculate_total_score(
         Tuple of (total_score, exclusion_score, pair_score, tetramer_score, octet_score)
     """
     if params is None:
-        params = get_system_parameters()
+        params = SystemParameters()  # Assumes this function exists
     
     # Calculate excluded volume score
     exclusion_score = exclusion_weight * calculate_excluded_volume(positions, params)

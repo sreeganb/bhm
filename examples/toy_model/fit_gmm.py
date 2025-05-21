@@ -451,7 +451,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                     plot_combined_gmm(all_data_for_type, all_gmms_for_type, sigma_type, sampler_name, sampler_output_dir, pdf)
                     print(f"Combined GMM plot for {sigma_type} saved.")
 
-def analyze_sampler(sampler_key, output_folder="output_analysis", burnin=0.4, 
+def analyze_sampler(sampler_key, output_folder="output_analysis", burnin=0.1, 
                    do_trace_plots=True, do_gmm_fits=True):
     """
     Analyze a specific sampler's MCMC results.

@@ -259,7 +259,7 @@ class TetramerSampler(BaseMCSampler):
         move_probs = [0.4, 0.1, 0.5]  # position, sigma, tetramer
         
         # Simple cooling schedule
-        temp_start, temp_end = 5.0, 1.0
+        temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} steps...")

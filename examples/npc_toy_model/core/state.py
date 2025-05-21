@@ -13,7 +13,7 @@ class SystemState:
         # Core data
         self.positions: Dict[str, np.ndarray] = {}
         self.sigma: Dict[str, float] = {}
-        self.sigma_range: Dict[str, Tuple[float, float]] = {}
+        self.sigma_range : Dict[str, Tuple[float, float]] = {}
         self.box_size: float = 0.0
 
         # Sampler sequencing
