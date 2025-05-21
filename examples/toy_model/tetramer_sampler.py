@@ -136,7 +136,7 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
+    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.999) -> List[Tuple[int, ...]]:
         """Generate tetramers with particle exclusivity and distance-weighted selection."""
         try:
             # Quick validation
@@ -382,8 +382,8 @@ class TetramerSampler(BaseMCSampler):
         centroid = np.mean(coords, axis=0)
 
         # Smaller base step sizes for large radii/distances
-        base_trans_step = 0.095  # Example: reduce from 0.1
-        base_rot_step   = 0.095  # Example: reduce from 0.1
+        base_trans_step = 0.05  # Example: reduce from 0.1
+        base_rot_step   = 0.05  # Example: reduce from 0.1
 
         # Adaptive step factor with narrower clipping
         factor = np.clip(1.0 + 1.5 * (acceptance_rate - self.target_acceptance), 0.75, 1.75)

@@ -353,7 +353,8 @@ class OctetSampler(BaseMCSampler):
     def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/octetsampler_results/"):
         """
         Monte Carlo sampling with position, sigma, tetramer, and octet moves.
-        Includes detailed debugging logs.
+        n_steps is the total number of moves (accepted + rejected).
+        Includes Jacobian correction for sigma moves and detailed debugging logs.
         """
         # Setup output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -372,16 +373,15 @@ class OctetSampler(BaseMCSampler):
             pass
 
         # Initialize tracking variables
-        best_positions = {k: v.copy() for k, v in self.positions_os.items()} # Init best pos
+        best_positions = {k: v.copy() for k, v in self.positions_os.items()}  # Init best pos
         best_score = float('inf')
         sigma_history = {key: np.zeros(n_steps // save_freq + 1) for key in self.sigma}
         accepts = {'position': 0, 'sigma': 0, 'tetramer': 0, 'octet': 0}
         attempts = {'position': 0, 'sigma': 0, 'tetramer': 0, 'octet': 0}
 
         # --- Initialize state ---
-        current_positions = self.positions_os # Use the initial positions
+        current_positions = {k: v.copy() for k, v in self.positions_os.items()}  # Use a copy to avoid modifying original
         current_sigma = self.sigma.copy()
-        #current_tetramers = self.ts.get_tetramers(current_positions)
         current_octets, current_tetramers = self.get_octets(current_positions)
 
         # Calculate initial prior penalty
@@ -390,191 +390,168 @@ class OctetSampler(BaseMCSampler):
 
         # Calculate initial score
         current_score, curr_ex, curr_pair, curr_tet, curr_oct = self.neg_log_posterior(
-            current_positions, current_tetramers, current_octets, current_prior, current_sigma) # Debug initial state
+            current_positions, current_tetramers, current_octets, current_prior, current_sigma)
 
         if not np.isfinite(current_score):
-             print(f"FATAL: Initial score is non-finite ({current_score}). Exiting.")
-             print(f"Components: ex={curr_ex}, tet={curr_tet}, oct={curr_oct}, prior={current_prior}")
-             return None, None # Cannot proceed
+            print(f"FATAL: Initial score is non-finite ({current_score}). Exiting.")
+            print(f"Components: ex={curr_ex}, tet={curr_tet}, oct={curr_oct}, prior={current_prior}")
+            return None, None  # Cannot proceed
 
-        best_score = current_score # Initialize best score
+        best_score = current_score  # Initialize best score
 
         # Store initial sigma values
         for key in current_sigma:
             sigma_history[key][0] = current_sigma[key]
 
+        # Save initial state
+        self.save_state_to_disk(
+            0, current_positions, current_sigma, current_score,
+            prior_score=current_prior,
+            tet_score=curr_tet,
+            exvol_score=curr_ex,
+            oct_score=curr_oct,
+            traj_file=trajectory_file
+        )
+
         # --- Main MCMC loop parameters ---
         move_types = ['position', 'sigma', 'tetramer', 'octet']
-        # Adjust probabilities if needed based on acceptance rates later
-        move_probs = [0.2, 0.1, 0.3, 0.4]
+        move_probs = [0.2, 0.1, 0.3, 0.4]  # Adjust probabilities if needed later
+        temp_start, temp_end = 40.0, 1.0  # Cooling schedule
+        temp_decay = (temp_end / temp_start) ** (1.0 / (n_steps - 1)) if n_steps > 1 else 1.0
 
-        temp_start, temp_end = 40.0, 1.0 # Cooling schedule
-        temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
+        print(f"Starting MCMC sampling for {n_steps} total steps...")
 
-        print(f"Starting MCMC sampling for {n_steps} steps...")
-
-        accepted_moves = 0
-        total_moves = 0
-        max_iterations = n_steps * 40  # Increased safety cap slightly
-
-        while accepted_moves < n_steps and total_moves < max_iterations:
-            total_moves += 1
-
-            # Temperature schedule
-            temp = max(temp_start * (temp_decay ** accepted_moves), temp_end) # Ensure temp doesn't go below end
+        # --- Main MCMC loop ---
+        for step in range(n_steps):
+            # Temperature schedule based on total steps
+            temp = max(temp_start * (temp_decay ** step), temp_end)
 
             # Select move type
             move_type = np.random.choice(move_types, p=move_probs)
             attempts[move_type] += 1
 
             # --- Propose move ---
-            proposed_positions = current_positions # Default to current
-            proposed_sigma = current_sigma         # Default to current
+            proposed_positions = {k: v.copy() for k, v in current_positions.items()}
+            proposed_sigma = current_sigma.copy()
+            pair_type = None  # Will track which sigma parameter was modified
 
             if move_type == 'position':
                 proposed_positions = self.propose_position_move(current_positions,
                                                                 accepts['position'] / max(1, attempts['position']))
             elif move_type == 'sigma':
-                # Sigma move only proposes new sigma
-                proposed_sigma, _ = self.propose_sigma_move(current_sigma,
-                                                            accepts['sigma'] / max(1, attempts['sigma']))
+                proposed_sigma, pair_type = self.propose_sigma_move(current_sigma,
+                                                                    accepts['sigma'] / max(1, attempts['sigma']))
             elif move_type == 'tetramer':
-                # Tetramer move proposes new positions
                 proposed_positions = self.ts.propose_tetramer_move(current_positions,
-                                                                   accepts['tetramer'] / max(1, attempts['tetramer']))
-            else:  # octet move
-                # Octet move proposes new positions
+                                                                accepts['tetramer'] / max(1, attempts['tetramer']))
+            else:  # octet
                 proposed_positions = self.propose_octet_move(current_positions, current_octets)
 
             # --- Calculate components for the proposed state ---
-            # Get tetramers and octets for the proposed configuration
-            # Recalculate even if only sigma changed, as get_octets might depend on positions implicitly
-            # (though ideally it shouldn't if only sigma changes)
-            #proposed_tetramers = self.ts.get_tetramers(proposed_positions)
             proposed_octets, proposed_tetramers = self.get_octets(proposed_positions)
-
-            # Calculate proposed prior penalty
             proposed_prior = (self.sig_provider.calculate_negative_log_prior(proposed_sigma) if self.use_sigma_distribution
-                             else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
-
-            # Calculate proposed total score and its components
+                            else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
             proposed_score, prop_ex, prop_pair, prop_tet, prop_oct = self.neg_log_posterior(
                 proposed_positions, proposed_tetramers, proposed_octets, proposed_prior, proposed_sigma)
 
             # --- Check for non-finite scores ---
             if not np.isfinite(proposed_score) or not np.isfinite(current_score):
-                print(f"WARNING @ step {total_moves}: Non-finite score detected! Proposed={proposed_score}, Current={current_score}. Skipping move.")
-                # Log the problematic state
+                print(f"WARNING @ step {step}: Non-finite score detected! Proposed={proposed_score}, Current={current_score}. Skipping move.")
                 with open(general_debug_log_file, 'a') as f:
-                     f.write(f"{total_moves},{move_type},REJECTED(InvalidScore),{temp:.3f},{current_score:.4f},{proposed_score:.4f},NaN,"
-                             f"{prop_ex:.4f},{prop_tet:.4f},{prop_oct:.4f},{proposed_prior:.4f}\n")
-                continue # Skip the Metropolis check and updating
+                    f.write(f"{step},{move_type},REJECTED(InvalidScore),{temp:.3f},{current_score:.4f},{proposed_score:.4f},NaN,"
+                            f"{prop_ex:.4f},{prop_tet:.4f},{prop_oct:.4f},{proposed_prior:.4f}\n")
+                continue
 
-            # --- Metropolis criterion ---
+            # --- Metropolis criterion with Jacobian correction ---
             delta = proposed_score - current_score
-            accept = False
             accept_prob = 0.0
 
+            if move_type == 'sigma' and pair_type is not None:
+                # Jacobian correction for sigma moves proposed in log-space
+                jacobian_term = np.log(proposed_sigma[pair_type] / current_sigma[pair_type])
+                delta += jacobian_term
+                if step % save_freq == 0:
+                    print(f"  Sigma move: {pair_type} {current_sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
+                        f"Jacobian term: {jacobian_term:.4f}")
+
             if delta < 0:
-                accept = True
                 accept_prob = 1.0
+                accept = True
             else:
-                # Calculate acceptance probability safely
-                if temp > 1e-9: # Avoid division by zero or tiny temperature
-                     accept_prob = np.exp(-delta / temp)
-                     if np.isfinite(accept_prob) and np.random.random() < accept_prob:
-                         accept = True
-                # else: accept_prob remains 0, accept remains False
+                accept_prob = np.exp(-delta / temp) if temp > 1e-9 else 0.0
+                accept = np.random.random() < accept_prob
 
             # --- Detailed Logging ---
-            # Sigma-specific log
             if move_type == 'sigma':
                 with open(sigma_debug_log_file, 'a') as f:
-                    f.write(f"{total_moves},"
-                            f"\"{current_sigma}\",\"{proposed_sigma}\"," # Enclose dicts in quotes for CSV
+                    f.write(f"{step},"
+                            f"\"{current_sigma}\",\"{proposed_sigma}\","
                             f"{current_prior:.4f},{proposed_prior:.4f},"
                             f"{current_score:.4f},{proposed_score:.4f},"
-                            f"{delta:.4f},{accept_prob:.4g}," # Use scientific notation for small probs
+                            f"{delta:.4f},{accept_prob:.4g},"
                             f"{'ACCEPTED' if accept else 'REJECTED'}\n")
 
-            # General log (after decision)
             log_ex, log_tet, log_oct, log_prior = (prop_ex, prop_tet, prop_oct, proposed_prior) if accept else (curr_ex, curr_tet, curr_oct, current_prior)
-            log_score = proposed_score if accept else current_score
-
             with open(general_debug_log_file, 'a') as f:
-                 f.write(f"{total_moves},{move_type},{'ACCEPTED' if accept else 'REJECTED'},"
-                         f"{temp:.3f},{current_score:.4f},{proposed_score:.4f},{delta:.4f},"
-                         f"{log_ex:.4f},{log_tet:.4f},{log_oct:.4f},{log_prior:.4f}\n")
+                f.write(f"{step},{move_type},{'ACCEPTED' if accept else 'REJECTED'},"
+                        f"{temp:.3f},{current_score:.4f},{proposed_score:.4f},{delta:.4f},"
+                        f"{log_ex:.4f},{log_tet:.4f},{log_oct:.4f},{log_prior:.4f}\n")
 
             # --- Update state if accepted ---
             if accept:
                 current_positions = proposed_positions
                 current_sigma = proposed_sigma
-                current_tetramers = proposed_tetramers # Update derived structures
+                current_tetramers = proposed_tetramers
                 current_octets = proposed_octets
                 current_score = proposed_score
-                curr_ex, curr_tet, curr_oct = prop_ex, prop_tet, prop_oct # Update components
-                current_prior = proposed_prior # Update prior
-
+                curr_ex, curr_tet, curr_oct = prop_ex, prop_tet, prop_oct
+                current_prior = proposed_prior
                 accepts[move_type] += 1
-                accepted_moves += 1 # Increment only on acceptance
 
-                # Track best state
                 if current_score < best_score:
                     best_score = current_score
                     best_positions = {k: v.copy() for k, v in current_positions.items()}
 
-                # --- Periodic tasks ---
-                if accepted_moves % save_freq == 0:
-                    # Store sigma history
-                    save_idx = accepted_moves // save_freq
-                    if save_idx < len(sigma_history[list(sigma_history.keys())[0]]):
-                        for key in current_sigma:
-                            sigma_history[key][save_idx] = current_sigma[key]
+            # --- Save state every save_freq steps ---
+            if step % save_freq == 0 and step > 0:  # Skip step 0 since initial state is saved above
+                save_idx = step // save_freq
+                for key in current_sigma:
+                    sigma_history[key][save_idx] = current_sigma[key]
+                self.save_state_to_disk(
+                    step, current_positions, current_sigma, current_score,
+                    prior_score=current_prior,
+                    tet_score=curr_tet,
+                    exvol_score=curr_ex,
+                    oct_score=curr_oct,
+                    traj_file=trajectory_file
+                )
+                acceptance_rate = sum(accepts.values()) / (step + 1)
+                print(f"Step {step}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, AcceptRate={acceptance_rate:.2f}")
 
-                    # Save state to disk
-                    self.save_state_to_disk(
-                        accepted_moves, current_positions, current_sigma, current_score,
-                        prior_score=current_prior, # Use the accepted prior
-                        # Pass tetramer score from neg_log_posterior if needed, else 0/None
-                        tet_score=curr_tet, # Assuming curr_tet holds the accepted tetramer score
-                        exvol_score=curr_ex,
-                        oct_score=curr_oct, # Use the accepted octet score
-                        traj_file=trajectory_file
-                    )
-
-                    # Print progress
-                    acceptance_rate = accepted_moves / max(1, total_moves) # Use total_moves for overall rate
-                    print(f"Step {accepted_moves}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, AcceptRate={acceptance_rate:.2f}")
-
-                # Adapt step sizes periodically based on *accepted* moves
-                if accepted_moves > 0 and accepted_moves % 500 == 0:
-                     # Adapt step sizes for moves that use them
-                     pos_rate = accepts['position'] / max(1, attempts['position'])
-
-                     tet_rate = accepts['tetramer'] / max(1, attempts['tetramer'])
-
-                     oct_rate = accepts['octet'] / max(1, attempts['octet'])
-                     self.octet_trans_acc_rate = oct_rate # Update rate used by propose_octet_move
-                     #self.adapt_step_sizes(oct_rate) # Adapt octet steps
-                     print(f"Adapting step sizes: PosRate={pos_rate:.2f}, TetRate={tet_rate:.2f}, OctRate={oct_rate:.2f}")
-                     print(f"--> New Octet steps: trans={self.octet_trans_step:.4f}, rot={self.octet_rot_step:.4f}")
-
+            # --- Adapt step sizes every 500 steps ---
+            if step % 500 == 0 and step > 0:
+                pos_rate = accepts['position'] / max(1, attempts['position'])
+                tet_rate = accepts['tetramer'] / max(1, attempts['tetramer'])
+                oct_rate = accepts['octet'] / max(1, attempts['octet'])
+                sigma_rate = accepts['sigma'] / max(1, attempts['sigma'])
+                print(f"Step {step}: Acceptance rates - Pos: {pos_rate:.2f}, Sigma: {sigma_rate:.2f}, Tet: {tet_rate:.2f}, Oct: {oct_rate:.2f}")
+                self.octet_trans_acc_rate = oct_rate  # Update rate for propose_octet_move
 
         # --- End of MCMC loop ---
-
-        # Save final sigma history
         sigma_history_df = pd.DataFrame(sigma_history)
         sigma_history_df.to_csv(os.path.join(output_dir, "sigma_history.csv"), index=False)
 
         # Print final statistics
         print("\nSampling complete:")
-        for mv_type in move_types: # Use consistent loop variable name
+        for mv_type in move_types:
             rate = accepts[mv_type] / max(1, attempts[mv_type])
             print(f"- {mv_type}: {rate:.2f} acceptance ({accepts[mv_type]}/{attempts[mv_type]})")
-
-        print(f"\nFinal best score: {best_score:.4f}")
-        print(f"Final sigma values: {current_sigma}") # Print the last accepted sigma
+        total_accepts = sum(accepts.values())
+        print(f"- Total steps: {n_steps}")
+        print(f"- Accepted moves: {total_accepts}")
+        print(f"- Overall acceptance rate: {total_accepts / n_steps:.2f}")
+        print(f"- Best score: {best_score:.4f}")
+        print(f"- Final sigma values: {current_sigma}")
 
         return best_positions, trajectory_file
     

@@ -120,7 +120,7 @@ def main():
              "run": True,
              #"run": False,
              "n_chains": 1,
-             "n_steps": 500000,
+             "n_steps": 50000,
              "save_freq": 500,
              "use_sigma_dist": True #, # Example of sampler-specific parameter
              #"read_pos": False,
@@ -133,8 +133,8 @@ def main():
 
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
     #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
-    sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
-    #sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
+    #sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
+    sampler_sequence = ["octet_sampler"] # Example: Run only tetramer sampler
     #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
 
     # Profile the output 
