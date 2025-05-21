@@ -246,7 +246,8 @@ class PerturbSystemParameters:
                               score_threshold: Optional[float] = None,
                               exclusion_w: float = 1.0, pair_w: float = 1.0, octet_w: float = 1.0,
                               plot_means_only: bool = False,
-                              add_error_bars_to_mean_plot: bool = True
+                              add_error_bars_to_mean_plot: bool = True,
+                              max_rmsd_to_plot: float = 15.0
                               ):
         # ...existing code...
         sns.set_theme(context='notebook', style='whitegrid', palette='deep', font='sans-serif', font_scale=1.1)
@@ -339,8 +340,11 @@ class PerturbSystemParameters:
         total_skipped_configs = total_skipped_overlap_failure + total_skipped_score_threshold
         if total_skipped_configs > 0:
             print(f"Total configurations skipped overall: {total_skipped_configs}")
-
-        summary_stats = df_results.groupby('Magnitude').agg(
+        
+        # Filter to plot only RMSD <= max_rmsd_to_plot
+        df_results_for_plot = df_results[df_results['RMSD'] <= max_rmsd_to_plot]
+        
+        summary_stats = df_results_for_plot.groupby('Magnitude').agg(
             mean_score=('Score', 'mean'), std_score=('Score', 'std'),
             mean_rmsd=('RMSD', 'mean'), std_rmsd=('RMSD', 'std'),
             mean_accuracy=('Accuracy', 'mean'), std_accuracy=('Accuracy', 'std'),
@@ -349,11 +353,15 @@ class PerturbSystemParameters:
 
         print("\nSummary Statistics per Magnitude (based on non-skipped configurations):")
         print(summary_stats)
-
-        fig_width = 12
-        phi = (1 + np.sqrt(5)) / 2
-        fig_height = fig_width / phi
+        
+        fig_width = 10
+        fig_height = 10
         plt.figure(figsize=(fig_width, fig_height))
+        
+        #fig_width = 12
+        #phi = (1 + np.sqrt(5)) / 2
+        #fig_height = fig_width / phi
+        #plt.figure(figsize=(fig_width, fig_height))
 
         plt.rcParams.update({
             'font.size': 14,
@@ -425,11 +433,14 @@ class PerturbSystemParameters:
             print(f"Summary statistics saved to {os.path.join(output_dir, 'perturbation_analysis_summary_stats.csv')}")
         plt.show()
 
+        # In the analyze_perturbations method, around line 441
         zoomed_df = df_results[df_results['RMSD'].between(0, 2.0)]
         if zoomed_df.empty:
             print("No results with RMSD between 0 and 2.0, skipping zoomed plot.")
         else:
             zoom_width = 8
+            # Define phi (golden ratio) here
+            phi = (1 + np.sqrt(5)) / 2
             zoom_height = zoom_width / phi
             plt.figure(figsize=(zoom_width, zoom_height))
             plt.rcParams.update({
@@ -507,9 +518,9 @@ class PerturbSystemParameters:
 
 if __name__ == "__main__":
     magnitudes_to_test = np.concatenate([
-        np.linspace(0.05, 0.5, 20),
-        np.linspace(0.6, 2.5, 20),
-        np.linspace(2.6, 10.0, 20)
+        np.linspace(0.05, 0.5, 30),
+        np.linspace(0.6, 2.5, 30),
+        np.linspace(2.6, 10.0, 30)
     ])
     num_perturbations_per_mag = 50
 
@@ -539,7 +550,7 @@ if __name__ == "__main__":
     results_df = analyzer.analyze_perturbations(
         magnitudes=magnitudes_to_test,
         num_perturbations=num_perturbations_per_mag,
-        base_seed=42,
+        base_seed=999,
         score_threshold=score_cap,
         exclusion_w=1.0,
         pair_w=1.0,

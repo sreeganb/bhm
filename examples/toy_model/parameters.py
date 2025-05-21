@@ -22,7 +22,7 @@ class SystemParameters:
             self.pair_distances = {
                 'AA': 48.22,
                 'AB': 38.5,
-                'BC': 34.0,  # minimum allowed C-C distance
+                'BC': 34.0,   # minimum allowed C-C distance
                 #'CC': 32.0   # note: with the following placement BC bonds won’t be exactly this long!
             }
 #        if self.radii is None:
