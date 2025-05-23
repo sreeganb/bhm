@@ -36,7 +36,7 @@ def propose_position_move(state: SystemState, acceptance_rate: float = 0.5) -> N
     
     # Adaptive step size based on acceptance rate
     # Use a more sophisticated adaptive scheme similar to original
-    base_step = 0.5  # Base step size
+    base_step = 1.0  # Base step size
     target_acceptance = 0.4  # Target acceptance rate
     
     # Adjust step size based on current acceptance rate

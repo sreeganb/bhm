@@ -41,7 +41,7 @@ def setup_system(params, sampler_sequence, current_sampler_idx, source=None, tra
     
     return builder.build()
 
-def create_pipeline(sampler_configs, params=None, prior_type='jeffreys'):
+def create_pipeline(sampler_configs, params=None, prior_type='uniform'):
     """
     Create a complete sampling pipeline from a sequence of sampler configurations
     """
@@ -109,11 +109,11 @@ def main():
     sampler_configs = [
         {
             "name": "PairSampler",
-            "n_steps": 50000,
-            "save_freq": 100,
+            "n_steps": 10000,
+            "save_freq": 5,
             "temp_start": 5.0,
             "temp_end": 0.1,
-            "prior_type": "jeffreys"  # Can specify prior type per sampler
+            "prior_type": "uniform"  # Can specify prior type per sampler
         },
 #        {
 #            "name": "TetramerSampler",

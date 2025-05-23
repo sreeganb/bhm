@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple, Set, Optional, Any, Union
 import numba as nb
 from functools import lru_cache
 from scipy.spatial.distance import cdist
+import time
 
 #************************************
 # Imports from files here
@@ -18,7 +19,8 @@ from core.parameters import SystemParameters
 #--------------------------------------------------------------------------------
 def calculate_excluded_volume(
     positions: Dict[str, np.ndarray],
-    params: Optional[Dict[str, Any]] = None
+    params: Optional[Dict[str, Any]] = None,
+    debug: bool = True
 ) -> float:
     """
     Calculate excluded volume score with a quadratic penalty for overlapping particles.
@@ -26,6 +28,7 @@ def calculate_excluded_volume(
     Args:
         positions: Dictionary mapping particle types to position arrays (shape: Nx3)
         params: Optional parameters dictionary containing 'radii'
+        debug: Whether to print debug information and write to file
 
     Returns:
         Excluded volume score (higher for overlapping particles)
@@ -37,13 +40,36 @@ def calculate_excluded_volume(
     radii = params.radii
     sigma = 0.1  # Penalty strength, matching excluded_volume_nll
     
-#    particle_types = list(positions.keys())
+    # Initialize debug file
+    debug_fh = None
+    if debug:
+        import tempfile
+        import os
+        debug_dir = os.path.join(os.getcwd(), "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_file = os.path.join(debug_dir, f"excluded_volume_debug_{int(time.time())}.csv")
+        debug_fh = open(debug_file, "w")
+        debug_fh.write("type1,type2,particle1_idx,particle2_idx,distance,min_distance,overlap,score_contribution\n")
+        print(f"Excluded volume debug: writing to {debug_file}")
+    
+    # Track statistics for debugging
+    total_pairs = 0
+    overlapping_pairs = 0
+    type_pair_stats = {}
     
     for type1, pos1 in positions.items():
         for type2, pos2 in positions.items():
             if type1 <= type2:
                 min_dist = radii[type1] + radii[type2]
                 distances = cdist(pos1, pos2)
+                pair_key = f"{type1}-{type2}"
+                
+                if pair_key not in type_pair_stats:
+                    type_pair_stats[pair_key] = {
+                        "total": 0,
+                        "overlapping": 0,
+                        "score": 0.0
+                    }
                 
                 # handle self-interactions
                 if type1 == type2:
@@ -52,39 +78,54 @@ def calculate_excluded_volume(
                     viol_mask = (distances < min_dist) & (mask > 0)
                 else:
                     viol_mask = distances < min_dist
-                    
+                
+                # Count all pairs considered
+                if type1 == type2:
+                    # For same type, count only upper triangle pairs
+                    num_pairs = (len(pos1) * (len(pos1) - 1)) // 2
+                else:
+                    num_pairs = len(pos1) * len(pos2)
+                
+                total_pairs += num_pairs
+                type_pair_stats[pair_key]["total"] = num_pairs
+                
                 if np.any(viol_mask):
+                    # Get indices of violating pairs
+                    viol_indices = np.where(viol_mask)
                     overlaps = min_dist - distances[viol_mask]
-                    ex_score += np.sum((overlaps**2) / (sigma**2))
+                    scores = (overlaps**2) / (sigma**2)
+                    pair_score = np.sum(scores)
+                    ex_score += pair_score
+                    
+                    # Update debugging counters
+                    overlapping_pairs += len(viol_indices[0])
+                    type_pair_stats[pair_key]["overlapping"] = len(viol_indices[0])
+                    type_pair_stats[pair_key]["score"] = pair_score
+                    
+                    # Write detailed information to debug file
+                    if debug_fh:
+                        for idx in range(len(viol_indices[0])):
+                            i, j = viol_indices[0][idx], viol_indices[1][idx]
+                            overlap = overlaps[idx]
+                            score = scores[idx]
+                            dist = distances[i, j]
+                            debug_fh.write(f"{type1},{type2},{i},{j},{dist:.6f},{min_dist:.6f},{overlap:.6f},{score:.6f}\n")
     
-#    for i, type1 in enumerate(particle_types):
-#        pos1 = positions[type1]
-#        if len(pos1) == 0:
-#            continue
-#        r1 = radii[type1]
-#        
-#        # Intra-type interactions
-#        if len(pos1) > 1:
-#            delta = pos1[:, np.newaxis, :] - pos1[np.newaxis, :, :]
-#            distances = np.sqrt(np.sum(delta**2, axis=2))
-#            np.fill_diagonal(distances, np.inf)  # Exclude self-interactions
-#            min_dist = 2 * r1
-#            overlaps = np.maximum(0, min_dist - distances)
-#            # Use upper triangle to avoid double-counting
-#            triu_mask = np.triu(np.ones_like(overlaps), k=1)
-#            ex_score += np.sum((overlaps**2 * triu_mask) / (sigma**2))
-#        
-#        # Inter-type interactions
-#        for type2 in particle_types[i+1:]:
-#            pos2 = positions[type2]
-#            if len(pos2) == 0:
-#                continue
-#            r2 = radii[type2]
-#            min_dist = r1 + r2
-#            delta = pos1[:, np.newaxis, :] - pos2[np.newaxis, :, :]
-#            distances = np.sqrt(np.sum(delta**2, axis=2))
-#            overlaps = np.maximum(0, min_dist - distances)
-#            ex_score += np.sum((overlaps**2) / (sigma**2))
+    # Print summary if debugging
+    if debug:
+        print(f"\n===== EXCLUDED VOLUME SUMMARY =====")
+        print(f"Total pairs evaluated: {total_pairs}")
+        print(f"Overlapping pairs: {overlapping_pairs} ({100.0 * overlapping_pairs / max(1, total_pairs):.2f}%)")
+        print(f"Total excluded volume score: {ex_score:.6f}")
+        print("\nPer-type statistics:")
+        for pair_key, stats in type_pair_stats.items():
+            if stats["total"] > 0:
+                overlap_pct = 100.0 * stats["overlapping"] / stats["total"]
+                print(f"  {pair_key}: {stats['overlapping']}/{stats['total']} overlaps ({overlap_pct:.2f}%), score: {stats['score']:.6f}")
+        
+        # Close the debug file
+        if debug_fh:
+            debug_fh.close()
     
     return ex_score
 
@@ -113,14 +154,14 @@ def calculate_pair_scores_matrix(
     # Calculate Gaussian log-likelihood
     score_matrix = ((distances - target_dist)**2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     
-    return score_matrix
+    return score_matrix, distances
 
 def calculate_pair_scores(
     positions: Dict[str, np.ndarray],
     sigma: Dict[str, float],
     excluded_pairs: Optional[Set[Tuple]] = None,
     params: Optional[Dict[str, Any]] = None,
-    debug: bool = False
+    debug: bool = True
 ) -> float:
     """
     Calculate pairwise interaction scores with optional excluded pairs.
@@ -172,7 +213,7 @@ def calculate_pair_scores(
         sigma_value = sigma[pair_key]
         
         # Calculate score matrix and distances
-        score_matrix = calculate_pair_scores_matrix(
+        score_matrix, distances = calculate_pair_scores_matrix(
             positions[type1],
             positions[type2],
             target_dist,
@@ -209,8 +250,9 @@ def calculate_pair_scores(
             if debug_fh:
                 for i, j in selected_indices:
                     pair_score = score_matrix[i, j]
-                    debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
-                    
+                    dist = distances[i, j]
+                    debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{dist:.1f},{target_dist:.1f},{sigma_value:.1f},{pair_score:.1f}\n")
+
         else:
             # For different types, find mutual best matches
             row_min_indices = np.argmin(score_matrix, axis=1)
@@ -237,8 +279,9 @@ def calculate_pair_scores(
                 for i, j in unique_pairs:
                     if i < score_matrix.shape[0] and j < score_matrix.shape[1]:
                         pair_score = score_matrix[i, j]
-                        debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
-        
+                        dist = distances[i, j]
+                        debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{dist:.1f},{target_dist:.1f},{sigma_value:.1f},{pair_score:.1f}\n")
+
         # Sum selected scores and add to total
         if selected_scores:
             pairwise_score_part = np.sum(selected_scores)
