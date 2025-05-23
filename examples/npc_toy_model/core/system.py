@@ -129,3 +129,43 @@ class SystemBuilder:
         ideal = self.params.ideal_coordinates
         return {k: (v.cpu().numpy() if isinstance(v, torch.Tensor) else np.array(v))
                 for k, v in ideal.items()}
+
+def setup_system(
+    params: SystemParameters,
+    source: str = "ideal",
+    sampler_sequence: Optional[Sequence[str]] = None,
+    current_sampler: str = "pair_sampling",
+    trajectory_folder: str = "output_analysis/sampler_results",
+    trajectory_file: Optional[str] = None,
+    frame: int = -1
+) -> SystemState:
+    """
+    Convenience function to build a SystemState using SystemBuilder.
+    
+    Args:
+        params: System parameters
+        source: Source for positions ("ideal", "random", "trajectory")
+        sampler_sequence: Sequence of samplers to run
+        current_sampler: Current sampler being used
+        trajectory_folder: Folder containing trajectory files
+        trajectory_file: Specific trajectory file to load from
+        frame: Frame to load from trajectory (-1 for last frame)
+    
+    Returns:
+        SystemState object ready for simulation
+    """
+    # Default sampler sequence if not provided
+    if sampler_sequence is None:
+        sampler_sequence = ["pair_sampling", "tetramer_sampling", "octet_sampling"]
+    
+    builder = SystemBuilder(
+        params=params,
+        sampler_sequence=sampler_sequence,
+        current_sampler=current_sampler,
+        source=source,
+        trajectory_folder=trajectory_folder,
+        trajectory_file=trajectory_file,
+        frame=frame
+    )
+    
+    return builder.build()

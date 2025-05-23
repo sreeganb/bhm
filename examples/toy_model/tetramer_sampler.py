@@ -450,16 +450,15 @@ class TetramerSampler(BaseMCSampler):
         #cc_target = self.params.pair_distances['CC']
         
         # Calculate scores individually to enable detailed logging
-        ab_scores = ((ab_dists - ab_target)**2)/(2*sig['AB']**2) + np.log(2 * np.pi *sig['AB'])
-        bc1_scores = ((bc1_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
-        bc2_scores = ((bc2_dists - bc_target)**2)/(2*sig['BC']**2) + np.log(2 * np.pi *sig['BC'])
-        #cc_scores = ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
+        # In calculate_tetramer_scores_batch, fix the normalization term:
+        ab_scores = ((ab_dists - ab_target)**2)/(2*sig['AB']**2) + 0.5 * np.log(2 * np.pi * sig['AB']**2)
+        bc1_scores = ((bc1_dists - bc_target)**2)/(2*sig['BC']**2) + 0.5 * np.log(2 * np.pi * sig['BC']**2)
+        bc2_scores = ((bc2_dists - bc_target)**2)/(2*sig['BC']**2) + 0.5 * np.log(2 * np.pi * sig['BC']**2)        #cc_scores = ((cc_dists - cc_target)**2)/(2*sig['CC']**2) + np.log(2 * np.pi *sig['CC'])
         
         scores = ab_scores + bc1_scores + bc2_scores #+ cc_scores
-#        
+        
         return scores
 #-----------------------------------------------------------------------
-    
     def neg_log_posterior(
         self,
         positions: Dict[str, np.ndarray],

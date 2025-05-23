@@ -10,17 +10,18 @@ class GMMSigmaProvider:
     Provides sigma values from GMM fits and calculates negative log priors.
     Works with both PairSampler and TetramerSampler outputs.
     """
-    def __init__(self, sampler_name: str = "PairSampler", output_dir: str = None, specific_chain: int = None):
+    def __init__(self, sampler_name: str = "PairSampler", output_dir: str = None, 
+                 specific_chain: int = None, sigma_ranges: Dict[str, Tuple[float, float]] = None):
         """
         Initialize the sigma provider for a specific sampler type.
         
         Args:
-            sampler_name: Name of the sampler ('PairSampler', 'TetramerSampler')
-            output_dir: Directory containing GMM files (default: output_analysis/{sampler_name.lower()}_results)
+            sampler_name: Name of the sampler ('PairSampler', 'TetramerSampler', 'OctetSampler')
+            output_dir: Directory containing GMM files (default: output-analysis/{source_sampler}_results)
             specific_chain: Load from a specific chain number (default: random selection)
+            sigma_ranges: Dictionary of (min, max) ranges for each sigma type (default: [0.5, 10.0] for all)
         """
         self.sampler_name = sampler_name
-        #self.pair_types = ["AA", "AB", "BC", "CC"]
         self.pair_types = ["AA", "AB", "BC"]
         
         # Set output directory
@@ -31,9 +32,7 @@ class GMMSigmaProvider:
                 source_sampler = "tetramersampler"
             else:
                 source_sampler = "pairsampler"
-            #source_sampler = "pairsampler" if sampler_name.lower() == "tetramersampler" else "pairsampler"
             self.output_dir = os.path.join(os.getcwd(), f"output_analysis/{source_sampler}_results")
-            #self.output_dir = os.path.join(os.getcwd(), "output_analysis")
         else:
             self.output_dir = output_dir
             
@@ -45,8 +44,13 @@ class GMMSigmaProvider:
             "AA": 2.0,
             "AB": 2.0,
             "BC": 2.0,
-            #"CC": 2.0
         }
+        
+        # Set sigma ranges
+        if sigma_ranges is None:
+            self.sigma_ranges = {pt: (0.5, 10.0) for pt in self.pair_types}
+        else:
+            self.sigma_ranges = sigma_ranges
         
     def _load_gmm_parameters(self) -> Dict:
         """Load GMM parameters from JSON files."""
@@ -97,56 +101,81 @@ class GMMSigmaProvider:
         
         return gmm_params
 
-    def sample_sigma_values(self) -> Dict[str, float]:
-        """Sample sigma values from the loaded GMMs or use defaults."""
+    def sample_sigma_values(self, max_attempts: int = 100) -> Dict[str, float]:
+        """Sample sigma values from the loaded GMMs with bounds checking."""
         sigma = {}
         
         for pair_type in self.pair_types:
             gmm_info = self.gmm_params.get(pair_type)
+            sampled_value = None
             
-            # Only use GMM data if it exists and has the needed keys
             if (
                 gmm_info
                 and all(k in gmm_info for k in ['n_components', 'means', 'covariances', 'weights'])
             ):
-                try:
-                    n_components = gmm_info['n_components']
-                    means = np.asarray(gmm_info['means']).reshape(n_components, 1)
-                    covariances = np.asarray(gmm_info['covariances'])
-                    weights = np.asarray(gmm_info['weights'])
-                    
-                    # Normalize weights if needed
-                    wsum = np.sum(weights)
-                    if abs(wsum - 1.0) > 1e-6:
-                        weights = weights / wsum
-                    
-                    # Randomly pick a GMM component
-                    component = np.random.choice(n_components, p=weights)
-                    
-                    # Reshape mean to (1,) and covariance to (1,1)
-                    mean_value = means[component].flatten()
-                    cov_value = float(covariances[component])
-                    cov_matrix = np.array([[cov_value]])
-                    
-                    # Sample from the 1D GMM
-                    sampled_value = np.random.multivariate_normal(mean=mean_value, cov=cov_matrix, size=1)
-                    sigma[pair_type] = float(sampled_value)
-                except (KeyError, ValueError, np.linalg.LinAlgError) as e:
-                    print(f"Error sampling GMM for {pair_type}: {e}. Using default.")
-                    sigma[pair_type] = self.default_sigma[pair_type]
+                # Try multiple times to get a valid sample
+                for attempt in range(max_attempts):
+                    try:
+                        n_components = gmm_info['n_components']
+                        means = np.asarray(gmm_info['means']).reshape(n_components, 1)
+                        covariances = np.asarray(gmm_info['covariances'])
+                        weights = np.asarray(gmm_info['weights'])
+                        
+                        # Normalize weights
+                        weights = weights / np.sum(weights)
+                        
+                        # Sample from GMM
+                        component = np.random.choice(n_components, p=weights)
+                        mean_value = means[component].flatten()
+                        cov_value = float(covariances[component])
+                        
+                        # Limit the standard deviation to prevent extreme values
+                        std_value = min(np.sqrt(abs(cov_value)), mean_value[0] * 0.3)  # Cap at 30% of mean
+                        
+                        # Sample from normal distribution
+                        candidate = np.random.normal(loc=mean_value[0], scale=std_value)
+                        candidate = float(candidate)
+                        
+                        # Check if within valid range
+                        if pair_type in self.sigma_ranges:
+                            min_val, max_val = self.sigma_ranges[pair_type]
+                            if min_val <= candidate <= max_val:
+                                sampled_value = candidate
+                                break
+                        
+                    except Exception as e:
+                        continue
+                
+                if sampled_value is None:
+                    print(f"Failed to sample valid {pair_type} after {max_attempts} attempts. Using default.")
+                    sampled_value = self.default_sigma[pair_type]
             else:
-                # No valid GMM data for this pair type
+                sampled_value = self.default_sigma[pair_type]
+            
+            sigma[pair_type] = sampled_value
+        
+        # Final validation
+        for pair_type, value in sigma.items():
+            if not (0.1 <= value <= 15.0):  # Hard bounds
+                print(f"Warning: {pair_type}={value:.3f} is outside safe bounds. Using default.")
                 sigma[pair_type] = self.default_sigma[pair_type]
         
         return sigma
     
     def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Calculate negative log prior across all sigma values."""
+        """Calculate negative log prior across all sigma values with range enforcement."""
         if not sigma:
             return np.inf
-            
+        
+        # Check if sigma values are within their specified ranges
+        for pair_type, value in sigma.items():
+            if pair_type in self.sigma_ranges:
+                min_val, max_val = self.sigma_ranges[pair_type]
+                if value < min_val or value > max_val:
+                    return np.inf  # Reject out-of-range values
+        
         log_priors = [self._calculate_gmm_log_prob(value, pair_type) 
-                     for pair_type, value in sigma.items()]
+                      for pair_type, value in sigma.items()]
         
         # Filter out -inf values to avoid returning inf unnecessarily
         valid_priors = [lp for lp in log_priors if lp > -np.inf]
@@ -235,8 +264,8 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Sample sigma values from GMM fits')
     parser.add_argument('--sampler', type=str, default='PairSampler',
-                        choices=['PairSampler', 'TetramerSampler'],
-                        help='Sampler name (PairSampler or TetramerSampler)')
+                        choices=['PairSampler', 'TetramerSampler', 'OctetSampler'],
+                        help='Sampler name (PairSampler, TetramerSampler, or OctetSampler)')
     parser.add_argument('--dir', type=str, default=None,
                         help='Directory containing GMM files')
     parser.add_argument('--chain', type=int, default=None,

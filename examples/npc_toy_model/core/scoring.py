@@ -10,7 +10,7 @@ from functools import lru_cache
 #************************************
 # Imports from files here
 #************************************
-from parameters import SystemParameters
+from core.parameters import SystemParameters
 
 #--------------------------------------------------------------------------------
 # Utility functions
