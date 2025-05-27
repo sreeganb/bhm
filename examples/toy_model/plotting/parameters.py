@@ -283,48 +283,102 @@ class SystemParameters:
             [ 33.23, -33.23, -68.50],
             ])
         
-                
-#        array_A = np.array([
-#            [ 104.63,    0.00,    0.00],
-#            [  73.97,   73.97,    0.00],
-#            [   0.00,  104.63,    0.00],
-#            [ -73.97,   73.97,    0.00],
-#            [-104.63,    0.00,    0.00],
-#            [ -73.97,  -73.97,    0.00],
-#            [   0.00, -104.63,    0.00],
-#            [  73.97,  -73.97,    0.00],
-#        ])
-#
-#        array_B = np.array([
-#            [ 104.63,    0.00,  -50.20],
-#            [  73.97,   73.97,  -50.20],
-#            [   0.00,  104.63,  -50.20],
-#            [ -73.97,   73.97,  -50.20],
-#            [-104.63,    0.00,  -50.20],
-#            [ -73.97,  -73.97,  -50.20],
-#            [   0.00, -104.63,  -50.20],
-#            [  73.97,  -73.97,  -50.20],
-#        ])
-#
-#        array_C = np.array([
-#            [ 115.99,   11.39,  -73.20],
-#            [  93.28,  -11.39,  -73.20],
-#            [  85.28,   85.28,  -73.20],
-#            [  62.58,   62.58,  -73.20],
-#            [  11.39,  115.99,  -73.20],
-#            [ -11.39,   93.28,  -73.20],
-#            [ -62.58,   85.28,  -73.20],
-#            [ -85.28,   62.58,  -73.20],
-#            [-115.99,   11.39,  -73.20],
-#            [ -93.28,  -11.39,  -73.20],
-#            [ -85.28,  -85.28,  -73.20],
-#            [ -62.58,  -62.58,  -73.20],
-#            [ -11.39, -115.99,  -73.20],
-#            [  11.39,  -93.28,  -73.20],
-#            [  62.58,  -85.28,  -73.20],
-#            [  85.28,  -62.58,  -73.20],
-#        ])
-#
-        
         return {'A': array_A, 'B': array_B, 'C': array_C}
-
+        
+    def half_rotated_coordinates(self) -> Dict[str, np.ndarray]:
+        """Half-rotated system coordinates with 180-degree rotation around y-axis through center of geometry"""
+        original = self.latest_ideal()
+        
+        def rotate_180_y_about_center(coords, center):
+            """Rotate coordinates 180 degrees around y-axis through a specified center"""
+            # Translate to origin
+            coords_centered = coords - center
+            
+            # 180-degree rotation around y-axis
+            rotation_matrix = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, -1]])
+            coords_rotated = coords_centered @ rotation_matrix.T
+            
+            # Translate back
+            return coords_rotated + center
+        
+        def calculate_min_translation_distance(coords1, coords2, radii1, radii2, safety_margin=19.0):
+            """Calculate minimum translation distance to avoid overlaps"""
+            min_required = 0.0
+            
+            for i, (c1, r1) in enumerate(zip(coords1, radii1)):
+                for j, (c2, r2) in enumerate(zip(coords2, radii2)):
+                    # Current distance
+                    current_dist = np.linalg.norm(c1 - c2)  # Full 3D distance
+                    # Required distance (sum of radii + safety margin)
+                    required_dist = r1 + r2 + safety_margin
+                    # Additional translation needed
+                    additional_needed = max(0, required_dist - current_dist)
+                    min_required = max(min_required, additional_needed)
+            
+            return min_required
+        
+        # Calculate center of geometry for the entire system
+        all_coords = np.vstack([original['A'], original['B'], original['C']])
+        center_of_geometry = np.mean(all_coords, axis=0)
+        print(f"Center of geometry: {center_of_geometry}")
+        
+        # Split coordinates - first half vs second half
+        half1_A, half2_A = original['A'][:4], original['A'][4:]  # A particles 0-3 vs 4-7
+        half1_B, half2_B = original['B'][:4], original['B'][4:]  # B particles 0-3 vs 4-7
+        half1_C, half2_C = original['C'][:8], original['C'][8:]  # C particles 0-7 vs 8-15
+        
+        # Rotate the ENTIRE second half (A4B4C8 system) by 180 degrees around y-axis through center of geometry
+        half2_A_rotated = rotate_180_y_about_center(half2_A, center_of_geometry)
+        half2_B_rotated = rotate_180_y_about_center(half2_B, center_of_geometry)
+        half2_C_rotated = rotate_180_y_about_center(half2_C, center_of_geometry)
+        
+        print(f"Rotated second half (A4B4C8 system) by 180 degrees around y-axis through center of geometry")
+        
+        # Combine all coordinates and radii for overlap checking
+        half1_coords = np.vstack([half1_A, half1_B, half1_C])
+        half2_coords = np.vstack([half2_A_rotated, half2_B_rotated, half2_C_rotated])
+        
+        half1_radii = [self.radii['A']] * 4 + [self.radii['B']] * 4 + [self.radii['C']] * 8
+        half2_radii = [self.radii['A']] * 4 + [self.radii['B']] * 4 + [self.radii['C']] * 8
+        
+        # Calculate minimum translation distance to avoid overlaps
+        min_translation = calculate_min_translation_distance(
+            half1_coords, half2_coords, half1_radii, half2_radii
+        )
+        
+        # Add extra safety margin
+        translation_distance = min_translation + 15.0
+        
+        # For 180-degree rotation around y-axis, translate in x-direction to separate the halves
+        translation_vector = np.array([translation_distance, 0.0, 0.0])
+        
+        # Apply translation to the rotated second half
+        half2_A_translated = half2_A_rotated + translation_vector
+        half2_B_translated = half2_B_rotated + translation_vector
+        half2_C_translated = half2_C_rotated + translation_vector
+        
+        print(f"Applied translation of {translation_distance:.2f} units in x-direction to avoid overlaps")
+        
+        return {
+            'A': np.vstack([half1_A, half2_A_translated]),
+            'B': np.vstack([half1_B, half2_B_translated]),
+            'C': np.vstack([half1_C, half2_C_translated])
+        }
+    
+    def single_tetramer_coordinates(self) -> Dict[str, np.ndarray]:
+        """Single tetramer (ABCC) coordinates"""
+        original = self.latest_ideal()
+        return {
+            'A': original['A'][0:1],
+            'B': original['B'][0:1], 
+            'C': original['C'][0:2]
+        }
+    
+    def octamer_coordinates(self) -> Dict[str, np.ndarray]:
+        """Octamer coordinates (first two tetramers)"""
+        original = self.latest_ideal()
+        return {
+            'A': original['A'][0:2],
+            'B': original['B'][0:2],
+            'C': original['C'][0:4]
+        }

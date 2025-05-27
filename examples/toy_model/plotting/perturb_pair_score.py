@@ -11,6 +11,7 @@ from scipy.spatial.transform import Rotation
 # Assuming parameters.py and pair_score.py are in the same directory or accessible
 from parameters import SystemParameters
 from pair_score import ScoringSystem # Using ScoringSystem as per your first script
+from visualization import plot_3d
 
 
 @dataclass
@@ -63,6 +64,51 @@ class PerturbSystemParameters:
         self.ideal_accuracy = 1.0 # By definition
         self.ideal_rmsd = 0.0     # By definition
         print(f"Initialized Ideal Structure: Score = {self.ideal_score:.4f}")
+        # plot the ideal structure
+        #plot_3d(self.ideal_coordinates, "Ideal Structure", "output_analysis/ideal_structure")
+        
+        # Calculate the score for the half rotated system
+        half_rotated_coords = params.half_rotated_coordinates()
+        half_score_tuple = self.scalc.calculate_score(
+            half_rotated_coords,
+            self.fixed_sigma_for_scoring,
+            self.sig_range_for_scoring
+        )
+        # plot the half rotated structure
+        plot_3d(half_rotated_coords, "Half Rotated Structure", "output_analysis/half_rotated_structure")
+        
+        # score for a tetramer * 8 to get the full system score
+        tet_coords = params.single_tetramer_coordinates()
+        tet_score_tuple = self.scalc.calculate_score(
+            tet_coords,
+            self.fixed_sigma_for_scoring,
+            self.sig_range_for_scoring
+        )
+        print(f"Tetramer Structure: Score = {tet_score_tuple[0]:.4f}")
+        plot_3d(tet_coords, "Tetramer Structure", "output_analysis/tetramer_structure")
+        
+        oct_coords = params.octamer_coordinates()
+        oct_score_tuple = self.scalc.calculate_score(
+            oct_coords,
+            self.fixed_sigma_for_scoring,
+            self.sig_range_for_scoring
+        )
+        print(f"Octamer Structure: Score = {oct_score_tuple[0]:.4f}")
+        plot_3d(oct_coords, "Octamer Structure", "output_analysis/octamer_structure")
+
+        # write this score and ideal score to file
+        with open('output_analysis/ideal_and_half_scores.txt', 'w') as f:
+            f.write(f"Ideal Structure Score: {self.ideal_score:.4f}\n")
+            f.write(f"Half Rotated Structure Score: {half_score_tuple[0]:.4f}\n")
+            f.write(f"Half rotated structure excluded volume score: {half_score_tuple[1]:.4f}\n")
+            f.write(f"Half rotated structure pair score: {half_score_tuple[2]:.4f}\n")
+            f.write(f"Tetramer Structure Score: {tet_score_tuple[0]*8:.4f}\n")
+            f.write(f"Tetramer Structure Excluded Volume Score: {tet_score_tuple[1]*8:.4f}\n")
+            f.write(f"Tetramer Structure Pair Score: {tet_score_tuple[2]*8:.4f}\n")
+            f.write(f"Octamer Structure Score: {oct_score_tuple[0]*4:.4f}\n")
+            f.write(f"Octamer Structure Excluded Volume Score: {oct_score_tuple[1]*4:.4f}\n")
+            f.write(f"Octamer Structure Pair Score: {oct_score_tuple[2]*4:.4f}\n")
+        print(f"Half Rotated Structure: Score = {half_score_tuple[0]:.4f}")
 
     def _check_final_overlaps(self, current_coords: Dict[str, np.ndarray], print_details: bool = False) -> bool:
         """Helper to check for overlaps and optionally print details."""

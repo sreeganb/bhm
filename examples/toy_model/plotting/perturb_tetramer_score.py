@@ -544,11 +544,11 @@ class PerturbSystemParameters:
 if __name__ == "__main__":
     # --- Configuration for the analysis ---
     magnitudes_to_test = np.concatenate([
-        np.linspace(0.05, 0.5, 10),
-        np.linspace(0.6, 2.5, 15),
+        np.linspace(0.03, 0.9, 10),
+        np.linspace(0.9, 2.5, 10),
         np.linspace(2.6, 5.0, 10) 
     ])
-    num_perturbations_per_mag = 10
+    num_perturbations_per_mag = 30
 
     # --- CRITICAL PARAMETERS FOR SKIPPED CONFIGURATIONS ---
     # 1. Overlap Resolution Parameters (passed to PerturbSystemParameters)
