@@ -110,7 +110,9 @@ class BaseMCSampler:
     def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
         """
         Propose a move for one sigma parameter using symmetrical sampling in log-space.
-        If the proposed sigma is outside [min_sigma, max_sigma], the prior penalty likely rejects it.
+        This maintains detailed balance since the proposal is symmetric in log-space.
+        Sigma represents measurement uncertainty in distance, so log-normal proposals
+        are physically meaningful (uncertainty is naturally multiplicative).
         """
         import random
         pair_type = random.choice(list(sigma.keys()))
@@ -118,13 +120,21 @@ class BaseMCSampler:
         # Current value in log-space
         log_current = np.log(sigma[pair_type])
 
-        # Smaller base step size and narrower factor
-        base_step_size = 0.009 # switching from 0.002 to 0.004
-        step_factor = (1.0 + 3.0 * np.clip(accept_rate - self.target_acceptance, -0.2, 0.2))
+        # Adaptive step size based on acceptance rate
+        # Smaller base step for more precise sampling around optimal values
+        base_step_size = 0.005  # Reduced for better convergence
+        
+        # Symmetric adjustment around target acceptance rate
+        accept_deviation = accept_rate - self.target_acceptance
+        step_factor = 1.0 + 2.0 * np.clip(accept_deviation, -0.15, 0.15)
         step_size = base_step_size * step_factor
 
+        # Symmetric proposal in log-space: log(σ_new) = log(σ_old) + ε
+        # where ε ~ N(0, step_size²)
+        # This ensures detailed balance: P(σ_old → σ_new) = P(σ_new → σ_old)
         log_proposed = log_current + np.random.normal(0, step_size)
 
+        # Transform back to linear space
         new_sigma = dict(sigma)
         new_sigma[pair_type] = np.exp(log_proposed)
 
