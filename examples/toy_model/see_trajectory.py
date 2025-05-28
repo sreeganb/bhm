@@ -124,7 +124,7 @@ def visualize_trajectory_plotly(
 
     # Calculate a scaling factor to make particle sizes proportional to box
     # This converts physical units to reasonable display sizes
-    scaling_factor = box_size / 100  # Adjust divisor to taste
+    scaling_factor = box_size / 1000  # Adjust divisor to taste
     
     # Create initial frame data - this ensures particles show correctly on page load
     frame_data = []
@@ -499,7 +499,7 @@ def create_trajectory_movie(
     
     # Set up default particle configuration
     default_colors = {'A': 'red', 'B': 'blue', 'C': 'green'}
-    default_radii = {'A': 24.0, 'B': 14.0, 'C': 16.0}
+    default_radii = {'A': 16.0, 'B': 9.333, 'C': 10.666}
     default_opacity = {'A': 0.9, 'B': 0.9, 'C': 0.9}
     
     # Apply custom settings if provided
@@ -522,7 +522,7 @@ def create_trajectory_movie(
     # Create and show the visualization
     fig = visualize_trajectory_plotly(
         trajectory, 
-        max_coord * 1.1,  # Add 10% padding to box size
+        max_coord * 1.2,  # Add 10% padding to box size
         particle_config,
         animation_speed,
         show_statistics,
@@ -547,7 +547,7 @@ if __name__ == '__main__':
     
     # Example custom settings (you can modify these or implement command-line options)
     custom_colors = {'A': 'crimson', 'B': 'royalblue', 'C': 'forestgreen'}
-    custom_radii = {'A': 24.0, 'B': 14.0, 'C': 16.0}
+    custom_radii = {'A': 16.0, 'B': 9.333, 'C': 10.666}
     
     create_trajectory_movie(
         args.trajectory_file,
