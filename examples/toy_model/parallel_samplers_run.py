@@ -206,7 +206,7 @@ def main():
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"]
     #mcmc_steps = [10000000, 500000]
     sampler_sequence = ["tetramer_sampler"]
-    mcmc_steps = [250000]
+    mcmc_steps = [1000000]
     #sampler_sequence = ["tetramer_sampler", "octet_sampler"]
     #mcmc_steps = [500000, 500000]
     #sampler_sequence = ["pair_sampler"]
