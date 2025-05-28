@@ -206,7 +206,7 @@ def main():
     #sampler_sequence = ["pair_sampler", "tetramer_sampler"]
     #mcmc_steps = [10000000, 500000]
     sampler_sequence = ["tetramer_sampler"]
-    mcmc_steps = [1000000]
+    mcmc_steps = [2000000]
     #sampler_sequence = ["tetramer_sampler", "octet_sampler"]
     #mcmc_steps = [500000, 500000]
     #sampler_sequence = ["pair_sampler"]
@@ -226,7 +226,7 @@ def main():
             "run": True,
             "n_chains": 8 if sampler_key == "pair_sampler" else 8,
             "n_steps": mcmc_steps[idx],
-            "save_freq": 1000,
+            "save_freq": 2000,
             "use_sigma_dist": False if is_first else True
         }
         
