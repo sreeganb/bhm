@@ -87,7 +87,7 @@ class TetramerSampler(BaseMCSampler):
             print("using passed in sigma values")
         else:
             self.sigma, self.sigma_range = self.initialize_sigma()
-            self.base_priors = Priors("jeffreys")
+            self.base_priors = Priors("uniform")
             print("Using default sigma initialization")
 
     def get_positions(self) -> Dict[str, np.ndarray]:
@@ -256,7 +256,7 @@ class TetramerSampler(BaseMCSampler):
         move_probs = [0.4, 0.1, 0.5]  # position, sigma, tetramer
         
         # Simple cooling schedule based on total steps
-        temp_start, temp_end = 5.0, 1.0
+        temp_start, temp_end = 6.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} total steps...")

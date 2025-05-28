@@ -32,6 +32,11 @@ class OctetSampler(BaseMCSampler):
         super().__init__()  # Call BaseMCSampler constructor
         self.use_sigma_distribution = use_sigma_distribution
         self.params = SystemParameters()  # Initialize system parameters
+        
+        # Need a method to take in sampler sequence and find out at which sampler level we are and then 
+        # initialize and read sigma values accordingly, for example if the sequence is 
+        # ["pair", "tetramer", "octet", "pair", "octet", tetramer] and we are at element 4 in this sequence then the 
+        # code should automatically take the sigma values from element 3 which is "pair" and read in the GMM values from this 
 
         # Basic sampler parameters
         self.octet_trans_step = 0.05
@@ -265,68 +270,6 @@ class OctetSampler(BaseMCSampler):
 
         #print(f"Octets: {octets}")
         return octets, tetramers
-    
-#    def get_octets(self, positions: Dict[str, np.ndarray], tetramers=None, temp=0.9) -> List[Tuple]:
-#        """
-#        Group tetramers into octets (pairs of tetramers) with temperature-based selection.
-#        Vectorized implementation for better performance.
-#        """
-#        if tetramers is None:
-#            tetramers = self.ts.get_tetramers(positions)
-#        
-#        if len(tetramers) < 2:
-#            return []
-#        
-#        # Calculate tetramer centers using vectorized operations
-#        centers = np.zeros((len(tetramers), 3))
-#        for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
-#            coords = np.vstack([
-#                positions['A'][a_idx],
-#                positions['B'][b_idx],
-#                positions['C'][c_idx1],
-#                positions['C'][c_idx2]
-#            ])
-#            centers[i] = np.mean(coords, axis=0)
-#        
-#        # Form octets by pairing tetramers
-#        octets = []
-#        available = list(range(len(tetramers)))
-#        box_size = self.params.box_size
-#        
-#        while len(available) >= 2:
-#            # Pick first tetramer randomly
-#            idx1 = np.random.choice(available)
-#            available.remove(idx1)
-#            
-#            # Calculate all distances at once using vectorized operations
-#            indices = np.array(available)
-#            center1 = centers[idx1]
-#            deltas = centers[indices] - center1
-#            
-#            # Periodic boundary correction (vectorized)
-#            mask = np.abs(deltas) > box_size/2
-#            deltas[mask] -= np.sign(deltas[mask]) * box_size
-#            
-#            # Calculate distances (vectorized)
-#            distances = np.linalg.norm(deltas, axis=1)
-#            
-#            # Calculate selection probabilities
-#            probs = np.exp(-distances / temp)
-#            probs_sum = probs.sum()
-#            
-#            # Select second tetramer
-#            if probs_sum > 1e-10:
-#                probs = probs / probs_sum
-#                idx2_rel = np.random.choice(len(available), p=probs)
-#                idx2 = available[idx2_rel]
-#            else:
-#                idx2 = np.random.choice(available)
-#            
-#            # Add the pair to octets and remove from available
-#            octets.append((tetramers[idx1], tetramers[idx2]))
-#            available.remove(idx2)
-#        
-#        return octets
     
     def _random_unit_vector(self):
         """Generate a random unit vector."""

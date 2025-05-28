@@ -4,30 +4,112 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import multiprocessing as mp
 from datetime import datetime
-from typing import Dict, Type
+from typing import Dict, Type, Any, List, Tuple
 from functools import partial
 from tqdm import tqdm
+import shutil
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import shutil
+import subprocess
+import time
 
 from parameters import SystemParameters
 from base_sampler import BaseMCSampler
 from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
 from visualization import visualize_3d_configuration
+from octet_sampler import OctetSampler
 
+# Map of sampler names to their classes
 SAMPLER_MAP = {
-    "PairSampler": PairSampler,
-    "TetramerSampler": TetramerSampler,
+    "pair": PairSampler,
+    "tetramer": TetramerSampler,
+    "octet": OctetSampler
 }
 
-def run_single_chain(
-    chain_idx: int,
-    sampler_class: Type[BaseMCSampler],
-    config: Dict,
-    base_output_dir: str,
-    timestamp: str
-) -> Dict:
+# Default configuration
+DEFAULT_CONFIG = {
+    "n_chains": 4,
+    "n_steps": 10000,
+    "save_freq": 100,
+    "use_sigma_dist": True,
+}
+
+class SamplerSequenceManager:
+    """Manages the sequence of samplers and their indexing."""
+    
+    def __init__(self, sampler_sequence: List[str]):
+        self.sampler_sequence = sampler_sequence
+        self.sampler_counts = self._count_samplers()
+        self.current_indices = {name: 0 for name in set(sampler_sequence)}
+    
+    def _count_samplers(self) -> Dict[str, int]:
+        """Count total occurrences of each sampler in the sequence."""
+        counts = {}
+        for sampler in self.sampler_sequence:
+            counts[sampler] = counts.get(sampler, 0) + 1
+        return counts
+    
+    def get_sampler_info(self, sequence_idx: int) -> Tuple[str, int, int]:
+        """
+        Get sampler information for a given position in the sequence.
+        
+        Returns:
+            Tuple of (sampler_name, current_index, total_count)
+        """
+        sampler_name = self.sampler_sequence[sequence_idx]
+        self.current_indices[sampler_name] += 1
+        current_idx = self.current_indices[sampler_name]
+        total_count = self.sampler_counts[sampler_name]
+        
+        return sampler_name, current_idx, total_count
+    
+    def get_directory_name(self, sampler_name: str, current_idx: int) -> str:
+        """Generate directory name for the sampler."""
+        return f"{sampler_name}sampler_results_{current_idx}"
+
+def run_analysis(sampler_key: str, sampler_index: int):
+    """Run the fit_gmm.py script for the specified sampler."""
+    analysis_key = f"{sampler_key}_{sampler_index}" if sampler_index > 1 else sampler_key
+    print(f"\nRunning analysis for {analysis_key}...")
+    try:
+        cmd = ["python3.13", "fit_gmm.py", analysis_key]
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = process.communicate()
+        
+        if process.returncode != 0:
+            print(f"Analysis failed with exit code {process.returncode}")
+            print(f"Error output: {stderr}")
+            return False
+        
+        print(f"Analysis completed for {analysis_key}")
+        return True
+    except Exception as e:
+        print(f"Error running analysis: {e}")
+        return False
+
+def visualize_final_configuration(positions: Dict[str, np.ndarray], 
+                               params: SystemParameters, 
+                               chain_idx: int, 
+                               output_dir: str) -> None:
+    """Create and save a static and interactive visualization of final positions"""
+    # Static matplotlib plot
+    plt.figure(figsize=(10, 8))
+    visualize_3d_configuration(positions, params.radii, f"Chain {chain_idx} Final Configuration")
+    plt.savefig(os.path.join(output_dir, "final_configuration.png"))
+    plt.close()
+
+def run_single_chain(chain_idx: int,
+                    sampler_class: Type[BaseMCSampler],
+                    config: Dict[str, Any],
+                    base_output_dir: str,
+                    timestamp: str,
+                    sampler_sequence: List[str],
+                    sequence_position: int) -> Dict[str, Any]:
     """Run a single MCMC chain in its own process."""
-    # Create chain-specific output directory
+    
+    # Setup chain-specific directory
     chain_dir = os.path.join(
         base_output_dir,
         f"{sampler_class.__name__.lower()}_{timestamp}",
@@ -35,107 +117,55 @@ def run_single_chain(
     )
     os.makedirs(chain_dir, exist_ok=True)
     
-    # Initialize sampler
-    sampler = sampler_class(config.get("use_sigma_dist", True))
-    
-    # Run the chain with chain-specific output directory
-    #best_positions, trajectory, traj_file = sampler.run_mc(
-    #    n_steps=config["n_steps"],
-    #    save_freq=config["save_freq"],
-    #    output_dir=chain_dir  # Pass unique directory for each chain
-    #)
-    best_positions, traj_file = sampler.run_mc(
-        n_steps=config["n_steps"],
-        save_freq=config["save_freq"],
-        output_dir=chain_dir  # Pass unique directory for each chain
+    # Initialize sampler with sequence information
+    sampler = sampler_class(
+        config.get("use_sigma_dist", True),
+        sampler_sequence=sampler_sequence,
+        sequence_position=sequence_position
     )
     
-    # Save configuration visualization (remove save_path parameter)
-    params = SystemParameters()
-    plt.figure(figsize=(10, 8))
-    visualize_3d_configuration(
-        best_positions, 
-        params.radii, 
-        f"Chain {chain_idx} Final Configuration"
-    )
-    fig_path = os.path.join(chain_dir, "final_configuration.png")
-    plt.savefig(fig_path)
-    plt.close()
-    
-    # Don't try to save trajectory visualization if function doesn't return a figure
     try:
-        # Only call visualization if needed - note it may display directly
-        # For debugging and visualization purposes
-        print(f"Generating trajectory visualization for chain {chain_idx}")
-        
-# This part of the code snippet is handling file operations related to saving the trajectory data
-# generated during the sampling process. Here's a breakdown of what it does:
-        # Use plotly directly to create a visualization
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-        
-        # Create a simple test trajectory plot
-        fig = make_subplots(rows=1, cols=1, specs=[[{'type': 'scatter3d'}]])
-        for type_name in best_positions:
-            # Add points for current positions
-            fig.add_trace(
-                go.Scatter3d(
-                    x=best_positions[type_name][:, 0],
-                    y=best_positions[type_name][:, 1],
-                    z=best_positions[type_name][:, 2],
-                    mode='markers',
-                    marker=dict(
-                        size=5,
-                        color={
-                            'A': 'red',
-                            'B': 'blue',
-                            'C': 'green'
-                        }.get(type_name, 'gray'),
-                    ),
-                    name=type_name
-                )
-            )
-        
-        fig.update_layout(
-            title=f"Final configuration for chain {chain_idx}",
-            scene=dict(
-                xaxis=dict(range=[0, params.box_size]),
-                yaxis=dict(range=[0, params.box_size]),
-                zaxis=dict(range=[0, params.box_size])
-            )
+        best_positions, traj_file = sampler.run_mc(
+            n_steps=config["n_steps"],
+            save_freq=config["save_freq"],
+            output_dir=chain_dir
         )
         
-        # Save this figure instead
-        traj_fig_path = os.path.join(chain_dir, "trajectory.html")
-        fig.write_html(traj_fig_path)
-        
-    except Exception as e:
-        print(f"Warning: Could not save trajectory visualization: {e}")
+        # Generate visualizations
+        params = SystemParameters()
+            
+        return {
+            'chain_idx': chain_idx,
+            'output_dir': chain_dir,
+            'best_positions': best_positions,
+            'trajectory_file': traj_file,
+            'final_sigma': sampler.sigma
+        }
     
-    return {
-        'chain_idx': chain_idx,
-        'output_dir': chain_dir,
-        'best_positions': best_positions,
-        'trajectory_file': traj_file,
-        'final_sigma': sampler.sigma
-    }
+    except Exception as e:
+        print(f"Error in chain {chain_idx}: {e}")
+        return {
+            'chain_idx': chain_idx,
+            'output_dir': chain_dir,
+            'error': str(e)
+        }
 
-def run_parallel_sampling(
-    sampler_class: Type[BaseMCSampler],
-    config: Dict,
-    output_folder: str = "output_analysis",
-    n_processes: int = None
-) -> Dict[int, Dict]:
+def run_parallel_sampling(sampler_class: Type[BaseMCSampler],
+                         config: Dict[str, Any],
+                         output_folder: str = "output_analysis",
+                         n_processes: int = None,
+                         sampler_sequence: List[str] = None,
+                         sequence_position: int = 0) -> Dict[int, Dict[str, Any]]:
     """Run multiple MCMC chains in parallel."""
+    
+    # Setup
     n_chains = config["n_chains"]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Set environment variable to disable HDF5 file locking (backup solution)
-    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"  # Prevent HDF5 file locking issues
+    os.makedirs(output_folder, exist_ok=True)
     
     # Prepare parallel execution
-    n_processes = n_processes or mp.cpu_count()
-    pool = mp.Pool(processes=min(n_processes, n_chains))
+    n_processes = min(n_processes or mp.cpu_count(), n_chains)
     
     # Create partial function with fixed arguments
     run_chain = partial(
@@ -143,122 +173,168 @@ def run_parallel_sampling(
         sampler_class=sampler_class,
         config=config,
         base_output_dir=output_folder,
-        timestamp=timestamp
+        timestamp=timestamp,
+        sampler_sequence=sampler_sequence or [],
+        sequence_position=sequence_position
     )
     
     # Run chains in parallel with progress bar
-    print(f"Starting {n_chains} chains using {min(n_processes, n_chains)} processes...")
+    print(f"Starting {n_chains} chains using {n_processes} processes...")
     results = {}
     
-    try:
+    with mp.Pool(processes=n_processes) as pool:
         with tqdm(total=n_chains, desc="Running chains") as pbar:
             for result in pool.imap_unordered(run_chain, range(n_chains)):
                 chain_idx = result['chain_idx']
                 results[chain_idx] = result
                 pbar.update(1)
                 pbar.set_postfix({'Chain': chain_idx})
-    finally:
-        pool.close()
-        pool.join()
     
     return results
 
-def analyze_chains(results: Dict[int, Dict], output_folder: str, sampler_name: str):
-    """Analyze results across all chains and organize output files."""
+def analyze_chains(results: Dict[int, Dict], 
+                  output_folder: str, 
+                  directory_name: str) -> pd.DataFrame:
+    """Organize result files and generate summary statistics."""
     
-    # check if sampler specific folder exists
-    sampler_folder = os.path.join(output_folder, f"{sampler_name.lower()}_results")
-    old_sampler_folder = os.path.join(output_folder, f"{sampler_name.lower()}_results_old")
+    # Setup output directory
+    sampler_folder = os.path.join(output_folder, directory_name)
+    old_sampler_folder = os.path.join(output_folder, f"{directory_name}_old")
+    
+    # Archive previous results if they exist
     if os.path.exists(sampler_folder):
         if os.path.exists(old_sampler_folder):
-            import shutil
-            shutil.rmtree(old_sampler_folder)  # Remove old_sampler_folder if it exists        # move this folder and rename it as old_sampler_folder
+            shutil.rmtree(old_sampler_folder)
         os.rename(sampler_folder, old_sampler_folder)
     os.makedirs(sampler_folder, exist_ok=True)
     
-    # Copy/move trajectory files with consistent naming
-    for chain_idx, result in results.items():
-        # Define consistent filename format
+    # Process chains with successful runs
+    valid_results = {idx: res for idx, res in results.items() if 'error' not in res}
+    if not valid_results:
+        print("No valid chains completed. Check logs for errors.")
+        return pd.DataFrame()
+    
+    # Copy trajectory files to centralized location
+    for chain_idx, result in valid_results.items():
         chain_name = f"chain_{chain_idx+1}"
         new_traj_file = os.path.join(sampler_folder, f"trajectory_{chain_name}.h5")
         
-        # Copy trajectory file to centralized location
-        src_file = result['trajectory_file']
-        if os.path.exists(src_file):
-            import shutil
+        src_file = result.get('trajectory_file')
+        if src_file and os.path.exists(src_file):
             shutil.copy2(src_file, new_traj_file)
-            print(f"Copied trajectory for {chain_name} to {new_traj_file}")
-            
-            # Update result with new centralized file path
-            results[chain_idx]['centralized_trajectory'] = new_traj_file
+            result['centralized_trajectory'] = new_traj_file
     
     # Collect sigma values across chains
     sigma_values = pd.DataFrame([
         {**{'chain': f"chain_{idx+1}"}, **result['final_sigma']}
-        for idx, result in results.items()
+        for idx, result in valid_results.items()
     ])
     
-    # Save combined results
+    # Save and summarize results
     sigma_values.to_csv(os.path.join(sampler_folder, "final_sigma_values.csv"), index=False)
     
-    # Print summary statistics
     print("\nSummary of sigma values across chains:")
-    print(sigma_values.describe())
+    summary = sigma_values.describe()
+    print(summary)
+    summary.to_csv(os.path.join(sampler_folder, "sigma_statistics.csv"))
     
     return sigma_values
 
 def main():
-    run_config = {
-        "pair_sampler": {
-            "run": False,
-            #"run": True,
-            "n_chains": 50,
-            "n_steps": 1000000,
-            "save_freq": 500,
-            "use_sigma_dist": False, # Example of sampler-specific parameter
-        },
-        "tetramer_sampler": {
-            "run": True,
-            #"run": False,
-            "n_chains": 8,
-            "n_steps": 100000,
-            "save_freq": 500,
-            "use_sigma_dist": True,
-        }
-    }
+    """Main execution function with configuration."""
+    # Define sampler configurations
+    base_config = DEFAULT_CONFIG.copy()
     
+    # Define the sequence of samplers to run and their steps
+    sampler_sequence = ["pair", "tetramer", "octet", "pair", "octet", "tetramer"]
+    mcmc_steps = [5000000, 200000, 100000, 3000000, 150000, 100000]
+    
+    # Alternative sequences for testing
+    # sampler_sequence = ["pair", "tetramer"]
+    # mcmc_steps = [5000000, 200000]
+    # sampler_sequence = ["tetramer", "octet", "pair"]
+    # mcmc_steps = [500000, 500000, 1000000]
+    
+    # Setup
     output_folder = "output_analysis"
-    sampler_results = {}
+    n_processes = 8  # Set to None to use all available CPUs
     
-    # Number of processes to use (None = use CPU count)
-    #n_processes = None
-    n_processes = 8
+    # Initialize sequence manager
+    sequence_manager = SamplerSequenceManager(sampler_sequence)
     
-    #sampler_sequence = ["pair_sampler", "tetramer_sampler"] # Define the sequence of samplers to run
-    #sampler_sequence = ["pair_sampler"] # Example: Run only pair sampler
-    sampler_sequence = ["tetramer_sampler"] # Example: Run only tetramer sampler
-    #sampler_sequence = ["pair_sampler", "tetramer_sampler", "octamer_sampler"] # Example: Run all, assuming octamer_sampler config is present
+    print(f"\nSampler Sequence Plan:")
+    print(f"Total sequence: {sampler_sequence}")
+    print(f"Sampler counts: {sequence_manager.sampler_counts}")
+    print(f"{'='*80}")
     
-    for sampler_key in sampler_sequence:
-        config = run_config[sampler_key]
-        if config["run"]:
-            sampler_name = sampler_key.replace("_sampler", "").capitalize() + "Sampler"
-            sampler_class = SAMPLER_MAP[sampler_name]
-            
-            print(f"\nStarting parallel sampling with {sampler_name}...")
-            results = run_parallel_sampling(
-                sampler_class=sampler_class,
-                config=config,
-                output_folder=output_folder,
-                n_processes=n_processes
-            )
-            sampler_results[sampler_key] = results
-            
-            # After all chains complete, organize files in the format from run_samplers.py
-            sigma_values = analyze_chains(results, output_folder, sampler_name)
-                        
-            print(f"\n{sampler_name} parallel sampling complete.")
-            print(f"Results saved in: {output_folder}")
+    for seq_idx, sampler_key in enumerate(sampler_sequence):
+        # Get sampler information
+        sampler_name, current_idx, total_count = sequence_manager.get_sampler_info(seq_idx)
+        directory_name = sequence_manager.get_directory_name(sampler_name, current_idx)
+        
+        # Determine if this is the first sampler in the entire sequence
+        is_first = seq_idx == 0
+        
+        # Create specific configuration for this sampler
+        config = {
+            **base_config,
+            "run": True,
+            "n_chains": 25 if sampler_key == "pair" else 8,
+            "n_steps": mcmc_steps[seq_idx],
+            "save_freq": 2000,
+            "use_sigma_dist": False if is_first else True
+        }
+        
+        # Get sampler class from name
+        sampler_class = SAMPLER_MAP.get(sampler_key)
+        
+        if not sampler_class:
+            print(f"Error: Unknown sampler '{sampler_key}'. Skipping.")
+            continue
+        
+        print(f"\n{'='*80}")
+        print(f"STEP {seq_idx+1}/{len(sampler_sequence)}: Starting {sampler_class.__name__}")
+        print(f"Sampler: {sampler_name} (instance {current_idx}/{total_count})")
+        print(f"Directory: {directory_name}")
+        print(f"Configuration: {config['n_steps']} steps, {config['n_chains']} chains, use_sigma_dist={config['use_sigma_dist']}")
+        print(f"{'='*80}")
+        
+        # Run sampling and analyze results
+        results = run_parallel_sampling(
+            sampler_class=sampler_class,
+            config=config,
+            output_folder=output_folder,
+            n_processes=n_processes,
+            sampler_sequence=sampler_sequence,
+            sequence_position=seq_idx
+        )
+        
+        sigma_values = analyze_chains(results, output_folder, directory_name)
+        
+        print(f"\n{sampler_class.__name__} sampling complete.")
+        print(f"Results saved in: {output_folder}/{directory_name}/")
+        
+        # Run the fit_gmm analysis for this sampler
+        analysis_success = run_analysis(sampler_key, current_idx)
+        
+        if analysis_success:
+            print(f"Analysis for {sampler_key}_{current_idx} completed successfully.")
+        else:
+            print(f"WARNING: Analysis for {sampler_key}_{current_idx} may have failed.")
+        
+        # Add a small delay before next sampler to ensure files are properly written
+        time.sleep(2)
+    
+    print(f"\n{'='*80}")
+    print("ALL SAMPLERS COMPLETED!")
+    print(f"Final directory structure in {output_folder}:")
+    
+    # List final directories
+    if os.path.exists(output_folder):
+        for item in sorted(os.listdir(output_folder)):
+            if os.path.isdir(os.path.join(output_folder, item)) and "sampler_results" in item:
+                print(f"  - {item}/")
+    print(f"{'='*80}")
 
 if __name__ == "__main__":
     main()
