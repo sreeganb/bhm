@@ -102,12 +102,15 @@ class PerturbSystemParameters:
             f.write(f"Half Rotated Structure Score: {half_score_tuple[0]:.4f}\n")
             f.write(f"Half rotated structure excluded volume score: {half_score_tuple[1]:.4f}\n")
             f.write(f"Half rotated structure pair score: {half_score_tuple[2]:.4f}\n")
+            f.write(f"Half rotated structure prior score: {half_score_tuple[3]:.4f}\n")
             f.write(f"Tetramer Structure Score: {tet_score_tuple[0]*8:.4f}\n")
             f.write(f"Tetramer Structure Excluded Volume Score: {tet_score_tuple[1]*8:.4f}\n")
             f.write(f"Tetramer Structure Pair Score: {tet_score_tuple[2]*8:.4f}\n")
+            f.write(f"Tetramer Structure Prior Score: {tet_score_tuple[3]*8:.4f}\n")
             f.write(f"Octamer Structure Score: {oct_score_tuple[0]*4:.4f}\n")
             f.write(f"Octamer Structure Excluded Volume Score: {oct_score_tuple[1]*4:.4f}\n")
             f.write(f"Octamer Structure Pair Score: {oct_score_tuple[2]*4:.4f}\n")
+            f.write(f"Octamer Structure Prior Score: {oct_score_tuple[3]*4:.4f}\n")
         print(f"Half Rotated Structure: Score = {half_score_tuple[0]:.4f}")
 
     def _check_final_overlaps(self, current_coords: Dict[str, np.ndarray], print_details: bool = False) -> bool:
