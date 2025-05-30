@@ -358,8 +358,9 @@ class OctetSampler(BaseMCSampler):
 
         # --- Main MCMC loop parameters ---
         move_types = ['position', 'sigma', 'tetramer', 'octet']
-        move_probs = [0.2, 0.1, 0.3, 0.4]  # Adjust probabilities if needed later
-        temp_start, temp_end = 40.0, 1.0  # Cooling schedule
+        #move_probs = [0.2, 0.1, 0.3, 0.4]  # Adjust probabilities if needed later
+        move_probs = [0.2, 0.2, 0.2, 0.4]  # Adjust probabilities if needed later
+        temp_start, temp_end = 5.0, 0.1  # Cooling schedule
         temp_decay = (temp_end / temp_start) ** (1.0 / (n_steps - 1)) if n_steps > 1 else 1.0
 
         print(f"Starting MCMC sampling for {n_steps} total steps...")

@@ -71,10 +71,20 @@ class SamplerSequenceManager:
 
 def run_analysis(sampler_key: str, sampler_index: int):
     """Run the fit_gmm.py script for the specified sampler."""
-    analysis_key = f"{sampler_key}_{sampler_index}" if sampler_index > 1 else sampler_key
+    # Map sampler keys to fit_gmm.py expected format
+    sampler_mapping = {
+        "pair": "pair_sampler",
+        "tetramer": "tetramer_sampler", 
+        "octet": "octet_sampler"
+    }
+    
+    # Convert sampler key to expected format
+    fit_gmm_key = sampler_mapping.get(sampler_key, sampler_key)
+    analysis_key = f"{fit_gmm_key}_{sampler_index}" if sampler_index > 1 else fit_gmm_key
+    
     print(f"\nRunning analysis for {analysis_key}...")
     try:
-        cmd = ["python3.13", "fit_gmm.py", analysis_key]
+        cmd = ["python3.13", "fit_gmm.py", fit_gmm_key]  # Use fit_gmm_key instead of analysis_key
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         
