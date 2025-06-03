@@ -13,8 +13,9 @@ from visualization import visualize_3d_configuration
 from scipy.spatial.distance import cdist
 from sigma_provider import GMMSigmaProvider
 import h5py
+import random
+import pathlib
 #----------------------------------------------------------------------
-
 class PairSampler(BaseMCSampler):
     """
     Sampler for pair-level interactions, inheriting from BaseMCSampler.
@@ -38,13 +39,14 @@ class PairSampler(BaseMCSampler):
             specific_chain: Specific chain to load GMM from (if not first sampler)
             sigma_ranges: Ranges for sigma values
             prior_type: Prior type for first sampler ("uniform" or "jeffreys")
-            pos_passed: Optional positions to use instead of initializing
+            pos_passed: Optional positions to use instead of initializing or loading
         """
         super().__init__()  # Call BaseMCSampler constructor
         
         # Store sampler sequence information
         self.sampler_sequence = sampler_sequence
         self.sequence_idx = sequence_idx
+        self.specific_chain = specific_chain
         self.exclusion_weight = ex_weight
         self.pair_weight = pair_weight
         self.params = SystemParameters()  # Initialize system parameters
@@ -63,13 +65,14 @@ class PairSampler(BaseMCSampler):
         self.sigma = self.sigma_provider.sample_sigma_values()
         self.sigma_range = self.sigma_provider.sigma_ranges
         
-        # Initialize positions
+        # Initialize positions based on sequence and parameters
         if pos_passed is not None:
+            # Use explicitly passed positions (highest priority)
             self.positions_ps = pos_passed
             print("PairSampler initialized with passed positions.")
         else:
-            self.positions_ps = self.initialize_positions()  # Initialize positions
-            print("PairSampler initialized with default positions.")
+            # Use sequence-based position loading
+            self.positions_ps = self.get_positions()
         
         # Print initialization info
         sampler_name = sampler_sequence[sequence_idx]
@@ -79,6 +82,81 @@ class PairSampler(BaseMCSampler):
             print(f"PairSampler ({sampler_name}) initialized with GMM prior from previous sampler.")
         
         print(f"Initial sigma values: {self.sigma}")
+
+    def get_positions(self) -> Dict[str, np.ndarray]:
+        """
+        Load positions from the previous sampler in the sequence or initialize if first.
+        """
+        import pathlib
+        
+        if self.sequence_idx == 0:
+            print("First sampler in sequence - using initialized positions")
+            return self.initialize_positions()
+        
+        # Get the previous sampler info
+        previous_sampler = self.sampler_sequence[self.sequence_idx - 1]
+        
+        # Count occurrences of the previous sampler up to current position
+        occurrence_count = 0
+        for i in range(self.sequence_idx):
+            if self.sampler_sequence[i] == previous_sampler:
+                occurrence_count += 1
+        
+        # Construct directory name
+        traj_dir = pathlib.Path(os.getcwd()) / f"output_analysis/{previous_sampler}sampler_results_{occurrence_count}"
+        
+        try:
+            # Get trajectory files
+            trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
+            
+            if not trajectory_files:
+                print(f"No trajectory files found in {traj_dir}")
+                print("Falling back to initialized positions")
+                return self.initialize_positions()
+            
+            # Select specific chain or random
+            if self.specific_chain is not None:
+                target_file = traj_dir / f"trajectory_chain_{self.specific_chain}.h5"
+                if target_file.exists():
+                    filepath = target_file
+                    chain_num = self.specific_chain
+                else:
+                    print(f"Specified chain {self.specific_chain} not found, selecting random")
+                    filepath = random.choice(trajectory_files)
+                    chain_num = int(filepath.stem.split('_')[-1])
+            else:
+                filepath = random.choice(trajectory_files)
+                chain_num = int(filepath.stem.split('_')[-1])
+            
+            print(f"Loading positions from {previous_sampler}sampler_results_{occurrence_count}, chain: {chain_num}")
+            
+            with h5py.File(filepath, 'r') as f:
+                if 'trajectory' not in f:
+                    raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
+                
+                traj_grp = f['trajectory']
+                keys = sorted(traj_grp.keys())
+                
+                if not keys:
+                    raise ValueError("Empty trajectory file")
+                
+                # Get last frame
+                last_key = keys[-1]
+                print(f"Using last frame: {last_key}")
+                
+                # Read positions
+                positions = {}
+                pos_grp = traj_grp[last_key]['positions']
+                
+                for type_name in pos_grp:
+                    positions[type_name] = pos_grp[type_name][:].copy()
+            
+            return positions
+
+        except Exception as e:
+            print(f"Error loading trajectory from {traj_dir}: {e}")
+            print("Falling back to initialized positions")
+            return self.initialize_positions()
                  
     def calculate_score(
         self,

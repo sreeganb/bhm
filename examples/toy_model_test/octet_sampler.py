@@ -7,87 +7,96 @@ import os
 import numpy as np
 import pandas as pd
 import json
-import os
 import random
-import re
 import pickle
 from typing import List, Dict, Tuple, Optional
-from base_sampler import BaseMCSampler, Priors  # Import BaseMCSampler and related classes
+from base_sampler import BaseMCSampler, Priors
 from parameters import SystemParameters
 from tetramer_sampler import TetramerSampler
 from visualization import visualize_3d_configuration
 from scipy.spatial.distance import cdist
-from typing import Dict, List, Tuple
 from scipy.stats import multivariate_normal
 from pair_sampler import PairSampler
-import h5py  # For reading HDF5 files
-import networkx as nx  # For graph operations
+from sigma_provider import GMMSigmaProvider
+import h5py
+import networkx as nx
 #-----------------------------------------------------------------------
 class OctetSampler(BaseMCSampler):
     """
     Sampler for Octamer-level interactions, inheriting from BaseMCSampler.
     Includes run_mc method.
     """
-    def __init__(self, use_sigma_distribution=False, sig_passed=None, sig_range_passed=None):
-        super().__init__()  # Call BaseMCSampler constructor
-        self.use_sigma_distribution = use_sigma_distribution
-        self.params = SystemParameters()  # Initialize system parameters
+    def __init__(self, sampler_sequence: List[str], sequence_idx: int,
+                 base_output_dir: str = "output_analysis", positions_os=None,
+                 specific_chain: int = None, sigma_ranges: Dict[str, Tuple[float, float]] = None,
+                 prior_type: str = "uniform"):
+        """
+        Initialize OctetSampler with sampler sequence information.
         
-        # Need a method to take in sampler sequence and find out at which sampler level we are and then 
-        # initialize and read sigma values accordingly, for example if the sequence is 
-        # ["pair", "tetramer", "octet", "pair", "octet", tetramer] and we are at element 4 in this sequence then the 
-        # code should automatically take the sigma values from element 3 which is "pair" and read in the GMM values from this 
-
+        Args:
+            sampler_sequence: List of sampler names in execution order
+            sequence_idx: Current position in the sampler sequence
+            base_output_dir: Base directory for analysis results
+            positions_os: Optional positions to use instead of loading
+            specific_chain: Specific chain to load from (if not specified, random)
+            sigma_ranges: Ranges for sigma values
+            prior_type: Prior type for first sampler ("uniform" or "jeffreys")
+        """
+        super().__init__()
+        self.params = SystemParameters()
+        self.sampler_sequence = sampler_sequence
+        self.sequence_idx = sequence_idx
+        self.specific_chain = specific_chain
+        
         # Basic sampler parameters
         self.octet_trans_step = 0.05
         self.octet_rot_step = 0.05
         self.octet_trans_acc_rate = 0.5
         self.target_acceptance = 0.5
 
-        if use_sigma_distribution:
-            # use positions from trajectory files
+        # Handle positions
+        if positions_os is None:
             self.positions_os = self.get_positions()
+            print("Using positions from previous trajectory")
         else:
-            # Initialize positions using uniform prior
-            self.positions_os = self.initialize_positions()
+            self.positions_os = positions_os
+            print("Using passed in positions")
         
-        # Initialize sigma values using sigma_provider if needed
-        self._initialize_sigma_values(use_sigma_distribution, sig_passed, sig_range_passed)
+        # Initialize sigma provider
+        self.sigma_provider = GMMSigmaProvider(
+            sampler_sequence=sampler_sequence,
+            sequence_idx=sequence_idx,
+            base_output_dir=base_output_dir,
+            specific_chain=specific_chain,
+            sigma_ranges=sigma_ranges,
+            prior_type=prior_type
+        )
+        
+        # Initialize sigma values and ranges from provider
+        self.sigma = self.sigma_provider.sample_sigma_values()
+        self.sigma_range = self.sigma_provider.sigma_ranges
         
         # Initialize samplers for lower levels
         self.ts = TetramerSampler(
-            use_sigma_distribution=use_sigma_distribution, 
+            sampler_sequence=sampler_sequence,
+            sequence_idx=sequence_idx,
+            base_output_dir=base_output_dir,
             positions_ts=self.positions_os,
-            sig_passed=self.sigma, 
-            sig_range_passed=self.sigma_range
+            specific_chain=specific_chain,
+            sigma_ranges=sigma_ranges,
+            prior_type=prior_type
         )
         
+        # Initialize PairSampler with updated parameters (matching TetramerSampler pattern)
         self.ps = PairSampler(
-            use_def_sig_pos=False, 
-            sig_passed=self.sigma, 
-            sig_range_passed=self.sigma_range,
-            pos_passed=self.positions_os
+            sampler_sequence=sampler_sequence,
+            sequence_idx=sequence_idx,
+            base_output_dir=base_output_dir,
+            pos_passed=self.positions_os,
+            specific_chain=specific_chain,
+            sigma_ranges=sigma_ranges,
+            prior_type=prior_type
         )
-
-    def _initialize_sigma_values(self, use_sigma_distribution, sig_passed, sig_range_passed):
-        """Initialize sigma values correctly using sigma_provider if available."""
-        if use_sigma_distribution:
-            # Use sigma_provider to get values and handle GMM calculations
-            from sigma_provider import GMMSigmaProvider
-            self.sig_provider = GMMSigmaProvider(sampler_name="OctetSampler")
-            self.sigma = self.sig_provider.sample_sigma_values()
-            self.sigma_range = None
-            print("OctetSampler initialized with GMM-based sigma values.")
-        elif sig_passed is not None:
-            # Use passed-in values
-            self.sigma = sig_passed
-            self.sigma_range = sig_range_passed
-            print("OctetSampler initialized with passed sigma values.")
-        else:
-            # Use default initialization
-            self.sigma, self.sigma_range = self.initialize_sigma()
-            self.base_priors = Priors("jeffreys")
-            print("OctetSampler initialized with default sigma values.")
     
     def get_positions(self) -> Dict[str, np.ndarray]:
         """Simply load positions from the last frame of a trajectory file."""
@@ -143,10 +152,6 @@ class OctetSampler(BaseMCSampler):
         # Create a deep copy of positions to modify
         new_pos = {k: v.copy() for k, v in positions.items()}
         
-        # Get tetramers and then form octets
-        #tetramers = self.ts.get_tetramers(new_pos) # Use new_pos in case get_tetramers modifies it
-        #octets = self.get_octets(new_pos, tetramers)
-        
         if not octets:
             return new_pos # No octets to move, return original positions
         
@@ -179,7 +184,6 @@ class OctetSampler(BaseMCSampler):
         centroid = np.mean(all_octet_coords, axis=0)
         
         # Define step sizes for translation and rotation
-        # Using the adaptive step sizes from the class
         trans_step = self.octet_trans_step 
         rot_step = self.octet_rot_step
         
@@ -225,7 +229,6 @@ class OctetSampler(BaseMCSampler):
     
     def get_octets(self, positions: Dict[str, np.ndarray]) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
         tetramers = self.ts.get_tetramers(positions)
-        #print("tetramers: ", tetramers)
 
         if len(tetramers) < 2:
             return [], tetramers
@@ -241,11 +244,7 @@ class OctetSampler(BaseMCSampler):
             ])
             centers[i] = np.mean(coords, axis=0)
 
-        # 2) If only one tetramer or fewer, no pairs possible
-        if len(tetramers) < 2:
-            return [], tetramers
-
-        # 3) Build a graph of tetramers (nodes) with edge weights = distances
+        # 2) Build a graph of tetramers (nodes) with edge weights = distances
         G = nx.Graph()
         for i_t in range(len(tetramers)):
             G.add_node(i_t)
@@ -254,21 +253,20 @@ class OctetSampler(BaseMCSampler):
                 dist_ij = np.linalg.norm(centers[i_t] - centers[j_t])
                 G.add_edge(i_t, j_t, weight=dist_ij)
 
-        # 4) Negate the weights to convert min-weight to max-weight problem
+        # 3) Negate the weights to convert min-weight to max-weight problem
         for u, v, d in G.edges(data=True):
             d['weight'] = -d['weight']
 
-        # 5) Compute the maximum-weight perfect matching (which minimizes original distances)
+        # 4) Compute the maximum-weight perfect matching (which minimizes original distances)
         matching = nx.algorithms.matching.max_weight_matching(G, maxcardinality=True)
 
-        # 6) Convert the matching (set of edges) into a list of octets
+        # 5) Convert the matching (set of edges) into a list of octets
         octets = []
         for i_t, j_t in matching:
             # Sort the node IDs for consistency
             i_t, j_t = sorted([i_t, j_t])
             octets.append((tetramers[i_t], tetramers[j_t]))
 
-        #print(f"Octets: {octets}")
         return octets, tetramers
     
     def _random_unit_vector(self):
@@ -316,20 +314,19 @@ class OctetSampler(BaseMCSampler):
             pass
 
         # Initialize tracking variables
-        best_positions = {k: v.copy() for k, v in self.positions_os.items()}  # Init best pos
+        best_positions = {k: v.copy() for k, v in self.positions_os.items()}
         best_score = float('inf')
         sigma_history = {key: np.zeros(n_steps // save_freq + 1) for key in self.sigma}
         accepts = {'position': 0, 'sigma': 0, 'tetramer': 0, 'octet': 0}
         attempts = {'position': 0, 'sigma': 0, 'tetramer': 0, 'octet': 0}
 
         # --- Initialize state ---
-        current_positions = {k: v.copy() for k, v in self.positions_os.items()}  # Use a copy to avoid modifying original
+        current_positions = {k: v.copy() for k, v in self.positions_os.items()}
         current_sigma = self.sigma.copy()
         current_octets, current_tetramers = self.get_octets(current_positions)
 
         # Calculate initial prior penalty
-        current_prior = (self.sig_provider.calculate_negative_log_prior(current_sigma) if self.use_sigma_distribution
-                        else self.base_priors.neg_log_prior(current_sigma, self.sigma_range))
+        current_prior = self.sigma_provider.calculate_negative_log_prior(current_sigma)
 
         # Calculate initial score
         current_score, curr_ex, curr_pair, curr_tet, curr_oct = self.neg_log_posterior(
@@ -338,9 +335,9 @@ class OctetSampler(BaseMCSampler):
         if not np.isfinite(current_score):
             print(f"FATAL: Initial score is non-finite ({current_score}). Exiting.")
             print(f"Components: ex={curr_ex}, tet={curr_tet}, oct={curr_oct}, prior={current_prior}")
-            return None, None  # Cannot proceed
+            return None, None
 
-        best_score = current_score  # Initialize best score
+        best_score = current_score
 
         # Store initial sigma values
         for key in current_sigma:
@@ -358,8 +355,8 @@ class OctetSampler(BaseMCSampler):
 
         # --- Main MCMC loop parameters ---
         move_types = ['position', 'sigma', 'tetramer', 'octet']
-        move_probs = [0.2, 0.1, 0.3, 0.4]  # Adjust probabilities if needed later
-        temp_start, temp_end = 40.0, 1.0  # Cooling schedule
+        move_probs = [0.2, 0.1, 0.3, 0.4]
+        temp_start, temp_end = 40.0, 1.0
         temp_decay = (temp_end / temp_start) ** (1.0 / (n_steps - 1)) if n_steps > 1 else 1.0
 
         print(f"Starting MCMC sampling for {n_steps} total steps...")
@@ -376,7 +373,7 @@ class OctetSampler(BaseMCSampler):
             # --- Propose move ---
             proposed_positions = {k: v.copy() for k, v in current_positions.items()}
             proposed_sigma = current_sigma.copy()
-            pair_type = None  # Will track which sigma parameter was modified
+            pair_type = None
 
             if move_type == 'position':
                 proposed_positions = self.propose_position_move(current_positions,
@@ -392,8 +389,7 @@ class OctetSampler(BaseMCSampler):
 
             # --- Calculate components for the proposed state ---
             proposed_octets, proposed_tetramers = self.get_octets(proposed_positions)
-            proposed_prior = (self.sig_provider.calculate_negative_log_prior(proposed_sigma) if self.use_sigma_distribution
-                            else self.base_priors.neg_log_prior(proposed_sigma, self.sigma_range))
+            proposed_prior = self.sigma_provider.calculate_negative_log_prior(proposed_sigma)
             proposed_score, prop_ex, prop_pair, prop_tet, prop_oct = self.neg_log_posterior(
                 proposed_positions, proposed_tetramers, proposed_octets, proposed_prior, proposed_sigma)
 
@@ -456,7 +452,7 @@ class OctetSampler(BaseMCSampler):
                     best_positions = {k: v.copy() for k, v in current_positions.items()}
 
             # --- Save state every save_freq steps ---
-            if step % save_freq == 0 and step > 0:  # Skip step 0 since initial state is saved above
+            if step % save_freq == 0 and step > 0:
                 save_idx = step // save_freq
                 for key in current_sigma:
                     sigma_history[key][save_idx] = current_sigma[key]
@@ -478,7 +474,7 @@ class OctetSampler(BaseMCSampler):
                 oct_rate = accepts['octet'] / max(1, attempts['octet'])
                 sigma_rate = accepts['sigma'] / max(1, attempts['sigma'])
                 print(f"Step {step}: Acceptance rates - Pos: {pos_rate:.2f}, Sigma: {sigma_rate:.2f}, Tet: {tet_rate:.2f}, Oct: {oct_rate:.2f}")
-                self.octet_trans_acc_rate = oct_rate  # Update rate for propose_octet_move
+                self.octet_trans_acc_rate = oct_rate
 
         # --- End of MCMC loop ---
         sigma_history_df = pd.DataFrame(sigma_history)
@@ -503,10 +499,6 @@ class OctetSampler(BaseMCSampler):
         if not octets:
             return np.array([], dtype=np.float32)
         
-        n_octets = len(octets)
-        
-        # for the two chosen tetramers use the ts.
-        
         # Extract indices for A particles in each tetramer pair
         a1_indices = np.array([tet1[0] for tet1, tet2 in octets], dtype=np.int32)
         a2_indices = np.array([tet2[0] for tet1, tet2 in octets], dtype=np.int32)
@@ -517,7 +509,6 @@ class OctetSampler(BaseMCSampler):
         
         # Calculate distances between A1 and A2 in each octet
         aa_dists = np.sqrt(np.sum((pos_a1 - pos_a2)**2, axis=1))
-        #print(f"AA distances: {aa_dists}")
         
         # Define target distance for A-A between adjacent tetramers
         aa_inter_tetramer_target = self.params.pair_distances['AA']
@@ -525,10 +516,7 @@ class OctetSampler(BaseMCSampler):
         # Calculate scores
         aa_scores = ((aa_dists - aa_inter_tetramer_target)**2) / (2 * sig['AA']**2) + np.log(2 * np.pi * sig['AA'])
         
-        # Total octet scores (currently just A-A; add more specific pairs if needed)
-        scores = aa_scores
-        
-        return scores
+        return aa_scores
 
     def neg_log_posterior(
         self,
@@ -541,7 +529,7 @@ class OctetSampler(BaseMCSampler):
         pair_weight: float = 1.0,
         tetramer_weight: float = 1.0,
         octet_weight: float = 1.0,
-    ) -> Tuple[float, float, float, float]:
+    ) -> Tuple[float, float, float, float, float]:
         """
         Calculate the total negative log-posterior score for an octet system.
         Optimized implementation with reduced redundancy and memory usage.
@@ -554,34 +542,28 @@ class OctetSampler(BaseMCSampler):
             score, ex_score, pair_score, _ = self.ps.calculate_score(
                 positions, sigma, self.sigma_range,
                 excluded_pairs=set(),
-                use_sigma_distribution=self.use_sigma_distribution,
-                prior_penalty_from_distribution=prior_penalty
+                #use_sigma_distribution=True,
+                #prior_penalty_from_distribution=prior_penalty
             )
-            return score, ex_score, pair_score, 0.0
+            return score, ex_score, pair_score, 0.0, 0.0
 
-        excluded_pairs = None
-        
-        # 3) Calculate pair scores
+        # Calculate pair scores
         score, ex_score, pair_score, _ = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
-            excluded_pairs=excluded_pairs,
-            use_sigma_distribution=self.use_sigma_distribution,
-            prior_penalty_from_distribution=prior_penalty
+            excluded_pairs=set(),
+            #use_sigma_distribution=True,
+            #prior_penalty_from_distribution=prior_penalty
         )
         
-        # 2) Calculate tetramer scores 
-        tetramer_score = 0.0
-        tet_score = self.ts.calculate_tetramer_scores_batch(positions, tetramers, 
-                                                            sigma)
+        # Calculate tetramer scores 
+        tet_score = self.ts.calculate_tetramer_scores_batch(positions, tetramers, sigma)
         tetramer_score = tetramer_weight * tet_score.sum()
         
-        # 3) Octet score
-        octet_score = 0.0
+        # Octet score
         octet_scores = self.calculate_octet_scores_batch(positions, octets, sigma)
         octet_score = octet_weight * octet_scores.sum()
         
-        # 4) Total score
+        # Total score
         total_score = score + tetramer_score + octet_score
             
-        #return total_score, ex_score, pair_score, weighted_octet_score
         return total_score, ex_score, pair_score, tetramer_score, octet_score

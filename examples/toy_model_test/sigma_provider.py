@@ -4,6 +4,7 @@ import json
 import random
 import numpy as np
 from typing import Dict, Optional, List, Tuple
+from parameters import SystemParameters
 
 class SamplerSequenceManager:
     """Manages sampler sequence information and directory mapping."""
@@ -76,6 +77,7 @@ class GMMSigmaProvider:
         self.pair_types = ["AA", "AB", "BC"]
         self.prior_type = prior_type
         self.specific_chain = specific_chain  # Move this line up here
+        self.params = SystemParameters()
         
         # Get current sampler info
         self.sampler_name, self.current_idx, self.total_count = self.sequence_manager.get_sampler_info(sequence_idx)
@@ -105,10 +107,23 @@ class GMMSigmaProvider:
         self.default_sigma = {"AA": 2.0, "AB": 2.0, "BC": 2.0}
         
         # Set sigma ranges
-        self.sigma_ranges = sigma_ranges if sigma_ranges is not None else {pt: (0.5, 10.0) for pt in self.pair_types}
-        
+        #self.sigma_ranges = sigma_ranges if sigma_ranges is not None else {pt: (0.5, 10.0) for pt in self.pair_types}
+        #----------------------------------------------------------------------
+        sig_range = {}
+        sig = {}
+        for pair_type in self.params.pair_distances.keys():
+            # Cache the sum of radii
+            sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
+            lower_bound = 0.03 * sum_radii
+            upper_bound = 0.4 * sum_radii
+            # Propose sigma in log-space for a uniform proposal in that space.
+            sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
+            sig[pair_type] = sigma_val
+            sig_range[pair_type] = (lower_bound, upper_bound)
+        self.sigma_ranges = sigma_ranges if sigma_ranges is not None else sig_range
+        #----------------------------------------------------------------------
         # Configurable standard deviation cap factor (default 0.3)
-        self.std_cap_factor = 0.3
+        self.std_cap_factor = 0.85 # changed from 0.3 to 0.75 to allow larger deviations
 
     def _load_gmm_parameters(self) -> Dict:
         """Load GMM parameters from JSON files."""
