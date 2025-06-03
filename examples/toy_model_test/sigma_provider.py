@@ -123,7 +123,7 @@ class GMMSigmaProvider:
         self.sigma_ranges = sigma_ranges if sigma_ranges is not None else sig_range
         #----------------------------------------------------------------------
         # Configurable standard deviation cap factor (default 0.3)
-        self.std_cap_factor = 0.85 # changed from 0.3 to 0.75 to allow larger deviations
+        self.std_cap_factor = 1.0 # changed from 0.3 to 1.0 to allow larger deviations
 
     def _load_gmm_parameters(self) -> Dict:
         """Load GMM parameters from JSON files."""
