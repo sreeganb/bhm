@@ -82,6 +82,7 @@ def load_trajectory_from_hdf5(filename: str) -> list:
 
     # Sort the collected states by their step number
     all_states.sort(key=lambda s: s["step"])
+    print(f"Loaded {len(all_states)} states from {filename}")
 
     return all_states
 
@@ -116,6 +117,37 @@ def calculate_effective_sample_size(data):
         print(f"Error calculating effective sample size: {e}")
         return None
 
+def get_sampler_folder_name(sampler_type: str, sampler_position: int) -> str:
+    """
+    Generate the folder name for a specific sampler at a given position in the sequence.
+    
+    Args:
+        sampler_type (str): Type of sampler ('pair', 'tetramer', 'octet')
+        sampler_position (int): Position in the sequence (1-based)
+    
+    Returns:
+        str: Folder name (e.g., 'pairsampler_results_1')
+    """
+    return f"{sampler_type}sampler_results_{sampler_position}"
+
+def count_sampler_occurrences(sampler_sequence: list, target_sampler: str, position: int) -> int:
+    """
+    Count how many times a sampler appears up to a specific position in the sequence.
+    
+    Args:
+        sampler_sequence (list): List of sampler names
+        target_sampler (str): The sampler we're counting
+        position (int): Position in sequence (0-based)
+    
+    Returns:
+        int: The occurrence number (1-based)
+    """
+    count = 0
+    for i in range(position + 1):
+        if sampler_sequence[i] == target_sampler:
+            count += 1
+    return count
+
 def fit_gmm(data: np.ndarray, max_components: int = 5):
     """Fits a Gaussian Mixture Model to the data."""
     data = data.reshape(-1, 1)
@@ -129,6 +161,8 @@ def fit_gmm(data: np.ndarray, max_components: int = 5):
         if bic < best_bic:
             best_bic = bic
             best_gmm = gmm
+    
+    print(f"Best GMM found with {best_gmm.n_components} components and BIC: {best_bic:.2f}")
 
     return best_gmm
 
@@ -159,29 +193,44 @@ def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_n
     plt.savefig(os.path.join(output_dir, f"gmm_combined_plot_{sigma_type}_{sampler_name}.png"))
     plt.close()
 
-def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5, do_trace_plots: bool = True, do_gmm_fits: bool = True):
+def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: int, burnin: float = 0.5, 
+                     do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
     Analyzes MCMC data, including trace plots, R-hat statistics, and GMM fitting.
 
     Args:
         output_folder (str): Base directory for output files.
-        sampler_name (str): Name of the sampler (e.g., "PairSampler").
+        sampler_type (str): Type of sampler ('pair', 'tetramer', 'octet').
+        sampler_position (int): Position of this sampler in the sequence (1-based).
         burnin (float): Fraction of initial samples to discard.
         do_trace_plots (bool): Whether to generate trace plots and score plots.
-        do_gmm_fits (bool):  Whether to perform GMM fitting and plotting.
+        do_gmm_fits (bool): Whether to perform GMM fitting and plotting.
     """
 
     if not 0.0 <= burnin < 1.0:
         raise ValueError("burnin must be between 0.0 and 1.0")
 
-    sampler_output_dir = os.path.join(output_folder, f"{sampler_name.lower()}_results")
+    # Generate folder name based on sampler type and position
+    sampler_folder_name = get_sampler_folder_name(sampler_type, sampler_position)
+    sampler_output_dir = os.path.join(output_folder, sampler_folder_name)
+    
     if not os.path.exists(sampler_output_dir):
-        os.makedirs(sampler_output_dir)
+        print(f"Directory not found: {sampler_output_dir}")
+        return
+
+    # Create analysis output directory within the sampler folder
+    #analysis_output_dir = os.path.join(sampler_output_dir, "analysis")
+    analysis_output_dir = sampler_output_dir
+    if not os.path.exists(analysis_output_dir):
+        os.makedirs(analysis_output_dir)
 
     trajectory_files = [f for f in os.listdir(sampler_output_dir) if f.startswith("trajectory_") and f.endswith(".h5")]
     if not trajectory_files:
         print(f"No trajectory files found in: {sampler_output_dir}")
         return
+
+    # Generate descriptive sampler name for plots
+    sampler_display_name = f"{sampler_type.capitalize()}Sampler_{sampler_position}"
 
     all_sigma_histories = defaultdict(lambda: defaultdict(list))
     all_scores = defaultdict(lambda: defaultdict(list))  # Only used if do_trace_plots
@@ -206,7 +255,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
 
     # --- Trace Plots and R-hat (if requested) ---
     if do_trace_plots:
-        pdf_filename_trace = os.path.join(sampler_output_dir, f"{sampler_name}_report.pdf")
+        pdf_filename_trace = os.path.join(analysis_output_dir, f"{sampler_display_name}_report.pdf")
         with PdfPages(pdf_filename_trace) as pdf:
             sns.set(style="darkgrid")
             palette = sns.color_palette("husl", 4)
@@ -218,7 +267,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                 for i, sigma_type in enumerate(["AA", "AB", "BC"]):
                     if sigma_type in all_sigma_histories[chain_id]:
                         plt.plot(all_sigma_histories[chain_id][sigma_type], label=sigma_type, color=palette[i])
-                plt.title(f'Combined Sigma Trace Plot - Chain {chain_idx} ({sampler_name})', fontsize=16)
+                plt.title(f'Combined Sigma Trace Plot - Chain {chain_idx} ({sampler_display_name})', fontsize=16)
                 plt.xlabel('MCMC Step (Post Burn-in)', fontsize=14)
                 plt.ylabel('Sigma Value', fontsize=14)
                 plt.xticks(fontsize=12)
@@ -226,7 +275,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                 plt.legend(fontsize=12)
                 plt.tight_layout()
                 pdf.savefig()
-                plt.savefig(os.path.join(sampler_output_dir, f'trace_sigma_combined_chain{chain_idx}_{sampler_name}.png'))
+                plt.savefig(os.path.join(analysis_output_dir, f'trace_sigma_combined_chain{chain_idx}_{sampler_display_name}.png'))
                 plt.close()
 
             # --- Score plots ---
@@ -234,7 +283,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                 plt.figure(figsize=(12, 8))
                 for chain_id in all_scores[score_type]:
                     plt.plot(all_scores[score_type][chain_id], label=chain_id, alpha=0.7)
-                plt.title(f'Score vs. Frame: {score_type} ({sampler_name})', fontsize=16)
+                plt.title(f'Score vs. Frame: {score_type} ({sampler_display_name})', fontsize=16)
                 plt.xlabel('MCMC Step (Post Burn-in)', fontsize=14)
                 plt.ylabel('Score Value', fontsize=14)
                 plt.xticks(fontsize=12)
@@ -242,12 +291,12 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                 plt.legend(fontsize=12)
                 plt.tight_layout()
                 pdf.savefig()
-                plt.savefig(os.path.join(sampler_output_dir, f'score_vs_frame_{score_type}_{sampler_name}.png'))
+                plt.savefig(os.path.join(analysis_output_dir, f'score_vs_frame_{score_type}_{sampler_display_name}.png'))
                 plt.close()
 
-            print(f"\nR-hat Statistics for Sigma Components ({sampler_name}):")
+            print(f"\nR-hat Statistics for Sigma Components ({sampler_display_name}):")
             rhat_values = {}
-            rhat_filename = os.path.join(sampler_output_dir, f"rhat_statistics_{sampler_name}.txt")
+            rhat_filename = os.path.join(analysis_output_dir, f"rhat_statistics_{sampler_display_name}.txt")
 
             combined_sigma_data = defaultdict(list)
             for chain_data in all_sigma_histories.values():
@@ -256,7 +305,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
             
             # Replace the R-hat calculation section with this version:
             with open(rhat_filename, 'w') as f:
-                f.write(f"R-hat Statistics for Sigma Components ({sampler_name}):\n")
+                f.write(f"R-hat Statistics for Sigma Components ({sampler_display_name}):\n")
                 rhat_values = {}
                 for sigma_type, histories in combined_sigma_data.items():
                     chain_lengths = [len(chain) for chain in histories]
@@ -290,7 +339,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
 
             # --- Add R-hat table to the same PDF ---
             fig, ax = plt.subplots(figsize=(6, 2 + 0.3*len(rhat_values)))  # Adjust figure size to fit the table
-            fig.suptitle(f"R-hat Values for Sigma Components ({sampler_name})", fontsize=14)
+            fig.suptitle(f"R-hat Values for Sigma Components ({sampler_display_name})", fontsize=14)
             ax.axis('off')
 
             # Build table data
@@ -338,7 +387,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                                 ess_values[sigma_type].append(ess)
                 
                 plt.axhline(y=0, color='r', linestyle='--')
-                plt.title(f'Autocorrelation for {sigma_type} ({sampler_name})', fontsize=16)
+                plt.title(f'Autocorrelation for {sigma_type} ({sampler_display_name})', fontsize=16)
                 plt.xlabel('Lag', fontsize=14)
                 plt.ylabel('Autocorrelation', fontsize=14)
                 plt.xticks(fontsize=12)
@@ -346,13 +395,13 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                 plt.legend(fontsize=12)
                 plt.tight_layout()
                 pdf.savefig()
-                plt.savefig(os.path.join(sampler_output_dir, f'autocorr_{sigma_type}_{sampler_name}.png'))
+                plt.savefig(os.path.join(analysis_output_dir, f'autocorr_{sigma_type}_{sampler_display_name}.png'))
                 plt.close()
                 
             # --- Add ESS table to PDF ---
             if ess_values:
                 fig, ax = plt.subplots(figsize=(8, 2 + 0.3*len(ess_values)))
-                fig.suptitle(f"Effective Sample Size (ESS) for Sigma Components ({sampler_name})", fontsize=14)
+                fig.suptitle(f"Effective Sample Size (ESS) for Sigma Components ({sampler_display_name})", fontsize=14)
                 ax.axis('off')
                 
                 # Build table data
@@ -385,9 +434,9 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                 plt.close(fig)
                 
                 # Save ESS values to file
-                ess_filename = os.path.join(sampler_output_dir, f"ess_statistics_{sampler_name}.txt")
+                ess_filename = os.path.join(analysis_output_dir, f"ess_statistics_{sampler_display_name}.txt")
                 with open(ess_filename, 'w') as f:
-                    f.write(f"Effective Sample Size (ESS) for Sigma Components ({sampler_name}):\n")
+                    f.write(f"Effective Sample Size (ESS) for Sigma Components ({sampler_display_name}):\n")
                     for sigma_type, ess_list in ess_values.items():
                         if ess_list:
                             f.write(f"{sigma_type}: Mean={np.mean(ess_list):.1f}, Min={np.min(ess_list):.1f}, " 
@@ -409,7 +458,7 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                                 plt.plot(autocorr, label=f'Chain {chain_id}', alpha=0.7)
                     
                     plt.axhline(y=0, color='r', linestyle='--')
-                    plt.title(f'Autocorrelation for {score_type} ({sampler_name})', fontsize=16)
+                    plt.title(f'Autocorrelation for {score_type} ({sampler_display_name})', fontsize=16)
                     plt.xlabel('Lag', fontsize=14)
                     plt.ylabel('Autocorrelation', fontsize=14)
                     plt.xticks(fontsize=12)
@@ -417,12 +466,12 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                     plt.legend(fontsize=12)
                     plt.tight_layout()
                     pdf.savefig()
-                    plt.savefig(os.path.join(sampler_output_dir, f'autocorr_{score_type}_{sampler_name}.png'))
+                    plt.savefig(os.path.join(analysis_output_dir, f'autocorr_{score_type}_{sampler_display_name}.png'))
                     plt.close()
 
     # --- GMM Fits and Plots (if requested) ---
     if do_gmm_fits:
-        pdf_filename_gmm = os.path.join(sampler_output_dir, f"{sampler_name}_combined_gmm_plots.pdf")
+        pdf_filename_gmm = os.path.join(analysis_output_dir, f"{sampler_display_name}_combined_gmm_plots.pdf")
         with PdfPages(pdf_filename_gmm) as pdf:
             #sigma_types = ["AA", "AB", "BC", "CC"]
             sigma_types = ["AA", "AB", "BC"]
@@ -443,21 +492,24 @@ def analyze_mcmc_data(output_folder: str, sampler_name: str, burnin: float = 0.5
                             "covariances": gmm.covariances_.flatten().tolist(),
                             "weights": gmm.weights_.tolist(),
                         }
-                        json_filename = os.path.join(sampler_output_dir, f"gmm_fit_{sigma_type}_{chain_id}.json")
+                        json_filename = os.path.join(analysis_output_dir, f"gmm_fit_{sigma_type}_{chain_id}.json")
                         with open(json_filename, "w") as f:
                             json.dump(gmm_params, f, indent=4)
 
                 if all_data_for_type:
-                    plot_combined_gmm(all_data_for_type, all_gmms_for_type, sigma_type, sampler_name, sampler_output_dir, pdf)
+                    plot_combined_gmm(all_data_for_type, all_gmms_for_type, sigma_type, sampler_display_name, analysis_output_dir, pdf)
                     print(f"Combined GMM plot for {sigma_type} saved.")
 
-def analyze_sampler(sampler_key, output_folder="output_analysis", burnin=0.5, 
-                   do_trace_plots=True, do_gmm_fits=True):
+def analyze_sampler_in_sequence(sampler_sequence: list, sampler_type: str, sampler_position: int, 
+                               output_folder: str = "output_analysis", burnin: float = 0.5, 
+                               do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
-    Analyze a specific sampler's MCMC results.
+    Analyze a specific sampler at a given position in a sequence.
     
     Args:
-        sampler_key (str): Name of the sampler ('pair_sampler', 'tetramer_sampler', or 'octet_sampler')
+        sampler_sequence (list): Complete sequence of samplers (e.g., ['pair', 'tetramer', 'pair', 'octet'])
+        sampler_type (str): Type of sampler to analyze ('pair', 'tetramer', 'octet')
+        sampler_position (int): 0-based position in the sequence
         output_folder (str): Base directory for output files
         burnin (float): Fraction of initial samples to discard
         do_trace_plots (bool): Whether to generate trace plots
@@ -466,42 +518,52 @@ def analyze_sampler(sampler_key, output_folder="output_analysis", burnin=0.5,
     Returns:
         bool: True if analysis was successful, False otherwise
     """
-    valid_samplers = ["pair_sampler", "tetramer_sampler", "octet_sampler"]
-    
-    if sampler_key not in valid_samplers:
-        print(f"Error: Invalid sampler '{sampler_key}'. Must be one of {valid_samplers}")
+    # Validate inputs
+    if sampler_position >= len(sampler_sequence):
+        print(f"Error: Position {sampler_position} is out of range for sequence length {len(sampler_sequence)}")
         return False
+    
+    if sampler_sequence[sampler_position] != sampler_type:
+        print(f"Error: Expected '{sampler_type}' at position {sampler_position}, but found '{sampler_sequence[sampler_position]}'")
+        return False
+    
+    # Count occurrences to determine the numbered folder
+    occurrence_number = count_sampler_occurrences(sampler_sequence, sampler_type, sampler_position)
+    
+    print(f"\nAnalyzing {sampler_type} sampler at position {sampler_position} (occurrence #{occurrence_number}) in sequence {sampler_sequence}")
+    print(f"Loading trajectories from folder: {get_sampler_folder_name(sampler_type, occurrence_number)}")
     
     # Create output folder if it doesn't exist
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-        
-    # Convert sampler_key to class name (e.g., "pair_sampler" -> "PairSampler")
-    sampler_name = sampler_key.replace("_sampler", "").capitalize() + "Sampler"
-    
-    print(f"\nAnalyzing data for {sampler_name} with burn-in fraction: {burnin}...")
     
     # Run the analysis
     try:
-        analyze_mcmc_data(output_folder, sampler_name, burnin, do_trace_plots, do_gmm_fits)
-        print(f"Analysis for {sampler_name} complete.")
+        analyze_mcmc_data(output_folder, sampler_type, occurrence_number, burnin, do_trace_plots, do_gmm_fits)
+        print(f"Analysis for {sampler_type} sampler (occurrence #{occurrence_number}) complete.")
         return True
     except Exception as e:
-        print(f"Error analyzing {sampler_name}: {str(e)}")
+        print(f"Error analyzing {sampler_type} sampler: {str(e)}")
         return False
 
 def main():
     """Process command line arguments and run analysis."""
-    parser = argparse.ArgumentParser(description='Analyze MCMC results and fit GMM models.')
+    parser = argparse.ArgumentParser(description='Analyze MCMC results and fit GMM models for sampler sequences.')
     
-    parser.add_argument('sampler', type=str, choices=['pair_sampler', 'tetramer_sampler', 'octet_sampler'],
-                        help='Sampler to analyze (pair_sampler, tetramer_sampler, or octet_sampler)')
+    parser.add_argument('--sequence', type=str, required=True,
+                        help='Comma-separated sampler sequence (e.g., "pair,tetramer,pair,octet")')
+    
+    parser.add_argument('--sampler', type=str, required=True, choices=['pair', 'tetramer', 'octet'],
+                        help='Type of sampler to analyze (pair, tetramer, or octet)')
+    
+    parser.add_argument('--position', type=int, required=True,
+                        help='0-based position of the sampler in the sequence')
     
     parser.add_argument('--output', '-o', type=str, default='output_analysis',
                         help='Output folder for analysis results (default: output_analysis)')
     
     parser.add_argument('--burnin', '-b', type=float, default=0.3,
-                        help='Burn-in fraction (default: 0.4)')
+                        help='Burn-in fraction (default: 0.3)')
     
     parser.add_argument('--no-traces', action='store_true',
                         help='Disable trace plots')
@@ -512,14 +574,32 @@ def main():
     # Parse arguments
     args = parser.parse_args()
     
+    # Parse the sequence
+    try:
+        sampler_sequence = [s.strip().lower() for s in args.sequence.split(',')]
+        # Validate sequence
+        valid_samplers = ['pair', 'tetramer', 'octet']
+        for sampler in sampler_sequence:
+            if sampler not in valid_samplers:
+                print(f"Error: Invalid sampler '{sampler}' in sequence. Must be one of {valid_samplers}")
+                return
+    except Exception as e:
+        print(f"Error parsing sequence: {e}")
+        return
+    
     # Run analysis with specified parameters
-    analyze_sampler(
-        args.sampler, 
+    success = analyze_sampler_in_sequence(
+        sampler_sequence=sampler_sequence,
+        sampler_type=args.sampler,
+        sampler_position=args.position,
         output_folder=args.output, 
         burnin=args.burnin,
         do_trace_plots=not args.no_traces,
         do_gmm_fits=not args.no_gmm
     )
+    
+    if not success:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

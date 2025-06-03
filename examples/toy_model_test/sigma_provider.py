@@ -57,9 +57,9 @@ class GMMSigmaProvider:
     """
     
     def __init__(self, sampler_sequence: List[str], sequence_idx: int, 
-                 base_output_dir: str = None, specific_chain: int = None, 
-                 sigma_ranges: Dict[str, Tuple[float, float]] = None,
-                 prior_type: str = "uniform"):
+                base_output_dir: str = None, specific_chain: int = None, 
+                sigma_ranges: Dict[str, Tuple[float, float]] = None,
+                prior_type: str = "uniform"):
         """
         Initialize the sigma provider for a specific position in sampler sequence.
         
@@ -75,6 +75,7 @@ class GMMSigmaProvider:
         self.sequence_idx = sequence_idx
         self.pair_types = ["AA", "AB", "BC"]
         self.prior_type = prior_type
+        self.specific_chain = specific_chain  # Move this line up here
         
         # Get current sampler info
         self.sampler_name, self.current_idx, self.total_count = self.sequence_manager.get_sampler_info(sequence_idx)
@@ -99,8 +100,6 @@ class GMMSigmaProvider:
             print(f"Loading GMM from previous sampler: {prev_dir}")
             self.gmm_params = self._load_gmm_parameters()
             self._print_gmm_stats()
-        
-        self.specific_chain = specific_chain
         
         # Load default values
         self.default_sigma = {"AA": 2.0, "AB": 2.0, "BC": 2.0}

@@ -69,32 +69,42 @@ class SamplerSequenceManager:
         """Generate directory name for the sampler."""
         return f"{sampler_name}sampler_results_{current_idx}"
 
-def run_analysis(sampler_key: str, sampler_index: int):
-    """Run the fit_gmm.py script for the specified sampler."""
-    # Map sampler keys to fit_gmm.py expected format
-    sampler_mapping = {
-        "pair": "pair_sampler",
-        "tetramer": "tetramer_sampler", 
-        "octet": "octet_sampler"
-    }
+def run_analysis(sampler_key: str, sampler_index: int, sampler_sequence: List[str], sequence_position: int):
+    """Run the fit_gmm.py script for the specified sampler with sequence information."""
     
-    # Convert sampler key to expected format
-    fit_gmm_key = sampler_mapping.get(sampler_key, sampler_key)
-    analysis_key = f"{fit_gmm_key}_{sampler_index}" if sampler_index > 1 else fit_gmm_key
-    
-    print(f"\nRunning analysis for {analysis_key}...")
+    print(f"\nRunning analysis for {sampler_key} sampler (occurrence #{sampler_index}) at sequence position {sequence_position}...")
     try:
-        cmd = ["python3.13", "fit_gmm.py", fit_gmm_key]  # Use fit_gmm_key instead of analysis_key
+        # Convert sampler sequence to comma-separated string
+        sequence_str = ",".join(sampler_sequence)
+        
+        # Build command with the new arguments
+        cmd = [
+            "python3.13", 
+            "fit_gmm.py",
+            "--sequence", sequence_str,
+            "--sampler", sampler_key,
+            "--position", str(sequence_position),
+            "--burnin", "0.3"
+        ]
+        
+        print(f"Executing command: {' '.join(cmd)}")
+        
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         
         if process.returncode != 0:
             print(f"Analysis failed with exit code {process.returncode}")
             print(f"Error output: {stderr}")
+            if stdout:
+                print(f"Standard output: {stdout}")
             return False
         
-        print(f"Analysis completed for {analysis_key}")
+        if stdout:
+            print(f"Analysis output: {stdout}")
+        
+        print(f"Analysis completed for {sampler_key} sampler (occurrence #{sampler_index})")
         return True
+        
     except Exception as e:
         print(f"Error running analysis: {e}")
         return False
@@ -266,8 +276,8 @@ def main():
     #mcmc_steps = [5000000, 200000, 100000, 3000000, 150000, 100000]
     
     # Alternative sequences for testing
-    sampler_sequence = ["pair"]
-    mcmc_steps = [50000]
+    sampler_sequence = ["pair", "tetramer"]
+    mcmc_steps = [2000000, 200000]
     # sampler_sequence = ["tetramer", "octet", "pair"]
     # mcmc_steps = [500000, 500000, 1000000]
     
@@ -297,7 +307,7 @@ def main():
             "run": True,
             "n_chains": 8 if sampler_key == "pair" else 8,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 100,
+            "save_freq": 1000,
             "use_sigma_dist": False if is_first else True
         }
         
@@ -330,13 +340,18 @@ def main():
         print(f"\n{sampler_class.__name__} sampling complete.")
         print(f"Results saved in: {output_folder}/{directory_name}/")
         
-        # Run the fit_gmm analysis for this sampler
-        analysis_success = run_analysis(sampler_key, current_idx)
+        # Run the fit_gmm analysis for this sampler - UPDATED CALL
+        analysis_success = run_analysis(
+            sampler_key=sampler_key, 
+            sampler_index=current_idx,
+            sampler_sequence=sampler_sequence,
+            sequence_position=seq_idx
+        )
         
         if analysis_success:
-            print(f"Analysis for {sampler_key}_{current_idx} completed successfully.")
+            print(f"Analysis for {sampler_key} (occurrence #{current_idx}) at position {seq_idx} completed successfully.")
         else:
-            print(f"WARNING: Analysis for {sampler_key}_{current_idx} may have failed.")
+            print(f"WARNING: Analysis for {sampler_key} (occurrence #{current_idx}) at position {seq_idx} may have failed.")
         
         # Add a small delay before next sampler to ensure files are properly written
         time.sleep(2)

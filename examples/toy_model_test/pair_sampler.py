@@ -180,9 +180,9 @@ class PairSampler(BaseMCSampler):
         prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
 
         # Clean up debug file if opened
-        if debug_fh:
-            debug_fh.close()
-            print(f"Particle pairing debug information written to {debug_file}")
+#        if debug_fh:
+#            debug_fh.close()
+#            print(f"Particle pairing debug information written to {debug_file}")
 
         total_score = exclusion_score + pairwise_score + prior_penalty
         return total_score, exclusion_score, pairwise_score, prior_penalty                
