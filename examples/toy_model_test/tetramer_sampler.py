@@ -377,8 +377,8 @@ class TetramerSampler(BaseMCSampler):
         centroid = np.mean(coords, axis=0)
 
         # Fixed step sizes
-        trans_step = 0.05
-        rot_step = 0.05
+        trans_step = 0.1
+        rot_step = 0.1
 
         # Translation
         displacement = np.random.normal(0.0, trans_step, 3)

@@ -72,11 +72,16 @@ class GMMSigmaProvider:
             sigma_ranges: Dictionary of (min, max) ranges for each sigma type (default: [0.5, 10.0] for all)
             prior_type: Type of prior for first sampler ("uniform" or "jeffreys")
         """
+        # Re-seed the RNG using process ID to ensure different seeds per process
+        process_seed = os.getpid() + int(np.random.random() * 100000)
+        np.random.seed(process_seed)
+        random.seed(process_seed)
+        
         self.sequence_manager = SamplerSequenceManager(sampler_sequence)
         self.sequence_idx = sequence_idx
         self.pair_types = ["AA", "AB", "BC"]
         self.prior_type = prior_type
-        self.specific_chain = specific_chain  # Move this line up here
+        self.specific_chain = specific_chain
         self.params = SystemParameters()
         
         # Get current sampler info
@@ -103,27 +108,24 @@ class GMMSigmaProvider:
             self.gmm_params = self._load_gmm_parameters()
             self._print_gmm_stats()
         
-        # Load default values
-        self.default_sigma = {"AA": 2.0, "AB": 2.0, "BC": 2.0}
-        
-        # Set sigma ranges
-        #self.sigma_ranges = sigma_ranges if sigma_ranges is not None else {pt: (0.5, 10.0) for pt in self.pair_types}
-        #----------------------------------------------------------------------
+        # Set sigma ranges and defaults
         sig_range = {}
         sig = {}
         for pair_type in self.params.pair_distances.keys():
             # Cache the sum of radii
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
-            lower_bound = 0.03 * sum_radii
-            upper_bound = 0.4 * sum_radii
-            # Propose sigma in log-space for a uniform proposal in that space.
-            sigma_val = np.exp(np.random.uniform(np.log(lower_bound), np.log(upper_bound)))
+            lower_bound = 0.03 * sum_radii # change from 0.03 to 0.01
+            upper_bound = 0.4 * sum_radii  # change from 0.4 to 1.0
+            # Default sigma value (middle of range in log space)
+            sigma_val = np.exp((np.log(lower_bound) + np.log(upper_bound)) / 2)
             sig[pair_type] = sigma_val
             sig_range[pair_type] = (lower_bound, upper_bound)
         self.sigma_ranges = sigma_ranges if sigma_ranges is not None else sig_range
-        #----------------------------------------------------------------------
-        # Configurable standard deviation cap factor (default 0.3)
-        self.std_cap_factor = 1.0 # changed from 0.3 to 1.0 to allow larger deviations
+        self.default_sigma = sig
+        # Print the ranges for debugging
+        print(f"Sigma ranges for {self.sampler_name}:")
+        for pair_type, (min_val, max_val) in self.sigma_ranges.items():
+            print(f"  {pair_type}: [{min_val:.3f}, {max_val:.3f}]")
 
     def _load_gmm_parameters(self) -> Dict:
         """Load GMM parameters from JSON files."""
@@ -185,10 +187,13 @@ class GMMSigmaProvider:
         sigma = {}
         
         if self.is_first_sampler:
-            # Sample from uniform distribution within ranges
+            # Sample from uniform distribution within ranges (each process gets different values)
             for pair_type in self.pair_types:
                 min_val, max_val = self.sigma_ranges[pair_type]
-                sigma[pair_type] = np.random.uniform(min_val, max_val)
+                # Sample in log space for better coverage
+                log_min, log_max = np.log(min_val), np.log(max_val)
+                log_sigma = np.random.uniform(log_min, log_max)
+                sigma[pair_type] = np.exp(log_sigma)
             print(f"Sampled sigma values uniformly for first sampler: {sigma}")
             return sigma
         
@@ -209,7 +214,9 @@ class GMMSigmaProvider:
                         component = np.random.choice(n_components, p=weights)
                         mean_value = means[component].item()
                         cov_value = float(covariances[component])
-                        std_value = min(np.sqrt(abs(cov_value)), mean_value * self.std_cap_factor)
+                        
+                        # REMOVED ARTIFICIAL CAP - use true GMM variance
+                        std_value = np.sqrt(abs(cov_value))
                         
                         candidate = np.random.normal(loc=mean_value, scale=std_value)
                         if min_val <= candidate <= max_val:
@@ -236,7 +243,7 @@ class GMMSigmaProvider:
         return sigma
     
     def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Calculate negative log prior with uniform/Jeffreys prior for first sampler, GMM for others."""
+        """Calculate negative log prior with proper dependence on sigma values."""
         if not sigma:
             return np.inf
         
@@ -249,17 +256,21 @@ class GMMSigmaProvider:
                     return np.inf
         
         if self.is_first_sampler:
-            # Use uniform or Jeffreys prior for first sampler
+            # For first sampler, use a prior that penalizes large sigma values
             log_prior = 0.0
             for pair_type, value in sigma.items():
-                min_val, max_val = self.sigma_ranges[pair_type]
+                # Get expected distance for this pair type
+                expected_dist = self.params.pair_distances[pair_type]
+                
                 if self.prior_type == "jeffreys":
                     # Jeffreys prior: log p(σ) = -log(σ)
                     log_prior += -np.log(value)
                 else:
-                    # Uniform prior: log p(σ) = -log(max - min)
-                    log_prior += -np.log(max_val - min_val)
-            
+                    # Half-normal prior (penalizes large sigma values)
+                    # Standard deviation is 10% of expected distance as reasonable uncertainty
+                    prior_std = 0.1 * expected_dist
+                    log_prior += -0.5 * ((value - min_val) / prior_std)**2
+                    
             return -log_prior
         
         # Use GMM prior for subsequent samplers

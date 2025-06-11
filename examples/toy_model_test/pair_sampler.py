@@ -25,7 +25,7 @@ class PairSampler(BaseMCSampler):
                  ex_weight: float = 1.0, pair_weight: float = 1.0, 
                  base_output_dir: str = None, specific_chain: int = None,
                  sigma_ranges: Dict[str, Tuple[float, float]] = None,
-                 prior_type: str = "uniform",
+                 prior_type: str = "jeffreys",
                  pos_passed: Dict[str, np.ndarray] = None):
         """
         Initialize PairSampler with sampler sequence information.
@@ -263,8 +263,36 @@ class PairSampler(BaseMCSampler):
 #            print(f"Particle pairing debug information written to {debug_file}")
 
         total_score = exclusion_score + pairwise_score + prior_penalty
-        return total_score, exclusion_score, pairwise_score, prior_penalty                
-    
+        
+        debug = True
+        if debug:
+            # Create debug folder if it doesn't exist
+            debug_folder = "debug_info"
+            os.makedirs(debug_folder, exist_ok=True)
+            
+            # Use fixed filenames without timestamps
+            debug_file = f"{debug_folder}/debug_scores.csv"
+            sigma_file = f"{debug_folder}/sigma_values.csv"
+            
+            # Check if files exist to determine if headers are needed
+            scores_file_exists = os.path.exists(debug_file)
+            sigma_file_exists = os.path.exists(sigma_file)
+            
+            # Write scores
+            with open(debug_file, 'a') as f:
+                if not scores_file_exists:
+                    f.write("Total Score, Exclusion Score, Pairwise Score, Prior Penalty\n")
+                f.write(f"{total_score:.1f}, {exclusion_score:.1f}, {pairwise_score:.1f}, {prior_penalty:.1f}\n")
+            
+            # Write sigma values
+            with open(sigma_file, 'a') as f:
+                if not sigma_file_exists:
+                    f.write("Sigma Type, Sigma Value\n")
+                for key, value in sig.items():
+                    f.write(f"{key}, {value:.1f}\n")
+            
+        return total_score, exclusion_score, pairwise_score, prior_penalty
+
     def run_mc(
         self,
         n_steps: int = 50000,
@@ -440,7 +468,7 @@ if __name__ == "__main__":
     pair_samp = PairSampler(
         sampler_sequence=sampler_sequence,
         sequence_idx=sequence_idx,
-        prior_type="uniform"
+        prior_type="jeffreys",  # Use Jeffreys prior for first sampler
     )
     pair_samp.run_mc(n_steps=10000, save_freq=100)
 #----------------------------------------------------------------------

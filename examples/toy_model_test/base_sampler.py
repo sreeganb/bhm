@@ -167,7 +167,7 @@ class BaseMCSampler:
         
         # Fixed step size for symmetric proposal
         # This should be tuned based on your problem, but kept constant during sampling
-        log_step_size = 0.05  # Adjust this value as needed for reasonable acceptance rates
+        log_step_size = 0.1  # Adjust this value as needed for reasonable acceptance rates
         
         # Symmetric proposal: add zero-mean Gaussian noise in log-space
         log_proposed = log_current + np.random.normal(0, log_step_size)
@@ -225,9 +225,41 @@ class BaseMCSampler:
 #        new_positions[type_name] = new_pos_array
 #
 #        return new_positions
+#    def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
+#        """
+#        Standard MCMC position proposal: select a random particle and add Gaussian noise.
+#        Uses simple clipping to stay within box boundaries.
+#        """
+#        import random
+#        
+#        # Deep copy to avoid modifying original
+#        new_positions = {key: np.copy(array) for key, array in positions.items()}
+#        
+#        # Randomly select particle type and index
+#        type_names = list(self.params.component_counts.keys())
+#        type_name = random.choice(type_names)
+#        idx = np.random.randint(self.params.component_counts[type_name])
+#        
+#        # Fixed step size based on particle radius (no adaptation)
+#        step_size = self.params.radii[type_name] * 0.1
+#        
+#        # Current position
+#        current_pos = positions[type_name][idx]
+#        
+#        # Symmetric Gaussian proposal
+#        proposal = current_pos + np.random.normal(0, step_size, 3)
+#        
+#        # Simple clipping to box boundaries [0, box_size]
+#        proposal = np.clip(proposal, 0.0, self.params.box_size)
+#        
+#        # Update the selected particle
+#        new_positions[type_name][idx] = proposal
+#        
+#        return new_positions
+    #---------------------------------------------------------------------------
     def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
         """
-        Standard MCMC position proposal: select a random particle and add Gaussian noise.
+        MCMC position proposal with inverse radius scaling: larger particles move less.
         Uses simple clipping to stay within box boundaries.
         """
         import random
@@ -239,22 +271,27 @@ class BaseMCSampler:
         type_names = list(self.params.component_counts.keys())
         type_name = random.choice(type_names)
         idx = np.random.randint(self.params.component_counts[type_name])
-        
-        # Fixed step size based on particle radius (no adaptation)
-        step_size = self.params.radii[type_name] * 0.05
-        
+
+        # Get min radius across all particle types for scaling
+        min_radius = min(self.params.radii.values())
+
+        # Inverse scaling: smaller radius = larger moves
+        # Base step is normalized to the smallest particle
+        base_step = 1.0  # Adjust this value as needed for optimal acceptance rate
+        step_size = base_step * (min_radius / self.params.radii[type_name])
+
         # Current position
         current_pos = positions[type_name][idx]
-        
+
         # Symmetric Gaussian proposal
         proposal = current_pos + np.random.normal(0, step_size, 3)
-        
+
         # Simple clipping to box boundaries [0, box_size]
         proposal = np.clip(proposal, 0.0, self.params.box_size)
-        
+
         # Update the selected particle
         new_positions[type_name][idx] = proposal
-        
+
         return new_positions
     #---------------------------------------------------------------------------
     def save_state(

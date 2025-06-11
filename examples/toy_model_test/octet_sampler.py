@@ -49,8 +49,8 @@ class OctetSampler(BaseMCSampler):
         self.specific_chain = specific_chain
         
         # Basic sampler parameters
-        self.octet_trans_step = 0.05
-        self.octet_rot_step = 0.05
+        self.octet_trans_step = 0.1
+        self.octet_rot_step = 0.1
         self.octet_trans_acc_rate = 0.5
         self.target_acceptance = 0.5
 
@@ -99,33 +99,62 @@ class OctetSampler(BaseMCSampler):
         )
     
     def get_positions(self) -> Dict[str, np.ndarray]:
-        """Simply load positions from the last frame of a trajectory file."""
+        """
+        Load positions from the previous sampler in the sequence.
+        """
         import pathlib
         
-        traj_dir = pathlib.Path(os.getcwd()) / "output_analysis/tetramersampler_results"
+        if self.sequence_idx == 0:
+            print("First sampler in sequence - using initialized positions")
+            return self.initialize_positions()
+        
+        # Get the previous sampler info
+        previous_sampler = self.sampler_sequence[self.sequence_idx - 1]
+        
+        # Count occurrences of the previous sampler up to current position
+        occurrence_count = 0
+        for i in range(self.sequence_idx):
+            if self.sampler_sequence[i] == previous_sampler:
+                occurrence_count += 1
+        
+        # Construct directory name
+        traj_dir = pathlib.Path(os.getcwd()) / f"output_analysis/{previous_sampler}sampler_results_{occurrence_count}"
         
         try:
-            # Get first trajectory file
+            # Get trajectory files
             trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
             
             if not trajectory_files:
-                raise FileNotFoundError(f"No trajectory files found in {traj_dir}")
-                
-            # Select random file
-            filepath = random.choice(trajectory_files)
-            chain_num = int(filepath.stem.split('_')[-1])
-            print(f"Selected chain: {chain_num}")
-                
+                print(f"No trajectory files found in {traj_dir}")
+                print("Falling back to initialized positions")
+                return self.initialize_positions()
+            
+            # Select specific chain or random
+            if self.specific_chain is not None:
+                target_file = traj_dir / f"trajectory_chain_{self.specific_chain}.h5"
+                if target_file.exists():
+                    filepath = target_file
+                    chain_num = self.specific_chain
+                else:
+                    print(f"Specified chain {self.specific_chain} not found, selecting random")
+                    filepath = random.choice(trajectory_files)
+                    chain_num = int(filepath.stem.split('_')[-1])
+            else:
+                filepath = random.choice(trajectory_files)
+                chain_num = int(filepath.stem.split('_')[-1])
+            
+            print(f"Loading positions from {previous_sampler}sampler_results_{occurrence_count}, chain: {chain_num}")
+            
             with h5py.File(filepath, 'r') as f:
                 if 'trajectory' not in f:
                     raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
-                    
+                
                 traj_grp = f['trajectory']
                 keys = sorted(traj_grp.keys())
                 
                 if not keys:
                     raise ValueError("Empty trajectory file")
-                    
+                
                 # Get last frame
                 last_key = keys[-1]
                 print(f"Using last frame: {last_key}")
@@ -136,11 +165,11 @@ class OctetSampler(BaseMCSampler):
                 
                 for type_name in pos_grp:
                     positions[type_name] = pos_grp[type_name][:].copy()
-                
-            return positions
             
+            return positions
+
         except Exception as e:
-            print(f"Error loading trajectory: {e}")
+            print(f"Error loading trajectory from {traj_dir}: {e}")
             print("Falling back to initialized positions")
             return self.initialize_positions()
         

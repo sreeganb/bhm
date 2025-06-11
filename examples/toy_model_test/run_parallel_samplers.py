@@ -79,12 +79,12 @@ def run_analysis(sampler_key: str, sampler_index: int, sampler_sequence: List[st
         
         # Build command with the new arguments
         cmd = [
-            "python3.13", 
+            "python", 
             "fit_gmm.py",
             "--sequence", sequence_str,
             "--sampler", sampler_key,
             "--position", str(sequence_position),
-            "--burnin", "0.3"
+            "--burnin", "0.4"
         ]
         
         print(f"Executing command: {' '.join(cmd)}")
@@ -276,10 +276,10 @@ def main():
     #mcmc_steps = [5000000, 200000, 100000, 3000000, 150000, 100000]
     
     # Alternative sequences for testing
-    sampler_sequence = ["pair", "tetramer", "octet"]
-    mcmc_steps = [5000, 2000, 1000]
-    #sampler_sequence = ["octet"]
-    #mcmc_steps = [10000]
+    #sampler_sequence = ["pair", "tetramer", "octet"]
+    #mcmc_steps = [1000000, 200000, 100000]
+    sampler_sequence = ["pair"]
+    mcmc_steps = [500000]
     # sampler_sequence = ["tetramer", "octet", "pair"]
     # mcmc_steps = [500000, 500000, 1000000]
     
@@ -307,9 +307,9 @@ def main():
         config = {
             **base_config,
             "run": True,
-            "n_chains": 10 if sampler_key == "pair" else 10,
+            "n_chains": 1,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 10,
+            "save_freq": 1000,
             "use_sigma_dist": False if is_first else True
         }
         
