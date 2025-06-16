@@ -167,7 +167,7 @@ class BaseMCSampler:
         
         # Fixed step size for symmetric proposal
         # This should be tuned based on your problem, but kept constant during sampling
-        log_step_size = 0.1  # Adjust this value as needed for reasonable acceptance rates
+        log_step_size = 0.01  # Adjust this value as needed for reasonable acceptance rates
         
         # Symmetric proposal: add zero-mean Gaussian noise in log-space
         log_proposed = log_current + np.random.normal(0, log_step_size)

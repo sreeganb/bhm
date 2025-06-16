@@ -103,6 +103,13 @@ def calculate_autocorrelation(data, nlags=50):
 def calculate_effective_sample_size(data):
     """Estimate effective sample size using autocorrelation."""
     try:
+        # Remove any inf/nan values
+        data = np.array(data)
+        data = data[np.isfinite(data)]
+        
+        if len(data) < 10:
+            return None
+            
         acf_values = acf(data, nlags=min(100, len(data)//3), fft=True)
         # Find first negative autocorrelation or stop at acf_values < 0.05
         tau = 1  # Default correlation time
@@ -116,6 +123,219 @@ def calculate_effective_sample_size(data):
     except Exception as e:
         print(f"Error calculating effective sample size: {e}")
         return None
+
+def preprocess_sigma_data(data, sigma_type):
+    """
+    Clean and validate sigma data before GMM fitting.
+    Remove outliers and invalid values.
+    """
+    data = np.array(data)
+    
+    # Remove inf, nan, negative, and zero values
+    valid_mask = np.isfinite(data) & (data > 0)
+    data = data[valid_mask]
+    
+    if len(data) == 0:
+        print(f"Warning: No valid data for {sigma_type}")
+        return None
+        
+    # Remove extreme outliers using IQR method
+    Q1 = np.percentile(data, 25)
+    Q3 = np.percentile(data, 75)
+    IQR = Q3 - Q1
+    
+    # Define outlier bounds (more conservative for sigma values)
+    lower_bound = Q1 - 2.0 * IQR  # Less aggressive outlier removal
+    upper_bound = Q3 + 2.0 * IQR
+    
+    # Ensure lower bound is positive
+    lower_bound = max(lower_bound, data.min() * 0.1)
+    
+    outlier_mask = (data >= lower_bound) & (data <= upper_bound)
+    cleaned_data = data[outlier_mask]
+    
+    removed_fraction = 1 - len(cleaned_data) / len(data)
+    if removed_fraction > 0.1:  # If more than 10% removed, warn
+        print(f"Warning: Removed {removed_fraction:.1%} outliers from {sigma_type}")
+    
+    print(f"{sigma_type}: {len(data)} -> {len(cleaned_data)} samples after cleaning")
+    print(f"  Range: [{cleaned_data.min():.3f}, {cleaned_data.max():.3f}]")
+    print(f"  Mean ± Std: {cleaned_data.mean():.3f} ± {cleaned_data.std():.3f}")
+    
+    return cleaned_data
+
+def validate_gmm_quality(gmm, data, sigma_type):
+    """
+    Validate the quality of a fitted GMM.
+    Check for reasonable parameters and convergence.
+    """
+    try:
+        # Check if GMM converged
+        if not gmm.converged_:
+            print(f"Warning: GMM for {sigma_type} did not converge")
+            return False
+            
+        # Check for reasonable means (should be within data range)
+        data_min, data_max = data.min(), data.max()
+        data_range = data_max - data_min
+        
+        for i, mean in enumerate(gmm.means_.flatten()):
+            if mean < data_min - 0.5 * data_range or mean > data_max + 0.5 * data_range:
+                print(f"Warning: GMM component {i} mean {mean:.3f} outside reasonable range [{data_min:.3f}, {data_max:.3f}]")
+                return False
+        
+        # Check for reasonable covariances (not too small or too large)
+        for i, cov in enumerate(gmm.covariances_.flatten()):
+            if cov <= 0:
+                print(f"Warning: GMM component {i} has non-positive covariance")
+                return False
+            
+            std_dev = np.sqrt(cov)
+            if std_dev > 10 * data_range:  # Standard deviation shouldn't be much larger than data range
+                print(f"Warning: GMM component {i} has very large std dev {std_dev:.3f} vs data range {data_range:.3f}")
+                return False
+                
+            if std_dev < data_range / 1000:  # Shouldn't be too small either
+                print(f"Warning: GMM component {i} has very small std dev {std_dev:.6f}")
+                return False
+        
+        # Check weights are reasonable
+        min_weight = 0.01  # Minimum 1% weight for any component
+        if np.any(gmm.weights_ < min_weight):
+            print(f"Warning: GMM has components with very small weights: {gmm.weights_}")
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error validating GMM for {sigma_type}: {e}")
+        return False
+
+def fit_gmm_robust(data: np.ndarray, sigma_type: str, max_components: int = 4):
+    """
+    Robustly fit a Gaussian Mixture Model to 1D sigma data.
+    Includes data preprocessing, validation, and quality checks.
+    """
+    # Preprocess data
+    cleaned_data = preprocess_sigma_data(data, sigma_type)
+    
+    if cleaned_data is None or len(cleaned_data) < 10:
+        print(f"Error: Insufficient valid data for {sigma_type} ({len(cleaned_data) if cleaned_data is not None else 0} samples)")
+        return None
+    
+    # Reshape for sklearn (1D data)
+    X = cleaned_data.reshape(-1, 1)
+    
+    # Try different numbers of components
+    best_gmm = None
+    best_bic = np.inf
+    best_n_components = 1
+    
+    for n_components in range(1, min(max_components + 1, len(cleaned_data)//5)):  # Need at least 5 samples per component
+        try:
+            # Use diagonal covariance for 1D data - more stable
+            gmm = GaussianMixture(
+                n_components=n_components, 
+                covariance_type='diag',  # Changed from 'full' to 'diag'
+                random_state=42,
+                max_iter=200,  # Increased iterations
+                tol=1e-6,      # Tighter tolerance
+                reg_covar=1e-8  # Small regularization to prevent singular covariances
+            )
+            
+            gmm.fit(X)
+            
+            # Validate the fitted GMM
+            if not validate_gmm_quality(gmm, cleaned_data, sigma_type):
+                continue
+                
+            # Calculate BIC
+            bic = gmm.bic(X)
+            
+            # Also check AIC for comparison
+            aic = gmm.aic(X)
+            
+            print(f"  {n_components} components: BIC={bic:.2f}, AIC={aic:.2f}, converged={gmm.converged_}")
+            
+            if bic < best_bic and gmm.converged_:
+                best_bic = bic
+                best_gmm = gmm
+                best_n_components = n_components
+                
+        except Exception as e:
+            print(f"  Error fitting {n_components} components for {sigma_type}: {e}")
+            continue
+    
+    if best_gmm is None:
+        print(f"Error: Could not fit any valid GMM for {sigma_type}")
+        return None
+        
+    print(f"  Best GMM: {best_n_components} components, BIC={best_bic:.2f}")
+    
+    # Print component details
+    for i in range(best_n_components):
+        mean = best_gmm.means_[i, 0]
+        std = np.sqrt(best_gmm.covariances_[i, 0])
+        weight = best_gmm.weights_[i]
+        print(f"    Component {i}: mean={mean:.3f}, std={std:.3f}, weight={weight:.3f}")
+    
+    return best_gmm
+
+def fit_gmm(data: np.ndarray, max_components: int = 5):
+    """Legacy wrapper - calls the robust version"""
+    # Determine sigma type from calling context if possible
+    import inspect
+    frame = inspect.currentframe()
+    try:
+        # Try to get sigma_type from the calling function's local variables
+        calling_locals = frame.f_back.f_locals
+        sigma_type = calling_locals.get('sigma_type', 'unknown')
+    finally:
+        del frame
+    
+    return fit_gmm_robust(data, sigma_type, max_components)
+
+def save_gmm_with_validation(gmm, sigma_type, chain_id, analysis_output_dir, original_data):
+    """
+    Save GMM parameters with additional validation information.
+    """
+    if gmm is None:
+        print(f"Warning: No valid GMM to save for {sigma_type}_{chain_id}")
+        return False
+        
+    try:
+        # Basic GMM parameters
+        gmm_params = {
+            "n_components": int(gmm.n_components),
+            "means": gmm.means_.flatten().tolist(),
+            "covariances": gmm.covariances_.flatten().tolist(),  # Now diagonal elements only
+            "weights": gmm.weights_.tolist(),
+            "converged": bool(gmm.converged_),
+            "n_iter": int(gmm.n_iter_),
+            "bic": float(gmm.bic(original_data.reshape(-1, 1))),
+            "aic": float(gmm.aic(original_data.reshape(-1, 1)))
+        }
+        
+        # Add data statistics for validation
+        gmm_params["data_stats"] = {
+            "n_samples": len(original_data),
+            "mean": float(np.mean(original_data)),
+            "std": float(np.std(original_data)),
+            "min": float(np.min(original_data)),
+            "max": float(np.max(original_data)),
+            "q25": float(np.percentile(original_data, 25)),
+            "q75": float(np.percentile(original_data, 75))
+        }
+        
+        # Save to file
+        json_filename = os.path.join(analysis_output_dir, f"gmm_fit_{sigma_type}_{chain_id}.json")
+        with open(json_filename, "w") as f:
+            json.dump(gmm_params, f, indent=4)
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error saving GMM for {sigma_type}_{chain_id}: {e}")
+        return False
 
 def get_sampler_folder_name(sampler_type: str, sampler_position: int) -> str:
     """
@@ -148,24 +368,6 @@ def count_sampler_occurrences(sampler_sequence: list, target_sampler: str, posit
             count += 1
     return count
 
-def fit_gmm(data: np.ndarray, max_components: int = 5):
-    """Fits a Gaussian Mixture Model to the data."""
-    data = data.reshape(-1, 1)
-    best_gmm = None
-    best_bic = np.inf
-
-    for n_components in range(1, max_components + 1):
-        gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42)
-        gmm.fit(data)
-        bic = gmm.bic(data)
-        if bic < best_bic:
-            best_bic = bic
-            best_gmm = gmm
-    
-    print(f"Best GMM found with {best_gmm.n_components} components and BIC: {best_bic:.2f}")
-
-    return best_gmm
-
 def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_name: str, output_dir: str, pdf: PdfPages):
     """Plots combined GMM fits for all chains of a single sigma component."""
 
@@ -193,7 +395,7 @@ def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_n
     plt.savefig(os.path.join(output_dir, f"gmm_combined_plot_{sigma_type}_{sampler_name}.png"))
     plt.close()
 
-def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: int, burnin: float = 0.5, 
+def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: int, burnin: float = 0.6, 
                      do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
     Analyzes MCMC data, including trace plots, R-hat statistics, and GMM fitting.
@@ -473,35 +675,38 @@ def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: i
     if do_gmm_fits:
         pdf_filename_gmm = os.path.join(analysis_output_dir, f"{sampler_display_name}_combined_gmm_plots.pdf")
         with PdfPages(pdf_filename_gmm) as pdf:
-            #sigma_types = ["AA", "AB", "BC", "CC"]
             sigma_types = ["AA", "AB", "BC"]
+            
             for sigma_type in sigma_types:
+                print(f"\nFitting GMM for {sigma_type}...")
                 all_data_for_type = {}
                 all_gmms_for_type = {}
 
                 for chain_id, chain_data in all_sigma_histories.items():
                     if sigma_type in chain_data:
                         data = np.array(chain_data[sigma_type])
-                        all_data_for_type[chain_id] = data
-                        gmm = fit_gmm(data)
-                        all_gmms_for_type[chain_id] = gmm
-
-                        gmm_params = {
-                            "n_components": gmm.n_components,
-                            "means": gmm.means_.flatten().tolist(),
-                            "covariances": gmm.covariances_.flatten().tolist(),
-                            "weights": gmm.weights_.tolist(),
-                        }
-                        json_filename = os.path.join(analysis_output_dir, f"gmm_fit_{sigma_type}_{chain_id}.json")
-                        with open(json_filename, "w") as f:
-                            json.dump(gmm_params, f, indent=4)
+                        print(f"  Chain {chain_id}: {len(data)} samples")
+                        
+                        # Use robust GMM fitting
+                        gmm = fit_gmm_robust(data, sigma_type, max_components=4)  # Reduced max components
+                        
+                        if gmm is not None:
+                            all_data_for_type[chain_id] = data
+                            all_gmms_for_type[chain_id] = gmm
+                            
+                            # Save with validation
+                            save_gmm_with_validation(gmm, sigma_type, chain_id, analysis_output_dir, data)
+                        else:
+                            print(f"  Failed to fit GMM for {sigma_type} chain {chain_id}")
 
                 if all_data_for_type:
                     plot_combined_gmm(all_data_for_type, all_gmms_for_type, sigma_type, sampler_display_name, analysis_output_dir, pdf)
                     print(f"Combined GMM plot for {sigma_type} saved.")
+                else:
+                    print(f"No valid GMMs for {sigma_type} - skipping plot")
 
 def analyze_sampler_in_sequence(sampler_sequence: list, sampler_type: str, sampler_position: int, 
-                               output_folder: str = "output_analysis", burnin: float = 0.5, 
+                               output_folder: str = "output_analysis", burnin: float = 0.6, 
                                do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
     Analyze a specific sampler at a given position in a sequence.
@@ -562,8 +767,8 @@ def main():
     parser.add_argument('--output', '-o', type=str, default='output_analysis',
                         help='Output folder for analysis results (default: output_analysis)')
     
-    parser.add_argument('--burnin', '-b', type=float, default=0.3,
-                        help='Burn-in fraction (default: 0.3)')
+    parser.add_argument('--burnin', '-b', type=float, default=0.6,
+                        help='Burn-in fraction (default: 0.6)')
     
     parser.add_argument('--no-traces', action='store_true',
                         help='Disable trace plots')
