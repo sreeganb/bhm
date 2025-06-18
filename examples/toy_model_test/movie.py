@@ -23,9 +23,49 @@ def load_trajectory_from_hdf5(filename: str, max_frames: Optional[int] = None, s
     """
     trajectory = []
     
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"HDF5 file not found: {filename}")
+    
     with h5py.File(filename, 'r') as f:
+        if 'trajectory' not in f:
+            raise KeyError(f"No 'trajectory' group found in {filename}")
+            
         traj_grp = f['trajectory']
-        state_names = sorted(traj_grp.keys(), key=lambda x: int(x.split('_')[1]))
+        
+        # Debug: Print all available keys
+        all_keys = list(traj_grp.keys())
+        print(f"Found {len(all_keys)} states in trajectory file")
+        if len(all_keys) > 0:
+            print(f"First few keys: {all_keys[:5]}")
+            print(f"Last few keys: {all_keys[-5:]}")
+        
+        # More robust sorting function
+        def extract_step_number(state_name):
+            try:
+                # Handle both "state_XXXXX" and other formats
+                if '_' in state_name:
+                    return int(state_name.split('_')[-1])  # Use last part after split
+                else:
+                    # Try to extract number from the string
+                    import re
+                    numbers = re.findall(r'\d+', state_name)
+                    return int(numbers[0]) if numbers else 0
+            except (ValueError, IndexError) as e:
+                print(f"Warning: Could not extract step number from '{state_name}': {e}")
+                return 0
+        
+        # Sort state names properly
+        state_names = sorted(all_keys, key=extract_step_number)
+        
+        # Debug: Verify sorting worked correctly
+        if len(state_names) > 1:
+            first_step = extract_step_number(state_names[0])
+            last_step = extract_step_number(state_names[-1])
+            print(f"Step range: {first_step} to {last_step}")
+            
+            # Check for gaps or issues
+            if last_step < first_step:
+                print("WARNING: Last step is smaller than first step - sorting may have failed!")
         
         # Apply downsampling if specified
         if max_frames:
@@ -35,47 +75,107 @@ def load_trajectory_from_hdf5(filename: str, max_frames: Optional[int] = None, s
         state_names = state_names[::step]
         
         print(f"Loading {len(state_names)} states from trajectory...")
-        for state_name in tqdm(state_names, desc="Loading frames"):
-            state_grp = traj_grp[state_name]
-            state = {
-                "step": state_grp.attrs["step"],
-                "total_score": state_grp.attrs["total_score"],
-                "prior_score": state_grp.attrs["prior_score"],
-                "pair_score": state_grp.attrs["pair_score"],
-                "exvol_score": state_grp.attrs["exvol_score"],
-                "sigma": {},
-                "positions": {},
-                "types": {},
-                "bead_numbers": {}
-            }
-            
-            # Load sigma values
-            sigma_grp = state_grp['sigma']
-            for key in sigma_grp.attrs:
-                state["sigma"][key] = sigma_grp.attrs[key]
-            
-            # Load positions
-            pos_grp = state_grp['positions']
-            for type_name in pos_grp:
-                state["positions"][type_name] = pos_grp[type_name][:]
-            
-            # Load metadata
+        
+        for i, state_name in enumerate(tqdm(state_names, desc="Loading frames")):
             try:
-                types_keys_dataset = state_grp['types_keys'][:]
-                types_vals_dataset = state_grp['types_vals'][:]
-                bead_keys_dataset = state_grp['bead_keys'][:]
-                bead_vals_dataset = state_grp['bead_vals'][:]
-
-                state["types"] = {types_keys_dataset[i].decode('utf-8'): types_vals_dataset[i].decode('utf-8') 
-                                for i in range(len(types_keys_dataset))}
-                state["bead_numbers"] = {int(bead_keys_dataset[i]): int(bead_vals_dataset[i]) 
-                                        for i in range(len(bead_keys_dataset))}
-            except (KeyError, ValueError) as e:
-                print(f"Warning: Error loading metadata for state {state_name}: {e}")
-                state["types"] = {}
-                state["bead_numbers"] = {}
-            
-            trajectory.append(state)
+                state_grp = traj_grp[state_name]
+                
+                # More robust attribute reading with error handling
+                state = {
+                    "step": state_grp.attrs.get("step", 0),
+                    "total_score": state_grp.attrs.get("total_score", 0.0),
+                    "prior_score": state_grp.attrs.get("prior_score", 0.0),
+                    "pair_score": state_grp.attrs.get("pair_score", 0.0),
+                    "exvol_score": state_grp.attrs.get("exvol_score", 0.0),
+                    "tet_score": state_grp.attrs.get("tet_score", 0.0),      # Added missing field
+                    "oct_score": state_grp.attrs.get("oct_score", 0.0),      # Added missing field
+                    "sigma": {},
+                    "positions": {},
+                    "types": {},
+                    "bead_numbers": {}
+                }
+                
+                # Debug: Print step info for first and last frames
+                if i == 0 or i == len(state_names) - 1:
+                    print(f"Frame {i} ({state_name}): step={state['step']}, score={state['total_score']:.4f}")
+                
+                # Load sigma values with error handling
+                if 'sigma' in state_grp:
+                    sigma_grp = state_grp['sigma']
+                    for key in sigma_grp.attrs:
+                        state["sigma"][key] = float(sigma_grp.attrs[key])
+                else:
+                    print(f"Warning: No sigma group in state {state_name}")
+                
+                # Load positions with error handling and validation
+                if 'positions' in state_grp:
+                    pos_grp = state_grp['positions']
+                    for type_name in pos_grp:
+                        positions = pos_grp[type_name][:]
+                        state["positions"][type_name] = positions
+                        
+                        # Debug: Print position info for first frame
+                        if i == 0:
+                            print(f"  {type_name}: {len(positions)} particles")
+                            if len(positions) > 0:
+                                center = np.mean(positions, axis=0)
+                                print(f"    Center: {center}")
+                                print(f"    Range: {np.min(positions, axis=0)} to {np.max(positions, axis=0)}")
+                else:
+                    print(f"Warning: No positions group in state {state_name}")
+                
+                # Load metadata with better error handling
+                try:
+                    if 'types_keys' in state_grp and 'types_vals' in state_grp:
+                        types_keys_dataset = state_grp['types_keys'][:]
+                        types_vals_dataset = state_grp['types_vals'][:]
+                        
+                        if len(types_keys_dataset) == len(types_vals_dataset):
+                            state["types"] = {}
+                            for j in range(len(types_keys_dataset)):
+                                k = types_keys_dataset[j]
+                                v = types_vals_dataset[j]
+                                if isinstance(k, bytes):
+                                    k = k.decode('utf-8', errors='ignore')
+                                if isinstance(v, bytes):
+                                    v = v.decode('utf-8', errors='ignore')
+                                state["types"][k] = v
+                    
+                    if 'bead_keys' in state_grp and 'bead_vals' in state_grp:
+                        bead_keys_dataset = state_grp['bead_keys'][:]
+                        bead_vals_dataset = state_grp['bead_vals'][:]
+                        
+                        if len(bead_keys_dataset) == len(bead_vals_dataset):
+                            state["bead_numbers"] = {}
+                            for j in range(len(bead_keys_dataset)):
+                                bkey = bead_keys_dataset[j]
+                                bval = bead_vals_dataset[j]
+                                state["bead_numbers"][int(bkey)] = int(bval)
+                                
+                except (KeyError, ValueError, TypeError) as e:
+                    print(f"Warning: Error loading metadata for state {state_name}: {e}")
+                    state["types"] = {}
+                    state["bead_numbers"] = {}
+                
+                trajectory.append(state)
+                
+            except Exception as e:
+                print(f"Error loading state {state_name}: {e}")
+                continue  # Skip this frame and continue
+    
+    print(f"Successfully loaded {len(trajectory)} states from {filename}")
+    
+    # Final validation
+    if len(trajectory) > 1:
+        first_step = trajectory[0]['step']
+        last_step = trajectory[-1]['step']
+        print(f"Trajectory spans steps {first_step} to {last_step}")
+        
+        # Check for step consistency
+        steps = [state['step'] for state in trajectory]
+        if steps != sorted(steps):
+            print("WARNING: Trajectory steps are not in ascending order!")
+            print(f"First 10 steps: {steps[:10]}")
     
     return trajectory
 

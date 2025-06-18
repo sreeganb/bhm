@@ -279,7 +279,7 @@ def main():
     #sampler_sequence = ["pair", "tetramer", "octet"]
     #mcmc_steps = [1000000, 200000, 100000]
     sampler_sequence = ["pair", "tetramer", "octet"]
-    mcmc_steps = [2500000, 500000, 100000]
+    mcmc_steps = [5000000, 1000000, 500000]
     # sampler_sequence = ["tetramer", "octet", "pair"]
     # mcmc_steps = [500000, 500000, 1000000]
     
@@ -309,7 +309,7 @@ def main():
             "run": True,
             "n_chains": 8,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 1000,
+            "save_freq": 500,
             "use_sigma_dist": False if is_first else True
         }
         

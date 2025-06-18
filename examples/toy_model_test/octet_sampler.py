@@ -20,7 +20,7 @@ from pair_sampler import PairSampler
 from sigma_provider import GMMSigmaProvider
 import h5py
 import networkx as nx
-#-----------------------------------------------------------------------
+
 class OctetSampler(BaseMCSampler):
     """
     Sampler for Octamer-level interactions, inheriting from BaseMCSampler.
@@ -48,11 +48,9 @@ class OctetSampler(BaseMCSampler):
         self.sequence_idx = sequence_idx
         self.specific_chain = specific_chain
         
-        # Basic sampler parameters
+        # Basic sampler parameters - fixed step sizes
         self.octet_trans_step = 0.1
         self.octet_rot_step = 0.1
-        self.octet_trans_acc_rate = 0.5
-        self.target_acceptance = 0.5
 
         # Handle positions
         if positions_os is None:
@@ -100,7 +98,7 @@ class OctetSampler(BaseMCSampler):
     
     def get_positions(self) -> Dict[str, np.ndarray]:
         """
-        Load positions from the previous sampler in the sequence.
+        Load positions from the previous sampler in the sequence or initialize if first.
         """
         import pathlib
         
@@ -150,14 +148,29 @@ class OctetSampler(BaseMCSampler):
                     raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
                 
                 traj_grp = f['trajectory']
-                keys = sorted(traj_grp.keys())
+                keys = list(traj_grp.keys())
                 
                 if not keys:
                     raise ValueError("Empty trajectory file")
                 
+                # Sort keys properly (state_00000, state_00001, etc.)
+                def extract_step_number(state_name):
+                    try:
+                        return int(state_name.split('_')[-1])
+                    except (ValueError, IndexError):
+                        return 0
+                
+                keys.sort(key=extract_step_number)
+                
                 # Get last frame
                 last_key = keys[-1]
                 print(f"Using last frame: {last_key}")
+                
+                # Debug: Print step number and total score of last frame
+                last_state_grp = traj_grp[last_key]
+                step_num = last_state_grp.attrs.get("step", 0)
+                total_score = last_state_grp.attrs.get("total_score", 0.0)
+                print(f"Last frame details: step={step_num}, score={total_score:.4f}")
                 
                 # Read positions
                 positions = {}
@@ -165,6 +178,25 @@ class OctetSampler(BaseMCSampler):
                 
                 for type_name in pos_grp:
                     positions[type_name] = pos_grp[type_name][:].copy()
+                    print(f"Loaded {len(positions[type_name])} {type_name} particles")
+                    
+                    # Debug: Print first few positions to verify they're reasonable
+                    if len(positions[type_name]) > 0:
+                        print(f"  First {type_name} position: {positions[type_name][0]}")
+                        if len(positions[type_name]) > 1:
+                            print(f"  Second {type_name} position: {positions[type_name][1]}")
+            
+            # Additional validation: Check if positions are within expected bounds
+            box_size = getattr(self.params, 'box_size', 100.0)  # Default fallback
+            for type_name, pos_array in positions.items():
+                if len(pos_array) > 0:
+                    min_coords = np.min(pos_array, axis=0)
+                    max_coords = np.max(pos_array, axis=0)
+                    print(f"{type_name} position range: min={min_coords}, max={max_coords}")
+                    
+                    # Check if any coordinates are outside expected bounds
+                    if np.any(min_coords < 0) or np.any(max_coords > box_size):
+                        print(f"WARNING: {type_name} positions outside expected bounds [0, {box_size}]")
             
             return positions
 
@@ -212,16 +244,12 @@ class OctetSampler(BaseMCSampler):
         all_octet_coords = np.vstack(octet_coords_list)
         centroid = np.mean(all_octet_coords, axis=0)
         
-        # Define step sizes for translation and rotation
-        trans_step = self.octet_trans_step 
-        rot_step = self.octet_rot_step
-        
         # Generate a random translation vector
-        displacement = np.random.normal(0, trans_step, 3)
+        displacement = np.random.normal(0, self.octet_trans_step, 3)
         
         # Generate a random rotation axis and angle
         axis = self._random_unit_vector()
-        angle = np.random.normal(0, rot_step)
+        angle = np.random.normal(0, self.octet_rot_step)
         rotation_matrix = self._rotation_matrix(axis, angle)
         
         # Apply the transformation to each particle in the octet
@@ -236,25 +264,6 @@ class OctetSampler(BaseMCSampler):
             new_pos[particle_type][indices_list] = transformed_positions
             
         return new_pos
-    
-    def adapt_step_sizes(self, acceptance_rate):
-        """
-        Adapt step sizes based on acceptance rate to target ~30% acceptance
-        """
-        target_rate = 0.3
-        
-        if acceptance_rate < target_rate:
-            # Decrease step sizes if acceptance is too low
-            self.octet_trans_step *= self.step_adaptation_factor
-            self.octet_rot_step *= self.step_adaptation_factor
-        else:
-            # Increase step sizes if acceptance is too high
-            self.octet_trans_step /= self.step_adaptation_factor
-            self.octet_rot_step /= self.step_adaptation_factor
-        
-        # Enforce bounds
-        self.octet_trans_step = max(self.min_step, min(self.max_step, self.octet_trans_step))
-        self.octet_rot_step = max(self.min_step, min(self.max_step, self.octet_rot_step))
     
     def get_octets(self, positions: Dict[str, np.ndarray]) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
         tetramers = self.ts.get_tetramers(positions)
@@ -385,8 +394,8 @@ class OctetSampler(BaseMCSampler):
         # --- Main MCMC loop parameters ---
         move_types = ['position', 'sigma', 'tetramer', 'octet']
         move_probs = [0.2, 0.1, 0.3, 0.4]
-        temp_start, temp_end = 5.0, 0.1
-        temp_decay = (temp_end / temp_start) ** (1.0 / (n_steps - 1)) if n_steps > 1 else 1.0
+        temp_start, temp_end = 10.0, 0.1
+        temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
         print(f"Starting MCMC sampling for {n_steps} total steps...")
 
@@ -496,14 +505,13 @@ class OctetSampler(BaseMCSampler):
                 acceptance_rate = sum(accepts.values()) / (step + 1)
                 print(f"Step {step}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, AcceptRate={acceptance_rate:.2f}")
 
-            # --- Adapt step sizes every 500 steps ---
+            # --- Print acceptance rates every 500 steps (no adaptation) ---
             if step % 500 == 0 and step > 0:
                 pos_rate = accepts['position'] / max(1, attempts['position'])
                 tet_rate = accepts['tetramer'] / max(1, attempts['tetramer'])
                 oct_rate = accepts['octet'] / max(1, attempts['octet'])
                 sigma_rate = accepts['sigma'] / max(1, attempts['sigma'])
                 print(f"Step {step}: Acceptance rates - Pos: {pos_rate:.2f}, Sigma: {sigma_rate:.2f}, Tet: {tet_rate:.2f}, Oct: {oct_rate:.2f}")
-                self.octet_trans_acc_rate = oct_rate
 
         # --- End of MCMC loop ---
         sigma_history_df = pd.DataFrame(sigma_history)
@@ -571,8 +579,6 @@ class OctetSampler(BaseMCSampler):
             score, ex_score, pair_score, _ = self.ps.calculate_score(
                 positions, sigma, self.sigma_range,
                 excluded_pairs=set(),
-                #use_sigma_distribution=True,
-                #prior_penalty_from_distribution=prior_penalty
             )
             return score, ex_score, pair_score, 0.0, 0.0
 
@@ -580,8 +586,6 @@ class OctetSampler(BaseMCSampler):
         score, ex_score, pair_score, _ = self.ps.calculate_score(
             positions, sigma, self.sigma_range,
             excluded_pairs=set(),
-            #use_sigma_distribution=True,
-            #prior_penalty_from_distribution=prior_penalty
         )
         
         # Calculate tetramer scores 

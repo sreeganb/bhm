@@ -492,8 +492,8 @@ def sample_sigmas_from_sequence(
     Returns:
         (sigma_values, negative_log_prior)
     """
-    # Create the SigmaProvider
-    provider = SigmaProvider(
+    # Create the GMMSigmaProvider
+    provider = GMMSigmaProvider(
         sampler_sequence,
         sequence_idx,
         base_output_dir,

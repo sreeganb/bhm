@@ -135,14 +135,29 @@ class TetramerSampler(BaseMCSampler):
                     raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
                 
                 traj_grp = f['trajectory']
-                keys = sorted(traj_grp.keys())
+                keys = list(traj_grp.keys())
                 
                 if not keys:
                     raise ValueError("Empty trajectory file")
                 
+                # Sort keys properly (state_00000, state_00001, etc.)
+                def extract_step_number(state_name):
+                    try:
+                        return int(state_name.split('_')[-1])
+                    except (ValueError, IndexError):
+                        return 0
+                
+                keys.sort(key=extract_step_number)
+                
                 # Get last frame
                 last_key = keys[-1]
                 print(f"Using last frame: {last_key}")
+                
+                # Debug: Print step number and total score of last frame
+                last_state_grp = traj_grp[last_key]
+                step_num = last_state_grp.attrs.get("step", 0)
+                total_score = last_state_grp.attrs.get("total_score", 0.0)
+                print(f"Last frame details: step={step_num}, score={total_score:.4f}")
                 
                 # Read positions
                 positions = {}
@@ -150,6 +165,25 @@ class TetramerSampler(BaseMCSampler):
                 
                 for type_name in pos_grp:
                     positions[type_name] = pos_grp[type_name][:].copy()
+                    print(f"Loaded {len(positions[type_name])} {type_name} particles")
+                    
+                    # Debug: Print first few positions to verify they're reasonable
+                    if len(positions[type_name]) > 0:
+                        print(f"  First {type_name} position: {positions[type_name][0]}")
+                        if len(positions[type_name]) > 1:
+                            print(f"  Second {type_name} position: {positions[type_name][1]}")
+            
+            # Additional validation: Check if positions are within expected bounds
+            box_size = getattr(self.params, 'box_size', 100.0)  # Default fallback
+            for type_name, pos_array in positions.items():
+                if len(pos_array) > 0:
+                    min_coords = np.min(pos_array, axis=0)
+                    max_coords = np.max(pos_array, axis=0)
+                    print(f"{type_name} position range: min={min_coords}, max={max_coords}")
+                    
+                    # Check if any coordinates are outside expected bounds
+                    if np.any(min_coords < 0) or np.any(max_coords > box_size):
+                        print(f"WARNING: {type_name} positions outside expected bounds [0, {box_size}]")
             
             return positions
 
@@ -271,7 +305,7 @@ class TetramerSampler(BaseMCSampler):
         move_probs = [0.4, 0.1, 0.5]
         
         # Cooling schedule
-        temp_start, temp_end = 5.0, 1.0
+        temp_start, temp_end = 10.0, 0.10
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} total steps...")
@@ -377,8 +411,8 @@ class TetramerSampler(BaseMCSampler):
         centroid = np.mean(coords, axis=0)
 
         # Fixed step sizes
-        trans_step = 0.1
-        rot_step = 0.1
+        trans_step = 0.15
+        rot_step = 0.15
 
         # Translation
         displacement = np.random.normal(0.0, trans_step, 3)

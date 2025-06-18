@@ -118,40 +118,6 @@ class BaseMCSampler:
         distances = cdist(pos1, pos2)
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     #---------------------------------------------------------------------------    
-#    def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
-#        """
-#        Propose a move for one sigma parameter using symmetrical sampling in log-space.
-#        """
-#        import random
-#        pair_type = random.choice(list(sigma.keys()))
-#
-#        # Current value in log-space
-#        log_current = np.log(sigma[pair_type])
-#
-#        # MUCH LARGER step size - this is critical
-#        base_step_size = 0.05  # 10x larger than your current value (0.009)
-#        
-#        # Use more substantial adaptation
-#        if accept_rate < 0.2:
-#            # Decrease step if acceptance is too low
-#            step_factor = 0.5
-#        elif accept_rate > 0.5:
-#            # Increase step if acceptance is too high
-#            step_factor = 2.0
-#        else:
-#            # Normal range
-#            step_factor = 1.0
-#            
-#        step_size = base_step_size * step_factor
-#
-#        # Generate proposal
-#        log_proposed = log_current + np.random.normal(0, step_size)
-#
-#        # Create new sigma dictionary
-#        new_sigma = dict(sigma)
-#        new_sigma[pair_type] = np.exp(log_proposed)
-#
-#        return new_sigma, pair_type
     def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
         """
         Propose a move for one sigma parameter using symmetric sampling in log-space.
@@ -167,7 +133,7 @@ class BaseMCSampler:
         
         # Fixed step size for symmetric proposal
         # This should be tuned based on your problem, but kept constant during sampling
-        log_step_size = 0.01  # Adjust this value as needed for reasonable acceptance rates
+        log_step_size = 0.005  # Adjust this value as needed for reasonable acceptance rates
         
         # Symmetric proposal: add zero-mean Gaussian noise in log-space
         log_proposed = log_current + np.random.normal(0, log_step_size)
@@ -178,84 +144,6 @@ class BaseMCSampler:
         new_sigma[pair_type] = np.exp(log_proposed)
         
         return new_sigma, pair_type
-    #---------------------------------------------------------------------------
-#    def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
-#        """
-#        Propose a move for a randomly selected component's position using a symmetric, 
-#        zero-mean Gaussian proposal with reflection at boundaries.
-#        """
-#        def reflect_in_box(coord: float, box_size: float) -> float:
-#            """
-#            Reflect a single coordinate if it goes out of [0, box_size].
-#            This ensures that proposals remain within the box boundaries symmetrically.
-#            """
-#            # A simple 'bounce' reflection: if we go below 0, reflect up;
-#            # if we go above box_size, reflect down.
-#            if coord < 0:
-#                coord = -coord
-#                if coord > box_size:
-#                    coord = 2 * box_size - coord
-#            elif coord > box_size:
-#                coord = 2 * box_size - coord
-#                if coord < 0:
-#                    coord = -coord
-#            return coord
-#
-#        import random
-#        new_positions = positions.copy()
-#        type_names = list(self.params.component_counts.keys())
-#        type_name = random.choice(type_names)
-#
-#        base_step = self.params.radii[type_name] * 0.1
-#        # Adaptive factor, with a zero-mean Gaussian ensuring symmetry
-#        adjustment = np.clip(1.0 + 5.0 * (accept_rate - self.target_acceptance), 0.1, 2.75)
-#        step_size = base_step * adjustment
-#
-#        idx = np.random.randint(self.params.component_counts[type_name])
-#        # Copy only the array to be modified
-#        new_pos_array = np.copy(new_positions[type_name])
-#
-#        # Generate a zero-mean proposal
-#        proposal = new_pos_array[idx] + np.random.normal(0, step_size, 3)
-#        # Reflect in all dimensions that exceed boundaries
-#        for i in range(3):
-#            proposal[i] = reflect_in_box(proposal[i], self.params.box_size)
-#
-#        new_pos_array[idx] = proposal
-#        new_positions[type_name] = new_pos_array
-#
-#        return new_positions
-#    def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
-#        """
-#        Standard MCMC position proposal: select a random particle and add Gaussian noise.
-#        Uses simple clipping to stay within box boundaries.
-#        """
-#        import random
-#        
-#        # Deep copy to avoid modifying original
-#        new_positions = {key: np.copy(array) for key, array in positions.items()}
-#        
-#        # Randomly select particle type and index
-#        type_names = list(self.params.component_counts.keys())
-#        type_name = random.choice(type_names)
-#        idx = np.random.randint(self.params.component_counts[type_name])
-#        
-#        # Fixed step size based on particle radius (no adaptation)
-#        step_size = self.params.radii[type_name] * 0.1
-#        
-#        # Current position
-#        current_pos = positions[type_name][idx]
-#        
-#        # Symmetric Gaussian proposal
-#        proposal = current_pos + np.random.normal(0, step_size, 3)
-#        
-#        # Simple clipping to box boundaries [0, box_size]
-#        proposal = np.clip(proposal, 0.0, self.params.box_size)
-#        
-#        # Update the selected particle
-#        new_positions[type_name][idx] = proposal
-#        
-#        return new_positions
     #---------------------------------------------------------------------------
     def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
         """
@@ -277,7 +165,7 @@ class BaseMCSampler:
 
         # Inverse scaling: smaller radius = larger moves
         # Base step is normalized to the smallest particle
-        base_step = 1.0  # Adjust this value as needed for optimal acceptance rate
+        base_step = 1.1  # Adjust this value as needed for optimal acceptance rate
         step_size = base_step * (min_radius / self.params.radii[type_name])
 
         # Current position

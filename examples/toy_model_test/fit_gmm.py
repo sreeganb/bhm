@@ -36,6 +36,8 @@ def load_trajectory_from_hdf5(filename: str) -> list:
                 "prior_score": state_grp.attrs.get("prior_score", 0.0),
                 "pair_score": state_grp.attrs.get("pair_score", 0.0),
                 "exvol_score": state_grp.attrs.get("exvol_score", 0.0),
+                "tet_score": state_grp.attrs.get("tet_score", 0.0),      # Added missing field
+                "oct_score": state_grp.attrs.get("oct_score", 0.0),      # Added missing field
                 "sigma": {},
                 "positions": {},
                 "types": {},
@@ -254,7 +256,7 @@ def fit_gmm_robust(data: np.ndarray, sigma_type: str, max_components: int = 4):
             # Also check AIC for comparison
             aic = gmm.aic(X)
             
-            print(f"  {n_components} components: BIC={bic:.2f}, AIC={aic:.2f}, converged={gmm.converged_}")
+            #print(f"  {n_components} components: BIC={bic:.2f}, AIC={aic:.2f}, converged={gmm.converged_}")
             
             if bic < best_bic and gmm.converged_:
                 best_bic = bic
@@ -269,14 +271,14 @@ def fit_gmm_robust(data: np.ndarray, sigma_type: str, max_components: int = 4):
         print(f"Error: Could not fit any valid GMM for {sigma_type}")
         return None
         
-    print(f"  Best GMM: {best_n_components} components, BIC={best_bic:.2f}")
+    #print(f"  Best GMM: {best_n_components} components, BIC={best_bic:.2f}")
     
     # Print component details
     for i in range(best_n_components):
         mean = best_gmm.means_[i, 0]
         std = np.sqrt(best_gmm.covariances_[i, 0])
         weight = best_gmm.weights_[i]
-        print(f"    Component {i}: mean={mean:.3f}, std={std:.3f}, weight={weight:.3f}")
+        #print(f"    Component {i}: mean={mean:.3f}, std={std:.3f}, weight={weight:.3f}")
     
     return best_gmm
 
@@ -395,7 +397,7 @@ def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_n
     plt.savefig(os.path.join(output_dir, f"gmm_combined_plot_{sigma_type}_{sampler_name}.png"))
     plt.close()
 
-def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: int, burnin: float = 0.6, 
+def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: int, burnin: float = 0.4, 
                      do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
     Analyzes MCMC data, including trace plots, R-hat statistics, and GMM fitting.
@@ -454,7 +456,8 @@ def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: i
                 all_scores['prior_score'][level_name].append(state['prior_score'])
                 all_scores['pair_score'][level_name].append(state['pair_score'])
                 all_scores['exvol_score'][level_name].append(state['exvol_score'])
-
+                all_scores['tet_score'][level_name].append(state['tet_score'])      
+                all_scores['oct_score'][level_name].append(state['oct_score'])      
     # --- Trace Plots and R-hat (if requested) ---
     if do_trace_plots:
         pdf_filename_trace = os.path.join(analysis_output_dir, f"{sampler_display_name}_report.pdf")
@@ -706,7 +709,7 @@ def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: i
                     print(f"No valid GMMs for {sigma_type} - skipping plot")
 
 def analyze_sampler_in_sequence(sampler_sequence: list, sampler_type: str, sampler_position: int, 
-                               output_folder: str = "output_analysis", burnin: float = 0.6, 
+                               output_folder: str = "output_analysis", burnin: float = 0.4, 
                                do_trace_plots: bool = True, do_gmm_fits: bool = True):
     """
     Analyze a specific sampler at a given position in a sequence.
@@ -767,9 +770,9 @@ def main():
     parser.add_argument('--output', '-o', type=str, default='output_analysis',
                         help='Output folder for analysis results (default: output_analysis)')
     
-    parser.add_argument('--burnin', '-b', type=float, default=0.6,
-                        help='Burn-in fraction (default: 0.6)')
-    
+    parser.add_argument('--burnin', '-b', type=float, default=0.4,
+                        help='Burn-in fraction (default: 0.4)')
+
     parser.add_argument('--no-traces', action='store_true',
                         help='Disable trace plots')
     
