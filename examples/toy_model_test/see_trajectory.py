@@ -8,6 +8,8 @@ import argparse
 from tqdm.auto import tqdm
 import pandas as pd
 import plotly.express as px
+import webbrowser
+import time
 
 def load_trajectory_from_hdf5(filename: str, max_frames: Optional[int] = None, step: int = 1) -> List[Dict]:
     """
@@ -102,7 +104,8 @@ def visualize_trajectory_plotly(
     show_statistics: bool = True,
     display_bonds: bool = False,
     bond_distance_cutoff: float = 2.0,
-    frame_range: Optional[Tuple[int, int]] = None
+    frame_range: Optional[Tuple[int, int]] = None,
+    html_output: Optional[str] = None
 ):
     """
     Visualizes the trajectory using Plotly with enhanced options.
@@ -391,6 +394,26 @@ def visualize_trajectory_plotly(
     # Show the figure
     fig.show(config={"scrollZoom": True})
     
+    # If no HTML output specified, create one based on current time
+    if not html_output:
+        html_output = f"trajectory_viz_{int(time.time())}.html"
+    
+    print(f"Saving visualization to {html_output}...")
+    fig.write_html(html_output, include_plotlyjs='cdn', config={"scrollZoom": True})
+    print(f"Saved! Opening {html_output} in your web browser.")
+    
+    # Try to open the file in the default web browser
+    try:
+        webbrowser.open(f"file://{os.path.abspath(html_output)}")
+        print(f"Browser opened automatically with visualization.")
+    except Exception as e:
+        print(f"Could not open browser automatically: {e}")
+        print(f"Please open {html_output} manually in your web browser.")
+    
+    # Keep the original show function as a fallback
+    # Comment this out if you prefer to only use the browser
+    # fig.show(config={"scrollZoom": True})
+    
     return fig
 
 def compute_bonds(positions: Dict[str, np.ndarray], cutoff: float, particle_config: Dict) -> List:
@@ -458,7 +481,8 @@ def create_trajectory_movie(
     custom_colors: Dict[str, str] = None,
     custom_radii: Dict[str, float] = None,
     custom_opacity: Dict[str, float] = None,
-    frame_range: Optional[Tuple[int, int]] = None
+    frame_range: Optional[Tuple[int, int]] = None,
+    html_output: Optional[str] = None
 ):
     """
     Create an interactive trajectory visualization with customizable parameters.
@@ -519,18 +543,23 @@ def create_trajectory_movie(
             'opacity': default_opacity.get(type_name, 0.8)
         }
     
-    # Create and show the visualization
+    if not html_output:
+        base_name = os.path.basename(h5_file_path).split('.')[0]
+        html_output = f"{base_name}_visualization.html"
+    
+    # Create and show the visualization with HTML output
     fig = visualize_trajectory_plotly(
         trajectory, 
-        max_coord * 1.2,  # Add 10% padding to box size
+        max_coord * 1.2,  # Add 20% padding to box size
         particle_config,
         animation_speed,
         show_statistics,
         display_bonds,
         bond_distance_cutoff,
-        frame_range
+        frame_range,
+        html_output
     )
-    
+        
     return fig
 
 if __name__ == '__main__':
@@ -542,6 +571,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-stats', action='store_false', dest='show_stats', help='Hide statistics panel')
     parser.add_argument('--show-bonds', action='store_true', help='Display bonds between nearby particles')
     parser.add_argument('--bond-cutoff', type=float, default=2.0, help='Maximum distance for bond display')
+    parser.add_argument('--output', type=str, default=None, help='Path to save the HTML output file')
     
     args = parser.parse_args()
     
@@ -558,5 +588,6 @@ if __name__ == '__main__':
         display_bonds=args.show_bonds,
         bond_distance_cutoff=args.bond_cutoff,
         custom_colors=custom_colors,
-        custom_radii=custom_radii
+        custom_radii=custom_radii,
+        html_output=args.output
     )
