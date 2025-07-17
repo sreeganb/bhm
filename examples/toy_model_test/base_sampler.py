@@ -31,13 +31,23 @@ class Priors:
                         penalty += 100 * (min_val * 1.1 - value) / min_val
                     elif value > max_val * 0.9:
                         penalty += 100 * (value - max_val * 0.9) / max_val
-                
                 elif self.prior_type == "jeffreys":
                     # Jeffreys prior (proportional to 1/sigma)
                     if value < min_val or value > max_val:
                         penalty += 1e6
                     else:
                         penalty += np.log(value)
+                elif self.prior_type == "inverse_gamma":
+                    # Inverse gamma prior (shape and scale parameters)
+                    beta = 0.001  # scale parameter
+                    alpha = 0.001  # shape parameter
+                    if value < min_val or value > max_val:
+                        penalty += 1e6
+                    else:
+                        penalty += -1.0 * (alpha * np.log(beta) - np.log(np.math.gamma(alpha))
+                                          - (alpha + 1) * np.log(value) - beta / value)
+                else:
+                    raise ValueError(f"Unknown prior type: {self.prior_type}")
                         
         return penalty
 #---------------------------------------------------------------------------
@@ -132,7 +142,6 @@ class BaseMCSampler:
         log_current = np.log(sigma[pair_type])
         
         # Fixed step size for symmetric proposal
-        # This should be tuned based on your problem, but kept constant during sampling
         log_step_size = 0.005  # Adjust this value as needed for reasonable acceptance rates
         
         # Symmetric proposal: add zero-mean Gaussian noise in log-space
@@ -182,76 +191,6 @@ class BaseMCSampler:
 
         return new_positions
     #---------------------------------------------------------------------------
-    def save_state(
-        self, step: int, positions: Dict[str, np.ndarray], sigma: Dict[str, float], 
-        total_score: float, prior_score: float, pair_score: float, exvol_score: float, 
-        tet_score: float = 0.0, oct_score: float = 0.0) -> Dict:
-        """Save the current state of the MCMC simulation with detailed score breakdown."""
-        state = {
-            "step": step,
-            "positions": positions,
-            "sigma": sigma,
-            "total_score": total_score,
-            "prior_score": prior_score,
-            "pair_score": pair_score,
-            "exvol_score": exvol_score,
-            "tet_score": tet_score,
-            "oct_score": oct_score,
-            "types": {},
-            "bead_numbers": {},
-        }
-        
-        current_idx = 0
-        for type_name, count in self.params.component_counts.items():
-            for _ in range(count):
-                state["types"][current_idx] = type_name
-                state["bead_numbers"][current_idx] = current_idx + 1
-                current_idx += 1
-
-        return state
-    
-    def save_state_to_group(self, group: h5py.Group, state: Dict):
-        """Save the state dictionary into an HDF5 group with all components."""
-        group.attrs["step"] = state["step"]
-        group.attrs["total_score"] = state["total_score"]
-        group.attrs["prior_score"] = state["prior_score"]
-        group.attrs["pair_score"] = state["pair_score"]
-        group.attrs["exvol_score"] = state["exvol_score"]
-        group.attrs["tet_score"] = state["tet_score"]
-        group.attrs["oct_score"] = state["oct_score"]
-
-        # Save sigma as a subgroup
-        sigma_grp = group.create_group("sigma")
-        for key, value in state["sigma"].items():
-            sigma_grp.attrs[key] = value
-
-        # Save positions as datasets
-        pos_grp = group.create_group("positions")
-        for type_name, array in state["positions"].items():
-            pos_grp.create_dataset(type_name, data=array, compression="gzip")
-
-        # Save types and bead_numbers as datasets
-        types_keys = list(state["types"].keys())
-        types_vals = [state["types"][k] for k in types_keys]
-        group.create_dataset("types_keys", data=np.array(types_keys, dtype="S"))
-        group.create_dataset("types_vals", data=np.array(types_vals, dtype="S"))
-
-        bead_keys = list(state["bead_numbers"].keys())
-        bead_vals = [state["bead_numbers"][k] for k in bead_keys]
-        group.create_dataset("bead_keys", data=np.array(bead_keys))
-        group.create_dataset("bead_vals", data=np.array(bead_vals))
-        
-    def save_trajectory(self, trajectory, filename: str = "trajectory.h5") -> str:
-        """Save the trajectory of the MCMC simulation to an HDF5 file with all scores."""
-        with h5py.File(filename, "w") as f:
-            traj_grp = f.create_group("trajectory")
-            for i, state in enumerate(trajectory):
-                state_name = f"state_{i:05d}"
-                state_grp = traj_grp.create_group(state_name)
-                self.save_state_to_group(state_grp, state)
-                
-        return filename
-
     def save_state_to_disk(self, step, positions, sigmas, score, 
                         prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
                         types=None, bead_numbers=None, traj_file=None):

@@ -324,6 +324,18 @@ class GMMSigmaProvider:
                 log_min, log_max = np.log(min_val), np.log(max_val)
                 log_sigma = np.random.uniform(log_min, log_max)
                 sigma[pt] = np.exp(log_sigma)
+            elif self.prior_type == "inverse_gamma":
+                # Sample from inverse gamma distribution
+                # First sample from uniform in log space
+                log_min, log_max = np.log(min_val), np.log(max_val)
+                log_sigma = np.random.uniform(log_min, log_max)
+                sigma_val = np.exp(log_sigma)
+                
+                # If needed, you could apply rejection sampling here
+                # to properly sample from inverse gamma distribution
+                
+                # For now, just use the uniform sample
+                sigma[pt] = sigma_val
             else:
                 # "uniform" in log space
                 log_min, log_max = np.log(min_val), np.log(max_val)
@@ -418,6 +430,14 @@ class GMMSigmaProvider:
             # simple example
             if self.prior_type == "jeffreys":
                 log_prior += -np.log(val)
+            elif self.prior_type == "inverse_gamma":
+                # the distribution is defined by a shape and scale parameter
+                # the mathematical form is 
+                # p(sigma|alpha,beta) = beta**alpha / gamma(alpha) * sigma**(-alpha-1) * exp(-beta/sigma)
+                beta = 0.001  # scale parameter
+                alpha = 0.001 # shape parameter
+                log_prior += (alpha * np.log(beta) - np.log(np.math.gamma(alpha))
+                              - (alpha + 1) * np.log(val) - beta / val)
             else:
                 log_prior += 0.0  # uniform in log space
         return -log_prior
@@ -556,8 +576,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prior",
         type=str,
-        default="uniform",
-        choices=["uniform", "jeffreys"],
+        default="inverse_gamma",
+        choices=["uniform", "jeffreys", "inverse_gamma"],
         help="Prior type for the first sampler."
     )
     parser.add_argument(

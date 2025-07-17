@@ -29,7 +29,7 @@ class OctetSampler(BaseMCSampler):
     def __init__(self, sampler_sequence: List[str], sequence_idx: int,
                  base_output_dir: str = "output_analysis", positions_os=None,
                  specific_chain: int = None, sigma_ranges: Dict[str, Tuple[float, float]] = None,
-                 prior_type: str = "uniform"):
+                 prior_type: str = "inverse_gamma"):
         """
         Initialize OctetSampler with sampler sequence information.
         
@@ -565,7 +565,7 @@ class OctetSampler(BaseMCSampler):
         exclusion_weight: float = 1.0,
         pair_weight: float = 1.0,
         tetramer_weight: float = 1.0,
-        octet_weight: float = 1.0,
+        octet_weight: float = 4.0,
     ) -> Tuple[float, float, float, float, float]:
         """
         Calculate the total negative log-posterior score for an octet system.
@@ -597,6 +597,6 @@ class OctetSampler(BaseMCSampler):
         octet_score = octet_weight * octet_scores.sum()
         
         # Total score
-        total_score = score + tetramer_score + octet_score
-            
+        total_score = pair_weight * pair_score + tetramer_score + octet_score
+
         return total_score, ex_score, pair_score, tetramer_score, octet_score

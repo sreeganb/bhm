@@ -23,7 +23,7 @@ class TetramerSampler(BaseMCSampler):
     def __init__(self, sampler_sequence: List[str], sequence_idx: int,
                  base_output_dir: str = "output_analysis", positions_ts=None,
                  specific_chain: int = None, sigma_ranges: Dict[str, Tuple[float, float]] = None,
-                 prior_type: str = "uniform"):
+                 prior_type: str = "inverse_gamma"):
         """
         Initialize TetramerSampler with sampler sequence information.
         

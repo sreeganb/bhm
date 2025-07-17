@@ -146,7 +146,7 @@ def run_single_chain(chain_idx: int,
         # base_output_dir=None,
         # specific_chain=None,
         # sigma_ranges=None,
-        prior_type="jeffreys"
+        prior_type="inverse_gamma"
         # pos_passed=None 
     )
     
@@ -277,7 +277,7 @@ def main():
     
     # Alternative sequences for testing
     sampler_sequence = ["pair", "tetramer", "octet"]
-    mcmc_steps = [1000000, 200000, 100000]
+    mcmc_steps = [500000, 200000, 100000]
     #sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet", "pair"]
     #mcmc_steps = [500000, 500000, 300000, 300000, 200000, 200000, 200000]
     # sampler_sequence = ["tetramer", "octet", "pair"]
