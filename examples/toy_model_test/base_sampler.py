@@ -129,10 +129,7 @@ class BaseMCSampler:
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     #---------------------------------------------------------------------------    
     def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
-        """
-        Propose a move for one sigma parameter using symmetric sampling in log-space.
-        This ensures detailed balance by using a symmetric proposal distribution.
-        """
+        """Propose a move for one sigma parameter using improved log-space steps."""
         import random
         
         # Randomly select which sigma parameter to update
@@ -141,13 +138,15 @@ class BaseMCSampler:
         # Current value in log-space
         log_current = np.log(sigma[pair_type])
         
-        # Fixed step size for symmetric proposal
-        log_step_size = 0.005  # Adjust this value as needed for reasonable acceptance rates
+        # INCREASE STEP SIZE - aim for 20-40% acceptance rate for better mixing
+        log_step_size = 0.2  # ~40x larger than your current value
         
         # Symmetric proposal: add zero-mean Gaussian noise in log-space
         log_proposed = log_current + np.random.normal(0, log_step_size)
-        log_proposed = np.clip(log_proposed, -10, 10)  # Clip to avoid extreme values
-
+        
+        # Remove clipping to allow full exploration (your prior should handle extreme values)
+        # If needed, use less restrictive bounds: np.clip(log_proposed, -15, 15)
+        
         # Create new sigma dictionary with proposed value
         new_sigma = dict(sigma)
         new_sigma[pair_type] = np.exp(log_proposed)
@@ -174,7 +173,7 @@ class BaseMCSampler:
 
         # Inverse scaling: smaller radius = larger moves
         # Base step is normalized to the smallest particle
-        base_step = 1.1  # Adjust this value as needed for optimal acceptance rate
+        base_step = 4.0  # Adjust this value as needed for optimal acceptance rate
         step_size = base_step * (min_radius / self.params.radii[type_name])
 
         # Current position

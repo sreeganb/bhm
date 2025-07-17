@@ -109,7 +109,7 @@ class GMMSigmaProvider:
     """
     Provides sigma values from GMM fits and calculates negative log priors.
     Works with sampler sequences: 
-      - For the first sampler, uses uniform/Jeffreys priors.
+      - For the first sampler, uses uniform/Jeffreys/ inverse_gamma priors.
       - For subsequent samplers, uses GMM parameters from a previous sampler's fit.
     """
 
@@ -310,37 +310,25 @@ class GMMSigmaProvider:
         return sig
 
     def _sample_sigma_first_sampler(self) -> Dict[str, float]:
-        """
-        Sample sigma values for the first sampler, either from a uniform or a
-        Jeffreys prior.
-        """
+        """Sample sigma values using adaptive proposals to avoid extreme values."""
         sigma = {}
         for pt in self.pair_types:
-            min_val, max_val = self.sigma_ranges[pt]
-            # Sample in log space for better coverage
-            if self.prior_type == "jeffreys":
-                # Jeffreys prior for sigma: p(sigma) ~ 1/sigma
-                # We can approximate by sampling uniformly in log space
-                log_min, log_max = np.log(min_val), np.log(max_val)
-                log_sigma = np.random.uniform(log_min, log_max)
-                sigma[pt] = np.exp(log_sigma)
-            elif self.prior_type == "inverse_gamma":
-                # Sample from inverse gamma distribution
-                # First sample from uniform in log space
-                log_min, log_max = np.log(min_val), np.log(max_val)
-                log_sigma = np.random.uniform(log_min, log_max)
-                sigma_val = np.exp(log_sigma)
-                
-                # If needed, you could apply rejection sampling here
-                # to properly sample from inverse gamma distribution
-                
-                # For now, just use the uniform sample
-                sigma[pt] = sigma_val
-            else:
-                # "uniform" in log space
-                log_min, log_max = np.log(min_val), np.log(max_val)
-                log_sigma = np.random.uniform(log_min, log_max)
-                sigma[pt] = np.exp(log_sigma)
+            # For inverse gamma, we'll sample using log-scale for numerical stability
+            
+            # Calculate expected scale of the sigma based on physical considerations
+            # (e.g., typical interatomic distances)
+            sum_radii = self.params.radii[pt[0]] + self.params.radii[pt[1]]
+            expected_scale = 0.05 * sum_radii  # 5% of sum of radii as a scale estimate
+            
+            # Sample using log-normal distribution centered around this expected scale
+            mu_log = np.log(expected_scale)
+            sigma_log = 1.0  # Fairly broad distribution in log space
+            
+            # Sample in log space
+            log_sigma_val = np.random.normal(mu_log, sigma_log)
+            sigma_val = np.exp(log_sigma_val)
+            
+            sigma[pt] = sigma_val
 
         self.logger.info(f"Sampled sigma values for first sampler: {sigma}")
         return sigma
@@ -391,36 +379,57 @@ class GMMSigmaProvider:
     # Negative Log Priors
     ###########################################################################
 
+#    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
+#        """
+#        Calculate negative log prior for the sampled sigma values.
+#        Uses:
+#          - uniform/Jeffreys prior for first sampler
+#          - GMM prior for subsequent samplers
+#        """
+#        # Check bounds
+#        for pt, val in sigma.items():
+#            mn, mx = self.sigma_ranges[pt]
+#            if val < mn or val > mx:
+#                self.logger.debug(f"{pt}={val:.3f} outside [{mn:.3f}, {mx:.3f}] -> prior=inf")
+#                return np.inf
+#
+#        # First sampler uses uniform or Jeffreys (with possible penalty)
+#        if self.is_first_sampler:
+#            return self._calc_first_sampler_log_prior(sigma)
+#
+#        # Subsequent samplers use GMM-based priors
+#        total_log_prob = 0.0
+#        for pt, val in sigma.items():
+#            lp = self._calculate_gmm_log_prob(val, pt)
+#            if not np.isfinite(lp):  # If any one is -inf, entire prior is 0
+#                self.logger.debug(f"Log prob for {pt} was -inf -> total prior=inf")
+#                return np.inf
+#            total_log_prob += lp
+#
+#        neg_log_prior = -total_log_prob
+#        return neg_log_prior
+    ###############################################################################    
     def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
-        """
-        Calculate negative log prior for the sampled sigma values.
-        Uses:
-          - uniform/Jeffreys prior for first sampler
-          - GMM prior for subsequent samplers
-        """
-        # Check bounds
-        for pt, val in sigma.items():
-            mn, mx = self.sigma_ranges[pt]
-            if val < mn or val > mx:
-                self.logger.debug(f"{pt}={val:.3f} outside [{mn:.3f}, {mx:.3f}] -> prior=inf")
-                return np.inf
-
-        # First sampler uses uniform or Jeffreys (with possible penalty)
+        """Calculate negative log prior without hard boundaries."""
+        # First sampler uses inverse gamma prior
         if self.is_first_sampler:
             return self._calc_first_sampler_log_prior(sigma)
 
         # Subsequent samplers use GMM-based priors
         total_log_prob = 0.0
         for pt, val in sigma.items():
+            if val <= 0:  # Only physical constraint: sigma must be positive
+                return np.inf
+                
             lp = self._calculate_gmm_log_prob(val, pt)
-            if not np.isfinite(lp):  # If any one is -inf, entire prior is 0
+            if not np.isfinite(lp):
                 self.logger.debug(f"Log prob for {pt} was -inf -> total prior=inf")
                 return np.inf
             total_log_prob += lp
 
         neg_log_prior = -total_log_prob
         return neg_log_prior
-
+    ###########################################################################
     def _calc_first_sampler_log_prior(self, sigma: Dict[str, float]) -> float:
         """Compute the negative log prior for the first sampler (uniform/Jeffreys)."""
         # Just an example structure — you can refine as needed.
@@ -434,10 +443,13 @@ class GMMSigmaProvider:
                 # the distribution is defined by a shape and scale parameter
                 # the mathematical form is 
                 # p(sigma|alpha,beta) = beta**alpha / gamma(alpha) * sigma**(-alpha-1) * exp(-beta/sigma)
-                beta = 0.001  # scale parameter
-                alpha = 0.001 # shape parameter
-                log_prior += (alpha * np.log(beta) - np.log(np.math.gamma(alpha))
-                              - (alpha + 1) * np.log(val) - beta / val)
+                beta = 0.5  # scale parameter
+                alpha = 2.0 # shape parameter
+                variance = val**2
+                log_prior_variance = (alpha * np.log(beta) - np.log(np.math.gamma(alpha))
+                              - (alpha + 1) * np.log(variance) - beta / variance)
+                # Add the Jacobian adjustment for transformation from variance to sigma
+                log_prior += log_prior_variance + np.log(2 * val)  # Jacobian adjustment
             else:
                 log_prior += 0.0  # uniform in log space
         return -log_prior
