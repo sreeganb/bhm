@@ -276,8 +276,13 @@ def main():
     #mcmc_steps = [5000000, 200000, 100000, 3000000, 150000, 100000]
     
     # Alternative sequences for testing
+<<<<<<< HEAD
     sampler_sequence = ["pair", "tetramer", "pair"]
     mcmc_steps = [500000, 200000, 100000]
+=======
+    sampler_sequence = ["pair", "tetramer", "octet"]
+    mcmc_steps = [100000, 30000, 10000]
+>>>>>>> fffcf8639ed43f41a267ae1c11d89fcde219f7f6
     #sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet", "pair"]
     #mcmc_steps = [500000, 500000, 300000, 300000, 200000, 200000, 200000]
     # sampler_sequence = ["tetramer", "octet", "pair"]
@@ -309,7 +314,7 @@ def main():
             "run": True,
             "n_chains": 8,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 500,
+            "save_freq": 100,
             "use_sigma_dist": False if is_first else True
         }
         

@@ -192,7 +192,11 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
+<<<<<<< HEAD
 #    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.99999) -> List[Tuple[int, ...]]:
+=======
+#    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
+>>>>>>> fffcf8639ed43f41a267ae1c11d89fcde219f7f6
 #        """Generate tetramers with particle exclusivity and distance-weighted selection."""
 #        try:
 #            # Quick validation
@@ -273,6 +277,7 @@ class TetramerSampler(BaseMCSampler):
 #        except Exception as e:
 #            print(f"Error in tetramer generation: {e}")
 #            return []
+<<<<<<< HEAD
     #=======================================================================
     # New tetramer generation method using biophysical constraints
     #=======================================================================
@@ -282,6 +287,76 @@ class TetramerSampler(BaseMCSampler):
         
         # Quick validation
         if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
+=======
+
+    def get_tetramers(self, positions: Dict[str, np.ndarray]) -> List[Tuple[int, ...]]:
+        """Generate tetramers based on optimal distance matching."""
+        try:
+            # Validate input
+            if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
+                return []
+            
+            a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
+            
+            # Get target distances from parameters
+            ab_target = self.params.pair_distances['AB']
+            bc_target = self.params.pair_distances['BC']
+            
+            # Calculate distance matrices
+            dist_AB = cdist(a_pos, b_pos)
+            
+            # Score each A-B pair based on closeness to target distance
+            ab_scores = np.abs(dist_AB - ab_target)
+            
+            # Create arrays to track used particles
+            a_used = np.zeros(len(a_pos), dtype=bool)
+            b_used = np.zeros(len(b_pos), dtype=bool)
+            c_used = np.zeros(len(c_pos), dtype=bool)
+            
+            tetramers = []
+            
+            # Process A-B pairs in order of increasing score (closest to target)
+            flat_indices = np.argsort(ab_scores.flatten())
+            
+            for flat_idx in flat_indices:
+                a_idx = flat_idx // len(b_pos)
+                b_idx = flat_idx % len(b_pos)
+                
+                # Skip if either particle is used
+                if a_used[a_idx] or b_used[b_idx]:
+                    continue
+                
+                # Find available C particles
+                available_c = np.where(~c_used)[0]
+                if len(available_c) < 2:
+                    break
+                    
+                # Calculate distances from B to all available C particles
+                b_c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos[available_c])[0]
+                
+                # Score C particles by distance to target
+                c_scores = np.abs(b_c_dists - bc_target)
+                
+                # Get the two best C particles
+                best_c_indices = available_c[np.argsort(c_scores)[:2]]
+                
+                # Form tetramer
+                tetramers.append((a_idx, b_idx, best_c_indices[0], best_c_indices[1]))
+                
+                # Mark particles as used
+                a_used[a_idx] = True
+                b_used[b_idx] = True
+                c_used[best_c_indices] = True
+                
+                # Stop if we have enough tetramers
+                if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
+                    break
+            
+            return tetramers
+            
+        except Exception as e:
+            print(f"Error in tetramer generation: {e}")
+>>>>>>> fffcf8639ed43f41a267ae1c11d89fcde219f7f6
             return []
         
         a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
@@ -497,7 +572,7 @@ class TetramerSampler(BaseMCSampler):
 
         # Fixed step sizes
         trans_step = 0.2
-        rot_step = 0.2
+        rot_step = 0.15
 
         # Translation
         displacement = np.random.normal(0.0, trans_step, 3)
