@@ -50,7 +50,7 @@ class OctetSampler(BaseMCSampler):
         
         # Basic sampler parameters - fixed step sizes
         self.octet_trans_step = 0.2
-        self.octet_rot_step = 0.2
+        self.octet_rot_step = 0.15
 
         # Handle positions
         if positions_os is None:

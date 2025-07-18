@@ -139,7 +139,7 @@ class BaseMCSampler:
         log_current = np.log(sigma[pair_type])
         
         # INCREASE STEP SIZE - aim for 20-40% acceptance rate for better mixing
-        log_step_size = 0.2  # ~40x larger than your current value
+        log_step_size = 0.1  # ~40x larger than your current value
         
         # Symmetric proposal: add zero-mean Gaussian noise in log-space
         log_proposed = log_current + np.random.normal(0, log_step_size)
@@ -173,7 +173,7 @@ class BaseMCSampler:
 
         # Inverse scaling: smaller radius = larger moves
         # Base step is normalized to the smallest particle
-        base_step = 4.0  # Adjust this value as needed for optimal acceptance rate
+        base_step = 1.5  # Adjust this value as needed for optimal acceptance rate
         step_size = base_step * (min_radius / self.params.radii[type_name])
 
         # Current position

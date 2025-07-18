@@ -192,77 +192,146 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.99999) -> List[Tuple[int, ...]]:
-        """Generate tetramers with particle exclusivity and distance-weighted selection."""
+#    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
+#        """Generate tetramers with particle exclusivity and distance-weighted selection."""
+#        try:
+#            # Quick validation
+#            if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
+#                return []
+#            
+#            a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
+#            used_a, used_b, used_c = set(), set(), set()
+#            tetramers = []
+#            
+#            # A-B distance calculation
+#            dist_AB = cdist(a_pos, b_pos) / max(0.1, temp)
+#            
+#            # Process A particles in order of increasing minimum distance to any B
+#            for a_idx in np.argsort(np.min(dist_AB, axis=1)):
+#                if a_idx in used_a:
+#                    continue
+#                
+#                # Find available B particles
+#                b_mask = np.ones(len(b_pos), dtype=bool)
+#                for idx in used_b:
+#                    b_mask[idx] = False
+#                
+#                if not np.any(b_mask):
+#                    continue
+#                
+#                # Calculate B selection probabilities
+#                b_dists = dist_AB[a_idx].copy()
+#                b_dists[~b_mask] = np.inf
+#                min_b_dist = np.min(b_dists)
+#                if np.isinf(min_b_dist):
+#                    continue
+#                
+#                b_probs = np.exp(-(b_dists - min_b_dist))
+#                b_probs = b_probs / np.sum(b_probs)
+#                
+#                # Select B particle
+#                available_b = np.where(b_mask)[0]
+#                b_idx = np.random.choice(available_b, p=b_probs[b_mask])
+#                
+#                # Find available C particles
+#                c_mask = np.ones(len(c_pos), dtype=bool)
+#                for idx in used_c:
+#                    c_mask[idx] = False
+#                
+#                if np.sum(c_mask) < 2:  # Need at least 2 C particles
+#                    continue
+#                
+#                # Calculate C selection probabilities
+#                c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos)[0] / max(0.1, temp)
+#                c_dists[~c_mask] = np.inf
+#                min_c_dist = np.min(c_dists)
+#                if np.isinf(min_c_dist):
+#                    continue
+#                
+#                c_probs = np.exp(-(c_dists - min_c_dist))
+#                c_probs = c_probs / np.sum(c_probs)
+#                
+#                # Select two C particles
+#                available_c = np.where(c_mask)[0]
+#                c_indices = np.random.choice(
+#                    available_c, size=2, replace=False,
+#                    p=c_probs[c_mask] / np.sum(c_probs[c_mask])
+#                )
+#                
+#                # Add tetramer and mark particles as used
+#                tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
+#                used_a.add(a_idx)
+#                used_b.add(b_idx)
+#                used_c.update(c_indices)
+#                
+#                # Stop if we have enough tetramers
+#                if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
+#                    break
+#            
+#            return tetramers
+#            
+#        except Exception as e:
+#            print(f"Error in tetramer generation: {e}")
+#            return []
+
+    def get_tetramers(self, positions: Dict[str, np.ndarray]) -> List[Tuple[int, ...]]:
+        """Generate tetramers based on optimal distance matching."""
         try:
-            # Quick validation
+            # Validate input
             if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
                 return []
             
             a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
-            used_a, used_b, used_c = set(), set(), set()
+            
+            # Get target distances from parameters
+            ab_target = self.params.pair_distances['AB']
+            bc_target = self.params.pair_distances['BC']
+            
+            # Calculate distance matrices
+            dist_AB = cdist(a_pos, b_pos)
+            
+            # Score each A-B pair based on closeness to target distance
+            ab_scores = np.abs(dist_AB - ab_target)
+            
+            # Create arrays to track used particles
+            a_used = np.zeros(len(a_pos), dtype=bool)
+            b_used = np.zeros(len(b_pos), dtype=bool)
+            c_used = np.zeros(len(c_pos), dtype=bool)
+            
             tetramers = []
             
-            # A-B distance calculation
-            dist_AB = cdist(a_pos, b_pos) / max(0.1, temp)
+            # Process A-B pairs in order of increasing score (closest to target)
+            flat_indices = np.argsort(ab_scores.flatten())
             
-            # Process A particles in order of increasing minimum distance to any B
-            for a_idx in np.argsort(np.min(dist_AB, axis=1)):
-                if a_idx in used_a:
+            for flat_idx in flat_indices:
+                a_idx = flat_idx // len(b_pos)
+                b_idx = flat_idx % len(b_pos)
+                
+                # Skip if either particle is used
+                if a_used[a_idx] or b_used[b_idx]:
                     continue
-                
-                # Find available B particles
-                b_mask = np.ones(len(b_pos), dtype=bool)
-                for idx in used_b:
-                    b_mask[idx] = False
-                
-                if not np.any(b_mask):
-                    continue
-                
-                # Calculate B selection probabilities
-                b_dists = dist_AB[a_idx].copy()
-                b_dists[~b_mask] = np.inf
-                min_b_dist = np.min(b_dists)
-                if np.isinf(min_b_dist):
-                    continue
-                
-                b_probs = np.exp(-(b_dists - min_b_dist))
-                b_probs = b_probs / np.sum(b_probs)
-                
-                # Select B particle
-                available_b = np.where(b_mask)[0]
-                b_idx = np.random.choice(available_b, p=b_probs[b_mask])
                 
                 # Find available C particles
-                c_mask = np.ones(len(c_pos), dtype=bool)
-                for idx in used_c:
-                    c_mask[idx] = False
+                available_c = np.where(~c_used)[0]
+                if len(available_c) < 2:
+                    break
+                    
+                # Calculate distances from B to all available C particles
+                b_c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos[available_c])[0]
                 
-                if np.sum(c_mask) < 2:  # Need at least 2 C particles
-                    continue
+                # Score C particles by distance to target
+                c_scores = np.abs(b_c_dists - bc_target)
                 
-                # Calculate C selection probabilities
-                c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos)[0] / max(0.1, temp)
-                c_dists[~c_mask] = np.inf
-                min_c_dist = np.min(c_dists)
-                if np.isinf(min_c_dist):
-                    continue
+                # Get the two best C particles
+                best_c_indices = available_c[np.argsort(c_scores)[:2]]
                 
-                c_probs = np.exp(-(c_dists - min_c_dist))
-                c_probs = c_probs / np.sum(c_probs)
+                # Form tetramer
+                tetramers.append((a_idx, b_idx, best_c_indices[0], best_c_indices[1]))
                 
-                # Select two C particles
-                available_c = np.where(c_mask)[0]
-                c_indices = np.random.choice(
-                    available_c, size=2, replace=False,
-                    p=c_probs[c_mask] / np.sum(c_probs[c_mask])
-                )
-                
-                # Add tetramer and mark particles as used
-                tetramers.append((a_idx, b_idx, c_indices[0], c_indices[1]))
-                used_a.add(a_idx)
-                used_b.add(b_idx)
-                used_c.update(c_indices)
+                # Mark particles as used
+                a_used[a_idx] = True
+                b_used[b_idx] = True
+                c_used[best_c_indices] = True
                 
                 # Stop if we have enough tetramers
                 if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
@@ -412,7 +481,7 @@ class TetramerSampler(BaseMCSampler):
 
         # Fixed step sizes
         trans_step = 0.2
-        rot_step = 0.2
+        rot_step = 0.15
 
         # Translation
         displacement = np.random.normal(0.0, trans_step, 3)
