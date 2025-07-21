@@ -1,0 +1,4 @@
+{
+    "n_chains": 16,
+    "sequence": ["pair", "tetramer", "octet", "pair", "tetramer", "octet"]
+}
