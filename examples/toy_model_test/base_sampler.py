@@ -128,28 +128,55 @@ class BaseMCSampler:
         distances = cdist(pos1, pos2)
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
     #---------------------------------------------------------------------------    
+#    def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
+#        """Propose a move for one sigma parameter using improved log-space steps."""
+#        import random
+#        
+#        # Randomly select which sigma parameter to update
+#        pair_type = random.choice(list(sigma.keys()))
+#        
+#        # Current value in log-space
+#        log_current = np.log(sigma[pair_type])
+#        
+#        log_step_size = 0.2  # ~40x larger than your current value
+#        
+#        # Symmetric proposal: add zero-mean Gaussian noise in log-space
+#        log_proposed = log_current + np.random.normal(0, log_step_size)
+#        
+#        # Remove clipping to allow full exploration (your prior should handle extreme values)
+#        # If needed, use less restrictive bounds: np.clip(log_proposed, -15, 15)
+#        
+#        # Create new sigma dictionary with proposed value
+#        new_sigma = dict(sigma)
+#        new_sigma[pair_type] = np.exp(log_proposed)
+#        
+#        return new_sigma, pair_type
     def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = 0.5) -> Tuple[Dict[str, float], str]:
-        """Propose a move for one sigma parameter using improved log-space steps."""
+        """Propose a move for one sigma parameter using small direct-space steps."""
         import random
         
         # Randomly select which sigma parameter to update
         pair_type = random.choice(list(sigma.keys()))
         
-        # Current value in log-space
-        log_current = np.log(sigma[pair_type])
+        # Current value
+        current_value = sigma[pair_type]
         
-        # INCREASE STEP SIZE - aim for 20-40% acceptance rate for better mixing
-        log_step_size = 0.2  # ~40x larger than your current value
+        # Step size as percentage of current value (1% here)
+        relative_step_size = 0.005 # changed from 0.01 to 0.005
+        step_size = relative_step_size * current_value
         
-        # Symmetric proposal: add zero-mean Gaussian noise in log-space
-        log_proposed = log_current + np.random.normal(0, log_step_size)
+        # Symmetric proposal: add zero-mean Gaussian noise directly to value
+        proposed_value = current_value + np.random.normal(0, step_size)
         
-        # Remove clipping to allow full exploration (your prior should handle extreme values)
-        # If needed, use less restrictive bounds: np.clip(log_proposed, -15, 15)
+        # Ensure positivity
+        proposed_value = max(1e-6, proposed_value)
+        
+        # Clipping to avoid extreme values
+        proposed_value = np.clip(proposed_value, 0.0, 20.0)  # Adjust bounds as needed
         
         # Create new sigma dictionary with proposed value
         new_sigma = dict(sigma)
-        new_sigma[pair_type] = np.exp(log_proposed)
+        new_sigma[pair_type] = proposed_value
         
         return new_sigma, pair_type
     #---------------------------------------------------------------------------
@@ -173,7 +200,7 @@ class BaseMCSampler:
 
         # Inverse scaling: smaller radius = larger moves
         # Base step is normalized to the smallest particle
-        base_step = 8.0  # Adjust this value as needed for optimal acceptance rate
+        base_step = 1.0  # Adjust this value as needed for optimal acceptance rate
         step_size = base_step * (min_radius / self.params.radii[type_name])
 
         # Current position

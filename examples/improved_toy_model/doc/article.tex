@@ -116,24 +116,46 @@ A key request was to move beyond the initial model's reliance on "three numbers"
 
 The following table summarizes the data types, the information they provide, and their mathematical representation within the Bayesian framework.
 
-% Adding Table 1
+% First table - Data characteristics
 \begin{table}[h]
 \centering
-\begin{tabular}{|l|l|l|l|l|}
+\small
+\begin{tabular}{|p{2.5cm}|p{4cm}|p{4cm}|p{4cm}|}
 \hline
-\textbf{Data Type} & \textbf{Information Provided} & \textbf{Synthetic Generation Parameters} & \textbf{Likelihood Function $p(D|X)$} & \textbf{Hierarchical Parameters to Infer} \\
+\textbf{Data Type} & \textbf{Information Provided} & \textbf{Synthetic Generation Parameters} & \textbf{Likelihood Function $p(D|X)$} \\
 \hline
-Distance Restraints & Average pairwise distances between particle types. & Mean distance $\mu$, Uncertainty $\sigma$. & Gaussian: $\mathcal{N}(d_{obs} | d_{calc}(X), \sigma^2)$. & $\sigma_{AA}, \sigma_{AB}, \sigma_{BC}$ (drawn from a shared hyperprior). \\
+Distance Restraints & Average pairwise distances between particle types & Mean distance $\mu$, Uncertainty $\sigma$ & Gaussian: $\mathcal{N}(d_{obs} | d_{calc}(X), \sigma^2)$ \\
 \hline
-XL-MS & Topological proximity; indicates pairs of particles within a certain distance. & Cross-linker length, true positive rate $p_{true}$, false positive rate $p_{false}$. & Product of Bernoulli/Binomial likelihoods based on distance threshold. & $p_{true}$, $p_{false}$. \\
+XL-MS & Topological proximity; indicates pairs of particles within a certain distance & Cross-linker length, true positive rate $p_{true}$, false positive rate $p_{false}$ & Product of Bernoulli/Binomial likelihoods based on distance threshold \\
 \hline
-Cryo-EM Map & Low-resolution global shape and volume of the assembly. & Target resolution, Noise level, Voxel size. & Gaussian based on Cross-Correlation (CC): $\propto \exp(k \cdot \text{CC})$. & Map scale factor $k$, map uncertainty $\sigma_{map}$. \\
+Cryo-EM Map & Low-resolution global shape and volume of the assembly & Target resolution, Noise level, Voxel size & Gaussian based on Cross-Correlation (CC): $\propto \exp(k \cdot \text{CC})$ \\
 \hline
-SAXS Profile & Ensemble-averaged shape and size in solution. & $q$-range (scattering angle), Experimental error model. & Chi-squared likelihood: $\propto \exp(-\chi^2/2)$. & Overall scale factor, constant background term. \\
+SAXS Profile & Ensemble-averaged shape and size in solution & $q$-range (scattering angle), Experimental error model & Chi-squared likelihood: $\propto \exp(-\chi^2/2)$ \\
 \hline
 \end{tabular}
-\caption{A Compendium of Synthetic Data Types and Likelihood Functions}
-\label{tab:compendium}
+\caption{Synthetic Data Types and Mathematical Formulations}
+\label{tab:compendium-part1}
+\end{table}
+
+% Second table - Hierarchical parameters
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{|p{3cm}|p{10cm}|}
+\hline
+\textbf{Data Type} & \textbf{Hierarchical Parameters to Infer} \\
+\hline
+Distance Restraints & $\sigma_{AA}, \sigma_{AB}, \sigma_{BC}$ (drawn from a shared hyperprior) \\
+\hline
+XL-MS & $p_{true}$, $p_{false}$ (true and false positive rates) \\
+\hline
+Cryo-EM Map & Map scale factor $k$, map uncertainty $\sigma_{map}$ \\
+\hline
+SAXS Profile & Overall scale factor, constant background term \\
+\hline
+\end{tabular}
+\caption{Hierarchical Parameters for Each Data Type}
+\label{tab:compendium-part2}
 \end{table}
 
 % Subsection 3.1

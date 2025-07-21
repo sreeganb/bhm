@@ -310,25 +310,13 @@ class GMMSigmaProvider:
         return sig
 
     def _sample_sigma_first_sampler(self) -> Dict[str, float]:
-        """Sample sigma values using adaptive proposals to avoid extreme values."""
         sigma = {}
         for pt in self.pair_types:
-            # For inverse gamma, we'll sample using log-scale for numerical stability
-            
-            # Calculate expected scale of the sigma based on physical considerations
-            # (e.g., typical interatomic distances)
-            sum_radii = self.params.radii[pt[0]] + self.params.radii[pt[1]]
-            expected_scale = 0.05 * sum_radii  # 5% of sum of radii as a scale estimate
-            
-            # Sample using log-normal distribution centered around this expected scale
-            mu_log = np.log(expected_scale)
-            sigma_log = 1.0  # Fairly broad distribution in log space
-            
-            # Sample in log space
-            log_sigma_val = np.random.normal(mu_log, sigma_log)
-            sigma_val = np.exp(log_sigma_val)
-            
-            sigma[pt] = sigma_val
+            # Simply pick a random value between the hard bounds
+            # choose between 1.0 and 5.0 for now
+            min_val = 1.0
+            max_val = 5.0
+            sigma[pt] = np.random.uniform(min_val, max_val)
 
         self.logger.info(f"Sampled sigma values for first sampler: {sigma}")
         return sigma
