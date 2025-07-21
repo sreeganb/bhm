@@ -95,6 +95,11 @@ def fit_kde_to_sigma(df: pd.DataFrame,  bandwidth: float = 0.5):
 # For each sampler sequence
 #---------------------------------------------------------------
 def read_data_from_folders(sequence, n_chains):
+    # Create sigma_plots directory if it doesn't exist
+    if not os.path.exists("sigma_plots"):
+        os.makedirs("sigma_plots")
+        print(f"Created directory: sigma_plots")
+    
     sampler_ids = []
     # check all occurences of the sampler: "pair" and mark down the indices
     ind_pair = 0
@@ -182,9 +187,35 @@ def read_data_from_folders(sequence, n_chains):
         plt.legend()
     
     plt.tight_layout()
-    plt.savefig('combined_kde_plots.png')
+    
+    # Save plot to sigma_plots directory
+    plt.savefig('sigma_plots/combined_kde_plots.pdf')
+    print(f"Saved combined KDE plots to sigma_plots/combined_kde_plots.pdf")
+    
     plt.show()
     plt.close()
+    
+    # Also save individual KDE plots for each sigma type
+    for pair_type in ['AA', 'AB', 'BC']:
+        plt.figure(figsize=(10, 6))
+        x = np.linspace(0, 20, 1000)
+        
+        for j, (sampler_label, kde) in enumerate(all_kdes[pair_type].items()):
+            color = colors[j % len(colors)]
+            plt.plot(x, kde(x), label=sampler_label, color=color)
+            plt.fill_between(x, kde(x), alpha=0.1, color=color)
+        
+        plt.title(f'Sigma {pair_type} KDE Comparison')
+        plt.xlabel('Sigma Value')
+        plt.ylabel('Density')
+        plt.legend()
+        plt.tight_layout()
+        
+        # Save individual plot to sigma_plots directory
+        plt.savefig(f'sigma_plots/kde_sigma_{pair_type}.pdf')
+        print(f"Saved {pair_type} KDE plot to sigma_plots/kde_sigma_{pair_type}.pdf")
+        
+        plt.close()
     
     return sampler_ids
 
