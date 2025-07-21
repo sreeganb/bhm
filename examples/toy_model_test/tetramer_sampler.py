@@ -192,11 +192,7 @@ class TetramerSampler(BaseMCSampler):
             print("Falling back to initialized positions")
             return self.initialize_positions()
 
-<<<<<<< HEAD
-#    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.99999) -> List[Tuple[int, ...]]:
-=======
 #    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
->>>>>>> fffcf8639ed43f41a267ae1c11d89fcde219f7f6
 #        """Generate tetramers with particle exclusivity and distance-weighted selection."""
 #        try:
 #            # Quick validation
@@ -277,160 +273,83 @@ class TetramerSampler(BaseMCSampler):
 #        except Exception as e:
 #            print(f"Error in tetramer generation: {e}")
 #            return []
-<<<<<<< HEAD
     #=======================================================================
     # New tetramer generation method using biophysical constraints
     #=======================================================================
     def get_tetramers(self, positions: Dict[str, np.ndarray], _: float = None) -> List[Tuple[int, ...]]:
-        """Identify tetramers using biophysical constraints and graph matching."""
+        """Identify tetramers using biophysical constraints with improved efficiency."""
         import networkx as nx
+        import heapq
         
         # Quick validation
         if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
-=======
-
-    def get_tetramers(self, positions: Dict[str, np.ndarray]) -> List[Tuple[int, ...]]:
-        """Generate tetramers based on optimal distance matching."""
-        try:
-            # Validate input
-            if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
-                return []
-            
-            a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
-            
-            # Get target distances from parameters
-            ab_target = self.params.pair_distances['AB']
-            bc_target = self.params.pair_distances['BC']
-            
-            # Calculate distance matrices
-            dist_AB = cdist(a_pos, b_pos)
-            
-            # Score each A-B pair based on closeness to target distance
-            ab_scores = np.abs(dist_AB - ab_target)
-            
-            # Create arrays to track used particles
-            a_used = np.zeros(len(a_pos), dtype=bool)
-            b_used = np.zeros(len(b_pos), dtype=bool)
-            c_used = np.zeros(len(c_pos), dtype=bool)
-            
-            tetramers = []
-            
-            # Process A-B pairs in order of increasing score (closest to target)
-            flat_indices = np.argsort(ab_scores.flatten())
-            
-            for flat_idx in flat_indices:
-                a_idx = flat_idx // len(b_pos)
-                b_idx = flat_idx % len(b_pos)
-                
-                # Skip if either particle is used
-                if a_used[a_idx] or b_used[b_idx]:
-                    continue
-                
-                # Find available C particles
-                available_c = np.where(~c_used)[0]
-                if len(available_c) < 2:
-                    break
-                    
-                # Calculate distances from B to all available C particles
-                b_c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos[available_c])[0]
-                
-                # Score C particles by distance to target
-                c_scores = np.abs(b_c_dists - bc_target)
-                
-                # Get the two best C particles
-                best_c_indices = available_c[np.argsort(c_scores)[:2]]
-                
-                # Form tetramer
-                tetramers.append((a_idx, b_idx, best_c_indices[0], best_c_indices[1]))
-                
-                # Mark particles as used
-                a_used[a_idx] = True
-                b_used[b_idx] = True
-                c_used[best_c_indices] = True
-                
-                # Stop if we have enough tetramers
-                if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
-                    break
-            
-            return tetramers
-            
-        except Exception as e:
-            print(f"Error in tetramer generation: {e}")
->>>>>>> fffcf8639ed43f41a267ae1c11d89fcde219f7f6
             return []
         
         a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
-        
-        # 1. Calculate pairwise distances and create compatibility graphs
-        dist_AB = cdist(a_pos, b_pos)
-        dist_BC = cdist(b_pos, c_pos)
         
         # Get target distances from parameters
         target_AB = self.params.pair_distances.get('AB', 1.0)
         target_BC = self.params.pair_distances.get('BC', 1.0)
         
-        # 2. Calculate distance scores (lower is better)
-        ab_score = np.abs(dist_AB - target_AB) / target_AB  # Normalized distance deviation
-        bc_score = np.abs(dist_BC - target_BC) / target_BC
-        
-        # 3. Create bipartite graphs
-        G_AB = nx.Graph()
-        G_BC = nx.DiGraph()  # Directed because each B needs two C particles
-        
-        # Set up nodes
-        for a_idx in range(len(a_pos)):
-            G_AB.add_node(('A', a_idx))
-        for b_idx in range(len(b_pos)):
-            G_AB.add_node(('B', b_idx))
-            G_BC.add_node(('B', b_idx))
-        for c_idx in range(len(c_pos)):
-            G_BC.add_node(('C', c_idx))
-        
-        # 4. Add edges with scores as weights (only for reasonable distances)
-        # Edge if distance is within 30% of target
+        # 1. Create scored A-B pairs directly (avoid building full graph)
+        ab_pairs = []
         max_dev_AB = 0.3 * target_AB
-        max_dev_BC = 0.3 * target_BC
         
         for a_idx in range(len(a_pos)):
             for b_idx in range(len(b_pos)):
-                if abs(dist_AB[a_idx, b_idx] - target_AB) <= max_dev_AB:
-                    G_AB.add_edge(('A', a_idx), ('B', b_idx), weight=-ab_score[a_idx, b_idx])
+                dist = np.linalg.norm(a_pos[a_idx] - b_pos[b_idx])
+                if abs(dist - target_AB) <= max_dev_AB:
+                    score = abs(dist - target_AB) / target_AB
+                    # Store as (score, a_idx, b_idx) for heap operations
+                    ab_pairs.append((score, a_idx, b_idx))
         
-        for b_idx in range(len(b_pos)):
-            for c_idx in range(len(c_pos)):
-                if abs(dist_BC[b_idx, c_idx] - target_BC) <= max_dev_BC:
-                    G_BC.add_edge(('B', b_idx), ('C', c_idx), weight=-bc_score[b_idx, c_idx])
+        # Early return if no valid pairs
+        if not ab_pairs:
+            return []
         
-        # 5. Find best A-B matches
-        ab_matches = nx.algorithms.matching.max_weight_matching(G_AB)
+        # 2. Sort A-B pairs by score (best first)
+        ab_pairs.sort()  # Sort by score
         
-        # 6. For each A-B pair, find best two C particles
+        # 3. Process A-B pairs in order and find best C particles
         tetramers = []
+        used_a = set()
+        used_b = set()
         used_c = set()
+        max_dev_BC = 0.3 * target_BC
         
-        for (node1, node2) in ab_matches:
-            # Make sure node1 is A and node2 is B
-            if node1[0] == 'B':
-                node1, node2 = node2, node1
+        for _, a_idx, b_idx in ab_pairs:
+            # Skip if already used
+            if a_idx in used_a or b_idx in used_b:
+                continue
             
-            if node1[0] != 'A' or node2[0] != 'B':
-                continue  # Skip if not A-B pair
+            # Find valid C particles for this B
+            valid_c = []
+            for c_idx in range(len(c_pos)):
+                if c_idx in used_c:
+                    continue
+                    
+                dist = np.linalg.norm(b_pos[b_idx] - c_pos[c_idx])
+                if abs(dist - target_BC) <= max_dev_BC:
+                    score = abs(dist - target_BC) / target_BC
+                    valid_c.append((score, c_idx))
             
-            a_idx, b_idx = node1[1], node2[1]
+            # Need at least 2 valid C particles
+            if len(valid_c) < 2:
+                continue
             
-            # Find available C particles with shortest distances to B
-            available_c = [(c_idx, dist_BC[b_idx, c_idx]) 
-                        for c_idx in range(len(c_pos)) if c_idx not in used_c]
+            # Take best 2 C particles
+            valid_c.sort()  # Sort by score
+            c_idx1, c_idx2 = valid_c[0][1], valid_c[1][1]
             
-            if len(available_c) < 2:
-                continue  # Need at least 2 C particles
-            
-            # Sort by distance and take the closest two
-            available_c.sort(key=lambda x: x[1])
-            c_idx1, c_idx2 = available_c[0][0], available_c[1][0]
-            
+            # Create tetramer
             tetramers.append((a_idx, b_idx, c_idx1, c_idx2))
+            used_a.add(a_idx)
+            used_b.add(b_idx)
             used_c.update([c_idx1, c_idx2])
+            
+            # Optional: limit number of tetramers
+            if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
+                break
         
         return tetramers
     #=======================================================================
