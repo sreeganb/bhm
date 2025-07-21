@@ -313,9 +313,9 @@ class GMMSigmaProvider:
         sigma = {}
         for pt in self.pair_types:
             # Simply pick a random value between the hard bounds
-            # choose between 1.0 and 5.0 for now
+            # choose between 1.0 and 3.0 for now
             min_val = 1.0
-            max_val = 5.0
+            max_val = 3.0
             sigma[pt] = np.random.uniform(min_val, max_val)
 
         self.logger.info(f"Sampled sigma values for first sampler: {sigma}")

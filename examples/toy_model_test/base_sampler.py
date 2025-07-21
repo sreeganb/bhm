@@ -200,7 +200,7 @@ class BaseMCSampler:
 
         # Inverse scaling: smaller radius = larger moves
         # Base step is normalized to the smallest particle
-        base_step = 1.0  # Adjust this value as needed for optimal acceptance rate
+        base_step = 2.0  # Adjust this value as needed for optimal acceptance rate
         step_size = base_step * (min_radius / self.params.radii[type_name])
 
         # Current position
