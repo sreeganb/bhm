@@ -376,7 +376,7 @@ class TetramerSampler(BaseMCSampler):
         move_probs = [0.4, 0.1, 0.5]
         
         # Cooling schedule
-        temp_start, temp_end = 10.0, 0.10
+        temp_start, temp_end = 5.0, 0.10
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} total steps...")
@@ -483,7 +483,7 @@ class TetramerSampler(BaseMCSampler):
 
         # Fixed step sizes
         trans_step = 0.25
-        rot_step = 0.15
+        rot_step = 0.25
 
         # Translation
         displacement = np.random.normal(0.0, trans_step, 3)

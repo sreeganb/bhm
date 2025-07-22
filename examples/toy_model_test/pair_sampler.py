@@ -388,7 +388,7 @@ class PairSampler(BaseMCSampler):
         move_probs = [0.9, 0.1]  # position, sigma
         
         # Simple cooling schedule based on total steps
-        temp_start, temp_end = 10.0, 0.1
+        temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
         
         print(f"Starting MCMC sampling for {n_steps} total steps...")

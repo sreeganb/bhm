@@ -277,7 +277,7 @@ def main():
     
     # Alternative sequences for testing
     sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet"]
-    mcmc_steps = [500000, 500000, 500000, 100000, 100000, 100000]
+    mcmc_steps = [500000, 500000, 500000, 200000, 20000, 20000]
     #sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet"]
     #mcmc_steps = [50000, 50000, 50000, 10000, 10000, 10000]
     #sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet", "pair"]

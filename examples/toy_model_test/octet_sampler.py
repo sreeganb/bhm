@@ -49,8 +49,8 @@ class OctetSampler(BaseMCSampler):
         self.specific_chain = specific_chain
         
         # Basic sampler parameters - fixed step sizes
-        self.octet_trans_step = 0.2
-        self.octet_rot_step = 0.15
+        self.octet_trans_step = 0.25
+        self.octet_rot_step = 0.25
 
         # Handle positions
         if positions_os is None:
@@ -394,7 +394,7 @@ class OctetSampler(BaseMCSampler):
         # --- Main MCMC loop parameters ---
         move_types = ['position', 'sigma', 'tetramer', 'octet']
         move_probs = [0.2, 0.1, 0.3, 0.4]
-        temp_start, temp_end = 10.0, 0.1
+        temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
         print(f"Starting MCMC sampling for {n_steps} total steps...")
@@ -565,7 +565,7 @@ class OctetSampler(BaseMCSampler):
         exclusion_weight: float = 1.0,
         pair_weight: float = 1.0,
         tetramer_weight: float = 1.0,
-        octet_weight: float = 4.0,
+        octet_weight: float = 1.0,
     ) -> Tuple[float, float, float, float, float]:
         """
         Calculate the total negative log-posterior score for an octet system.
