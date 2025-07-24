@@ -57,7 +57,7 @@ class scoring_function():
         
         return evr, self.output_objects
     
-    def add_pair_distance_restraint(self, part1, part2):
+#    def add_pair_distance_restraint(self, part1, part2):
         
         
         #rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier = hierarchy, 
@@ -87,6 +87,10 @@ if __name__ == "__main__":
     
     hierarchy = system.build()
     IMP.atom.show_with_representations(hierarchy)
+    
+    output= IMP.pmi.output.Output()
+    output.init_rmf("initial_particles.rmf3", [hierarchy])  
+    output.write_rmf("initial_particles.rmf3")  # Write the RMF file
         
     dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
     print("degrees of freedom", dof_s1)

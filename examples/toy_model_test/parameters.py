@@ -35,7 +35,7 @@ class SystemParameters:
 #                'CC': 32.5   # note: with the following placement BC bonds won’t be exactly this long!
 #            }
         if self.component_counts is None:
-            self.component_counts = {'A': 8, 'B': 8, 'C': 16}
+            self.component_counts = {'A': 8, 'B': 8, 'C': 14}
         if self.ideal_coordinates is None:
             #self.ideal_coordinates = self.new_generate_ideal_coordinates()
             self.ideal_coordinates = self.latest_ideal()

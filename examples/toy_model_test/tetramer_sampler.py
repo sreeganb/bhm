@@ -483,7 +483,7 @@ class TetramerSampler(BaseMCSampler):
 
         # Fixed step sizes
         trans_step = 0.25
-        rot_step = 0.15
+        rot_step = 0.2
 
         # Translation
         displacement = np.random.normal(0.0, trans_step, 3)

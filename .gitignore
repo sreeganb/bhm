@@ -1,4 +1,9 @@
 *.os
+*.py
+*.md
+*.sh
+*.html
+*.csv
 *.o
 *.pyc
 *~
