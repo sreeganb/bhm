@@ -149,7 +149,9 @@ def read_data_from_folders(sequence, n_chains):
                 print(f"No data found in {filename}. Skipping.")
                 continue
             # Keep pooling in all the data across chains
-            df_combined = pd.concat([df_combined, df_temp], ignore_index=True)
+            burn_in_fraction = 0.4  # Adjust this value as needed
+            burn_in_index = int(len(df_temp) * burn_in_fraction)
+            df_combined = pd.concat([df_combined, df_temp.iloc[burn_in_index:]], ignore_index=True)
 
         # After reading all chains go back to the main directory
         os.chdir(parent_dir)
