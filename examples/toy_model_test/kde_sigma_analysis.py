@@ -207,9 +207,9 @@ def read_data_from_folders(sequence, n_chains):
             plt.plot(x, kde(x), label=sampler_label, color=color)
             plt.fill_between(x, kde(x), alpha=0.1, color=color)
         
-        plt.title(f'Sigma {pair_type} KDE Comparison')
-        plt.xlabel('Sigma Value')
-        plt.ylabel('Density')
+        plt.title(f'Sigma {pair_type} KDE Comparison', fontsize=16)
+        plt.xlabel('Sigma Value', fontsize=14)
+        plt.ylabel('Density', fontsize=14)
         plt.legend()
         plt.tight_layout()
         
