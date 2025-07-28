@@ -299,8 +299,8 @@ def main():
     #mcmc_steps = [500000, 500000, 500000, 200000]
     
     # Option 2: EM-only sampling
-    sampler_sequence = ["pair", "em"]
-    mcmc_steps = [1000, 100]
+    sampler_sequence = ["pair", "tetramer", "full"]
+    mcmc_steps = [1000, 1000, 1000]
     
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]

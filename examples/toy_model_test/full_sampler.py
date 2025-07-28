@@ -183,10 +183,33 @@ class FullSampler(BaseMCSampler):
         return img_sm
 
     def pairwise_correlation_cpu(self, A, B):
-        """Calculate pairwise correlation using CPU."""
+        """Calculate pairwise correlation using CPU with NaN handling."""
+        # Check for empty arrays
+        if len(A) == 0 or len(B) == 0:
+            return 0.0
+        
+        # Center the arrays
         am = A - np.mean(A)
         bm = B - np.mean(B)
-        return np.sum(am * bm) / (np.sqrt(np.sum(am**2)) * np.sqrt(np.sum(bm**2)))
+        
+        # Calculate standard deviations
+        std_a = np.sqrt(np.sum(am**2))
+        std_b = np.sqrt(np.sum(bm**2))
+        
+        # Check for zero variance (constant arrays)
+        if std_a < 1e-10 or std_b < 1e-10:
+            print(f"Warning: Zero variance detected. std_a={std_a:.2e}, std_b={std_b:.2e}")
+            return 0.0
+        
+        # Calculate correlation
+        correlation = np.sum(am * bm) / (std_a * std_b)
+        
+        # Check for NaN result
+        if not np.isfinite(correlation):
+            print(f"Warning: Non-finite correlation detected: {correlation}")
+            return 0.0
+        
+        return correlation
 
     def pairwise_correlation_gpu(self, A, B):
         """Calculate pairwise correlation using GPU."""
@@ -461,8 +484,11 @@ class FullSampler(BaseMCSampler):
         
         # Convert to negative log-likelihood (lower CCC = higher penalty)
         # Use transformation: score = -log(CCC + 1) where CCC is normalized to [0,1]
-        normalized_ccc = (ccc + 1) / 2  # Normalize from [-1,1] to [0,1]
-        score = -np.log(normalized_ccc + 1e-10)  # Add small epsilon to avoid log(0)
+        #normalized_ccc = (ccc + 1) / 2  # Normalize from [-1,1] to [0,1]
+        #score = -np.log(normalized_ccc + 1e-10)  # Add small epsilon to avoid log(0)
+        # Instead of normalization, change to 1-ccc so that the ideal score is 0 and 
+        # any deviation increase the score to be > 0.
+        score = 100*(1 - ccc)
         
         info = {"correlation": ccc}
         return score, info
