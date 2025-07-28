@@ -20,12 +20,15 @@ from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
 from visualization import visualize_3d_configuration
 from octet_sampler import OctetSampler
+from full_sampler import FullSampler  # Add FullSampler import
 
-# Map of sampler names to their classes
+# Map of sampler names to their classes - UPDATED
 SAMPLER_MAP = {
     "pair": PairSampler,
     "tetramer": TetramerSampler,
-    "octet": OctetSampler
+    "octet": OctetSampler,
+    "em": FullSampler,  # Add EM sampler
+    "full": FullSampler  # Alias for EM sampler as "full system"
 }
 
 # Default configuration
@@ -73,6 +76,12 @@ def run_analysis(sampler_key: str, sampler_index: int, sampler_sequence: List[st
     """Run the fit_gmm.py script for the specified sampler with sequence information."""
     
     print(f"\nRunning analysis for {sampler_key} sampler (occurrence #{sampler_index}) at sequence position {sequence_position}...")
+    
+    # Skip analysis for EM/full samplers as they don't use GMM fitting
+    if sampler_key in ["em", "full"]:
+        print(f"Skipping GMM analysis for {sampler_key} sampler (EM-based scoring only)")
+        return True
+    
     try:
         # Convert sampler sequence to comma-separated string
         sequence_str = ",".join(sampler_sequence)
@@ -126,7 +135,8 @@ def run_single_chain(chain_idx: int,
                     base_output_dir: str,
                     timestamp: str,
                     sampler_sequence: List[str],
-                    sequence_position: int) -> Dict[str, Any]:
+                    sequence_position: int,
+                    sampler_key: str = None) -> Dict[str, Any]:  # Add sampler_key parameter
     """Run a single MCMC chain in its own process."""
     
     # Setup chain-specific directory
@@ -137,18 +147,23 @@ def run_single_chain(chain_idx: int,
     )
     os.makedirs(chain_dir, exist_ok=True)
     
-    # Initialize sampler with sequence information
-    sampler = sampler_class(
-        sampler_sequence=sampler_sequence,
-        sequence_idx=sequence_position,
-        # ex_weight=1.0,
-        # pair_weight=1.0,
-        # base_output_dir=None,
-        # specific_chain=None,
-        # sigma_ranges=None,
-        prior_type="inverse_gamma"
-        # pos_passed=None 
-    )
+    # Initialize sampler with sequence information - UPDATED for EM sampler
+    if sampler_key in ["em", "full"]:
+        # EM Sampler requires different initialization parameters
+        sampler = sampler_class(
+            sampler_sequence=sampler_sequence,
+            sequence_idx=sequence_position,
+            em_map_file="simulated_target_density.mrc",  # You may want to make this configurable
+            resolution=55.0,
+            base_output_dir=base_output_dir
+        )
+    else:
+        # Standard samplers
+        sampler = sampler_class(
+            sampler_sequence=sampler_sequence,
+            sequence_idx=sequence_position,
+            prior_type="inverse_gamma"
+        )
     
     try:
         best_positions, traj_file = sampler.run_mc(
@@ -159,13 +174,16 @@ def run_single_chain(chain_idx: int,
         
         # Generate visualizations
         params = SystemParameters()
+        
+        # Get final sigma values (dummy values for EM sampler)
+        final_sigma = getattr(sampler, 'sigma', {'AA': 1.0, 'AB': 1.0, 'BC': 1.0})
             
         return {
             'chain_idx': chain_idx,
             'output_dir': chain_dir,
             'best_positions': best_positions,
             'trajectory_file': traj_file,
-            'final_sigma': sampler.sigma
+            'final_sigma': final_sigma
         }
     
     except Exception as e:
@@ -181,7 +199,8 @@ def run_parallel_sampling(sampler_class: Type[BaseMCSampler],
                          output_folder: str = "output_analysis",
                          n_processes: int = None,
                          sampler_sequence: List[str] = None,
-                         sequence_position: int = 0) -> Dict[int, Dict[str, Any]]:
+                         sequence_position: int = 0,
+                         sampler_key: str = None) -> Dict[int, Dict[str, Any]]:  # Add sampler_key parameter
     """Run multiple MCMC chains in parallel."""
     
     # Setup
@@ -193,7 +212,7 @@ def run_parallel_sampling(sampler_class: Type[BaseMCSampler],
     # Prepare parallel execution
     n_processes = min(n_processes or mp.cpu_count(), n_chains)
     
-    # Create partial function with fixed arguments
+    # Create partial function with fixed arguments - UPDATED
     run_chain = partial(
         run_single_chain,
         sampler_class=sampler_class,
@@ -201,7 +220,8 @@ def run_parallel_sampling(sampler_class: Type[BaseMCSampler],
         base_output_dir=output_folder,
         timestamp=timestamp,
         sampler_sequence=sampler_sequence or [],
-        sequence_position=sequence_position
+        sequence_position=sequence_position,
+        sampler_key=sampler_key
     )
     
     # Run chains in parallel with progress bar
@@ -271,19 +291,24 @@ def main():
     # Define sampler configurations
     base_config = DEFAULT_CONFIG.copy()
     
-    # Define the sequence of samplers to run and their steps
-    #sampler_sequence = ["pair", "tetramer", "octet", "pair", "octet", "tetramer"]
-    #mcmc_steps = [5000000, 200000, 100000, 3000000, 150000, 100000]
+    # Define the sequence of samplers to run and their steps - UPDATED with EM/full options
+    # Example sequences with EM sampler:
     
-    # Alternative sequences for testing
-    sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet"]
-    mcmc_steps = [500000, 500000, 500000, 200000, 20000, 20000]
-    #sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet"]
-    #mcmc_steps = [50000, 50000, 50000, 10000, 10000, 10000]
-    #sampler_sequence = ["pair", "tetramer", "octet", "pair", "tetramer", "octet", "pair"]
-    #mcmc_steps = [500000, 500000, 300000, 300000, 200000, 200000, 200000]
-    # sampler_sequence = ["tetramer", "octet", "pair"]
-    # mcmc_steps = [500000, 500000, 1000000]
+    # Option 1: Traditional sequence + EM refinement
+    #sampler_sequence = ["pair", "tetramer", "octet", "em"]
+    #mcmc_steps = [500000, 500000, 500000, 200000]
+    
+    # Option 2: EM-only sampling
+    sampler_sequence = ["pair", "em"]
+    mcmc_steps = [1000, 100]
+    
+    # Option 3: Mixed sequence with multiple EM steps
+    # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
+    # mcmc_steps = [500000, 500000, 300000, 200000, 200000]
+    
+    # Option 4: Full system sampling (alias for EM)
+    # sampler_sequence = ["pair", "tetramer", "octet", "full"]
+    # mcmc_steps = [500000, 500000, 500000, 300000]
     
     # Setup
     output_folder = "output_analysis"
@@ -305,21 +330,22 @@ def main():
         # Determine if this is the first sampler in the entire sequence
         is_first = seq_idx == 0
         
-        # Create specific configuration for this sampler
+        # Create specific configuration for this sampler - UPDATED
         config = {
             **base_config,
             "run": True,
-            "n_chains": 16,
+            "n_chains": 8,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 500,
-            "use_sigma_dist": False if is_first else True
+            "save_freq": 1,
+            # EM/full samplers don't use sigma distributions
+            "use_sigma_dist": False if (is_first or sampler_key in ["em", "full"]) else True
         }
         
         # Get sampler class from name
         sampler_class = SAMPLER_MAP.get(sampler_key)
         
         if not sampler_class:
-            print(f"Error: Unknown sampler '{sampler_key}'. Skipping.")
+            print(f"Error: Unknown sampler '{sampler_key}'. Available: {list(SAMPLER_MAP.keys())}. Skipping.")
             continue
         
         print(f"\n{'='*80}")
@@ -327,16 +353,19 @@ def main():
         print(f"Sampler: {sampler_name} (instance {current_idx}/{total_count})")
         print(f"Directory: {directory_name}")
         print(f"Configuration: {config['n_steps']} steps, {config['n_chains']} chains, use_sigma_dist={config['use_sigma_dist']}")
+        if sampler_key in ["em", "full"]:
+            print(f"Note: Using EM density map scoring")
         print(f"{'='*80}")
         
-        # Run sampling and analyze results
+        # Run sampling and analyze results - UPDATED
         results = run_parallel_sampling(
             sampler_class=sampler_class,
             config=config,
             output_folder=output_folder,
             n_processes=n_processes,
             sampler_sequence=sampler_sequence,
-            sequence_position=seq_idx
+            sequence_position=seq_idx,
+            sampler_key=sampler_key  # Pass sampler key for EM initialization
         )
         
         sigma_values = analyze_chains(results, output_folder, directory_name)
@@ -344,7 +373,7 @@ def main():
         print(f"\n{sampler_class.__name__} sampling complete.")
         print(f"Results saved in: {output_folder}/{directory_name}/")
         
-        # Run the fit_gmm analysis for this sampler - UPDATED CALL
+        # Run the fit_gmm analysis for this sampler - UPDATED to handle EM samplers
         analysis_success = run_analysis(
             sampler_key=sampler_key, 
             sampler_index=current_idx,
