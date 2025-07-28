@@ -1,0 +1,151 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\begin{document}
+
+\title{Mathematical Explanation of Density Correlation Calculation in a Coarse-Grained Model}
+\author{}
+\date{}
+\maketitle
+
+\section{Introduction}
+
+This document provides a detailed mathematical explanation of a Python script designed to evaluate the fit of a coarse-grained model to a target density map by computing the Pearson's correlation coefficient (CCC). The model consists of spheres with specified coordinates and radii, and the script converts these into a density projection for comparison with a target map, such as one derived from electron microscopy. The explanation covers the representation of the model, the generation of a density projection, and the calculation of the CCC.
+
+\section{Model Representation}
+
+The coarse-grained model comprises \( N \) spheres, each defined by:
+- **Coordinates**: A 3D position vector \( \mathbf{x}_i = (x_i, y_i, z_i) \) for sphere \( i \), forming an array of shape \( (N, 3) \).
+- **Radii**: A scalar radius \( r_i \) for sphere \( i \), forming an array of shape \( (N,) \).
+
+In the script's example, \( N = 32 \) particles are divided into three types:
+- Type A: 8 particles with radius \( r_A = 24.0 \, \text{\AA} \),
+- Type B: 8 particles with radius \( r_B = 14.0 \, \text{\AA} \),
+- Type C: 16 particles with radius \( r_C = 16.0 \, \text{\AA} \).
+
+The coordinates are stacked into a single array \( \mathbf{X} = [\mathbf{x}_1, \mathbf{x}_2, \ldots, \mathbf{x}_N] \), and the radii into \( \mathbf{r} = [r_1, r_2, \ldots, r_N] \), with \( r_i \) repeated according to the copy numbers.
+
+\section{Generating the Target Density Map}
+
+The function \texttt{create\_dummy\_map\_from\_model} generates a synthetic target density map from the model, simulating an experimental map.
+
+\subsection{Grid Definition}
+
+A 3D grid is established with:
+- **Box Size**: \( L = 250.0 \, \text{\AA} \),
+- **Voxel Size**: \( \Delta = 5.0 \, \text{\AA} \),
+- **Grid Dimensions**: \( n = \frac{L}{\Delta} = 50 \), yielding a \( 50 \times 50 \times 50 \) voxel grid.
+
+The bin edges for each dimension are:
+\[
+\text{bins}_k = \text{linspace}\left( -\frac{L}{2}, \frac{L}{2}, n + 1 \right), \quad k = x, y, z,
+\]
+where \( \text{bins}_k \) ranges from \(-125.0 \, \text{\AA}\) to \( 125.0 \, \text{\AA}\) with 51 edges, defining 50 bins per axis.
+
+\subsection{Density Projection via Histogram}
+
+The sphere coordinates \( \mathbf{X} \) are binned into the 3D grid using a weighted histogram:
+\[
+\rho_{\text{calc}}(\mathbf{r}) = \text{histogram3D}(\mathbf{X}, \mathbf{w}, \{\text{bins}_x, \text{bins}_y, \text{bins}_z\}),
+\]
+where:
+- \( \mathbf{w} = [r_1^3, r_2^3, \ldots, r_N^3] \) are weights proportional to the sphere volumes,
+- \( \mathbf{r} \) denotes the voxel centers in the grid,
+- \( \text{histogram3D} \) accumulates the weights of spheres whose coordinates fall within each voxel.
+
+The resulting \( \rho_{\text{calc}} \) is a \( 50 \times 50 \times 50 \) array representing the un-smoothed density.
+
+\subsection{Gaussian Smoothing}
+
+To mimic experimental resolution, the density is smoothed with a Gaussian filter:
+\[
+\rho_{\text{sm}}(\mathbf{r}) = \mathcal{G}_{\sigma} * \rho_{\text{calc}}(\mathbf{r}),
+\]
+where \( * \) denotes convolution, and \( \mathcal{G}_{\sigma} \) is a 3D Gaussian kernel with standard deviation:
+\[
+\sigma = \frac{R}{4 \sqrt{2 \ln 2} \cdot \Delta},
+\]
+- \( R = 20.0 \, \text{\AA} \) is the resolution,
+- \( \Delta = 5.0 \, \text{\AA} \) is the voxel size,
+- \( 4 \sqrt{2 \ln 2} \approx 4.709 \) relates resolution to the Gaussian full width at half maximum (FWHM).
+
+Thus:
+\[
+\sigma = \frac{20.0}{4.709 \cdot 5.0} \approx 0.849 \, \text{voxels}.
+\]
+
+The Gaussian filter is truncated at \( 4\sigma \approx 3.396 \) voxels to limit computational cost, producing the smoothed density \( \rho_{\text{sm}} \).
+
+\subsection{Output}
+
+The smoothed density \( \rho_{\text{sm}} \) is saved as an MRC file, with voxel size set to \( 5.0 \, \text{\AA} \), serving as the target map \( \rho_{\text{exp}} \).
+
+\section{Density Projection for Scoring}
+
+The function \texttt{calculate\_ccc\_score} computes the CCC between the target map and a model projection.
+
+\subsection{Model Interface}
+
+A mock model is created with:
+- \( \mathbf{X} = \text{sphere\_coords} \),
+- Weights \( \mathbf{w} = (\text{sphere\_radii})^3 \).
+
+These are accessed via methods mimicking a structural model interface.
+
+\subsection{Projection Calculation}
+
+The projection follows the same steps as the target map:
+1. **Histogram**:
+\[
+\rho_{\text{calc}}(\mathbf{r}) = \text{histogram3D}(\mathbf{X}, \mathbf{w}, \{\text{bins}_x, \text{bins}_y, \text{bins}_z\}),
+\]
+where bins are derived from the target map's dimensions and voxel size.
+
+2. **Smoothing**:
+\[
+\rho_{\text{sm}}(\mathbf{r}) = \mathcal{G}_{\sigma} * \rho_{\text{calc}}(\mathbf{r}),
+\]
+using the same \( \sigma \approx 0.849 \, \text{voxels} \).
+
+The axes of \( \rho_{\text{calc}} \) are swapped to match the target map’s orientation.
+
+\section{Pearson's Correlation Coefficient (CCC)}
+
+The CCC measures the linear correlation between the model projection \( \rho_{\text{sm}} \) and the target map \( \rho_{\text{exp}} \):
+\[
+\text{CCC} = \frac{\sum (\rho_{\text{sm}} - \overline{\rho_{\text{sm}}})(\rho_{\text{exp}} - \overline{\rho_{\text{exp}}})}{\sqrt{\sum (\rho_{\text{sm}} - \overline{\rho_{\text{sm}}})^2} \sqrt{\sum (\rho_{\text{exp}} - \overline{\rho_{\text{exp}}})^2}},
+\]
+where:
+- \( \rho_{\text{sm}} \) and \( \rho_{\text{exp}} \) are flattened into 1D arrays of length \( 50^3 = 125,000 \),
+- \( \overline{\rho_{\text{sm}}} = \frac{1}{125,000} \sum \rho_{\text{sm}} \) and \( \overline{\rho_{\text{exp}}} = \frac{1}{125,000} \sum \rho_{\text{exp}} \) are the means,
+- The sums are over all voxels.
+
+This yields a value between \(-1\) and \(1\), with \( \text{CCC} \approx 1 \) indicating a strong match.
+
+\section{Example Application}
+
+### Ideal Model
+The target map is generated from the ideal coordinates and radii, so:
+\[
+\text{CCC}_{\text{ideal}} \approx 1.0,
+\]
+as \( \rho_{\text{sm}} \) closely matches \( \rho_{\text{exp}} \).
+
+### Perturbed Model
+Noise is added to the coordinates:
+\[
+\mathbf{X}_{\text{perturbed}} = \mathbf{X} + \boldsymbol{\epsilon}, \quad \boldsymbol{\epsilon} \sim \mathcal{N}(0, 2.0^2),
+\]
+where \( \boldsymbol{\epsilon} \) is a \( (32, 3) \) array of Gaussian noise with standard deviation \( 2.0 \, \text{\AA} \). This perturbation shifts the histogram, reducing the CCC:
+\[
+\text{CCC}_{\text{perturbed}} < \text{CCC}_{\text{ideal}}.
+\]
+
+\section{Conclusion}
+
+The script transforms sphere coordinates and radii into a density projection by weighting with volumes (\( r_i^3 \)) and applying Gaussian smoothing to match experimental resolution. The CCC provides a quantitative measure of fit, enabling model evaluation in structural biology applications.
+
+\end{document}

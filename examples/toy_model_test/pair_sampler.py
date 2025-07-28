@@ -303,7 +303,7 @@ class PairSampler(BaseMCSampler):
 
         total_score = exclusion_score + pairwise_score + prior_penalty
         
-        debug = True
+        debug = False  # Disable debug logging after first run
         if debug:
             # Create debug folder if it doesn't exist
             debug_folder = "debug_info"
