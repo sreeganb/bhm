@@ -295,12 +295,12 @@ def main():
     # Example sequences with EM sampler:
     
     # Option 1: Traditional sequence + EM refinement
-    #sampler_sequence = ["pair", "tetramer", "octet", "em"]
-    #mcmc_steps = [500000, 500000, 500000, 200000]
+    sampler_sequence = ["pair", "tetramer", "octet"]
+    mcmc_steps = [500000, 500000, 500000]
     
     # Option 2: EM-only sampling
-    sampler_sequence = ["pair", "tetramer", "full"]
-    mcmc_steps = [1000, 1000, 1000]
+    #sampler_sequence = ["pair", "tetramer", "full"]
+    #mcmc_steps = [1000, 1000, 1000]
     
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
@@ -336,7 +336,7 @@ def main():
             "run": True,
             "n_chains": 8,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 1,
+            "save_freq": 500,
             # EM/full samplers don't use sigma distributions
             "use_sigma_dist": False if (is_first or sampler_key in ["em", "full"]) else True
         }

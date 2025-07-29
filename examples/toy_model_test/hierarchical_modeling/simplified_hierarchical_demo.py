@@ -186,6 +186,17 @@ def compare_approaches(regular_results: Dict, hierarchical_results: Dict,
     """
     Compare and visualize results from regular and hierarchical Bayesian inference.
     """
+    # Set matplotlib parameters for larger fonts
+    plt.rcParams.update({
+        'font.size': 14,          # Base font size
+        'axes.titlesize': 16,     # Title font size
+        'axes.labelsize': 14,     # Axis label font size
+        'xtick.labelsize': 12,    # X-axis tick label size
+        'ytick.labelsize': 12,    # Y-axis tick label size
+        'legend.fontsize': 12,    # Legend font size
+        'figure.titlesize': 18    # Figure title font size
+    })
+    
     # Extract traces
     reg_trace = regular_results['trace']
     hier_trace = hierarchical_results['trace']
@@ -227,37 +238,97 @@ def compare_approaches(regular_results: Dict, hierarchical_results: Dict,
     if improvements:
         print(f"\nAverage error reduction: {np.mean(improvements):.1f}%")
     
-    # Plot posterior distributions
+    # Plot posterior distributions with improved layout
     n_pairs = len(pair_types)
-    fig, axes = plt.subplots(1, n_pairs, figsize=(n_pairs*5, 5))
+    fig, axes = plt.subplots(1, n_pairs, figsize=(n_pairs*7, 6))  # Increased figure size
+    
+    # Ensure axes is always a list for consistent handling
+    if n_pairs == 1:
+        axes = [axes]
     
     for i, pair_type in enumerate(pair_types):
-        ax = axes[i] if n_pairs > 1 else axes
+        ax = axes[i]
         
-        # Plot posterior distributions
-        az.plot_posterior(reg_trace, var_names=[f"sigma_{pair_type}"], 
-                        ax=ax, color='blue', hdi_prob=0.95, label='Regular')
-        az.plot_posterior(hier_trace, var_names=[f"sigma_{pair_type}"], 
-                        ax=ax, color='red', hdi_prob=0.95, label='Hierarchical')
+        # Clear the axis first to avoid overlapping
+        ax.clear()
         
+        # Plot posterior distributions with custom styling
+        try:
+            # Plot regular posterior
+            az.plot_posterior(reg_trace, var_names=[f"sigma_{pair_type}"], 
+                            ax=ax, color='blue', hdi_prob=0.95, 
+                            textsize=12, point_estimate='mean')
+            
+            # Plot hierarchical posterior (offset slightly to avoid overlap)
+            hier_posterior = hier_trace.posterior[f"sigma_{pair_type}"].values.flatten()
+            ax.hist(hier_posterior, bins=30, alpha=0.6, color='red', 
+                   density=True, label='Hierarchical')
+            
+        except Exception as e:
+            print(f"Error plotting {pair_type}: {e}")
+            # Fallback to simple histogram
+            reg_posterior = reg_trace.posterior[f"sigma_{pair_type}"].values.flatten()
+            hier_posterior = hier_trace.posterior[f"sigma_{pair_type}"].values.flatten()
+            
+            ax.hist(reg_posterior, bins=30, alpha=0.6, color='blue', 
+                   density=True, label='Regular')
+            ax.hist(hier_posterior, bins=30, alpha=0.6, color='red', 
+                   density=True, label='Hierarchical')
+        
+        # Add true value line
         if pair_type in true_sigmas:
             ax.axvline(true_sigmas[pair_type], color='black', linestyle='--', 
-                      label=f'True σ = {true_sigmas[pair_type]:.2f}')
+                      linewidth=2, label=f'True σ = {true_sigmas[pair_type]:.2f}')
         
-        ax.set_title(f'Posterior for {pair_type} σ (n={len(data[pair_type])})')
-        ax.set_xlabel('σ (measurement uncertainty)')
-        ax.legend()
+        # Improve titles and labels
+        ax.set_title(f'Posterior for {pair_type} σ\n(n={len(data[pair_type])})', 
+                    fontsize=16, pad=20)
+        ax.set_xlabel('σ (measurement uncertainty)', fontsize=14)
+        ax.set_ylabel('Density', fontsize=14)
         
-    plt.tight_layout()
-    plt.savefig('/home/sree/git/bhm/examples/toy_model_test/mcmc_comparison.png', dpi=300)
+        # Improve legend
+        ax.legend(fontsize=12, loc='upper right', framealpha=0.9)
+        
+        # Add grid for better readability
+        ax.grid(True, alpha=0.3)
+        
+        # Adjust tick label sizes
+        ax.tick_params(axis='both', which='major', labelsize=12)
+    
+    # Improve overall layout
+    plt.tight_layout(pad=3.0)  # Increased padding
+    plt.subplots_adjust(top=0.9, bottom=0.15, left=0.1, right=0.95, hspace=0.3, wspace=0.3)
+    
+    # Save with high DPI and tight bounding box
+    plt.savefig('output/mcmc_comparison.png', dpi=300, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
     plt.show()
     
-    # Plot traces to check convergence
+    # Plot traces to check convergence with improved formatting
     if "tau" in hier_trace.posterior:
-        az.plot_trace(hier_trace, var_names=["tau"])
-        plt.tight_layout()
-        plt.savefig('/home/sree/git/bhm/examples/toy_model_test/hyperparameter_trace.png', dpi=300)
+        plt.figure(figsize=(12, 8))  # Larger figure
+        
+        # Custom trace plot with better formatting
+        az.plot_trace(hier_trace, var_names=["tau"], 
+                     figsize=(12, 8),
+                     compact=False)  # Less compact for better readability
+        
+        # Improve the trace plot formatting
+        fig = plt.gcf()
+        for ax in fig.get_axes():
+            ax.tick_params(axis='both', which='major', labelsize=12)
+            ax.set_xlabel(ax.get_xlabel(), fontsize=14)
+            ax.set_ylabel(ax.get_ylabel(), fontsize=14)
+            ax.set_title(ax.get_title(), fontsize=16)
+            ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout(pad=3.0)
+        plt.savefig('output/hyperparameter_trace.png', dpi=300, bbox_inches='tight',
+                   facecolor='white', edgecolor='none')
         plt.show()
+    
+    # Reset matplotlib parameters to defaults
+    plt.rcParams.update(plt.rcParamsDefault)
 
 def demonstrate_borrowing_strength():
     """
