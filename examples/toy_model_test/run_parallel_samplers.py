@@ -162,7 +162,7 @@ def run_single_chain(chain_idx: int,
         sampler = sampler_class(
             sampler_sequence=sampler_sequence,
             sequence_idx=sequence_position,
-            prior_type="inverse_gamma"
+            prior_type="gamma"
         )
     
     try:
@@ -296,7 +296,7 @@ def main():
     
     # Option 1: Traditional sequence + EM refinement
     sampler_sequence = ["pair", "tetramer", "octet"]
-    mcmc_steps = [500000, 500000, 500000]
+    mcmc_steps = [100000, 100000, 100000]
     
     # Option 2: EM-only sampling
     #sampler_sequence = ["pair", "tetramer", "full"]
@@ -336,7 +336,7 @@ def main():
             "run": True,
             "n_chains": 8,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 500,
+            "save_freq": 250,
             # EM/full samplers don't use sigma distributions
             "use_sigma_dist": False if (is_first or sampler_key in ["em", "full"]) else True
         }
