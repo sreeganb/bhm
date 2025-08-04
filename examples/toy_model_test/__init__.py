@@ -1,5 +1,19 @@
-# toy_model/__init__.py
-from toy_model.base_sampler import BaseMCSampler
-from toy_model.pair_sampler import PairSampler
-from toy_model.tetramer_sampler import TetramerSampler
-from toy_model.parameters import SystemParameters
+"""
+Toy model test package for Bayesian hierarchical modeling.
+"""
+
+# Import key functions and classes that might be needed
+from .parameters import latest_ideal, SystemParameters
+from .pair_sampler import PairSampler
+from .tetramer_sampler import TetramerSampler
+from .octet_sampler import OctetSampler
+from .base_sampler import BaseMCSampler
+
+__all__ = [
+    'latest_ideal',
+    'SystemParameters', 
+    'PairSampler',
+    'TetramerSampler',
+    'OctetSampler',
+    'BaseMCSampler'
+]
