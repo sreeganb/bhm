@@ -37,7 +37,7 @@ class Priors:
                         penalty += 1e6
                     else:
                         penalty += np.log(value)
-                elif self.prior_type == "inverse_gamma":
+                elif self.prior_type == "gamma":
                     # Inverse gamma prior (shape and scale parameters)
                     beta = 0.001  # scale parameter
                     alpha = 0.001  # shape parameter

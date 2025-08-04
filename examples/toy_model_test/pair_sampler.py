@@ -25,7 +25,7 @@ class PairSampler(BaseMCSampler):
                  ex_weight: float = 1.0, pair_weight: float = 1.0, 
                  base_output_dir: str = None, specific_chain: int = None,
                  sigma_ranges: Dict[str, Tuple[float, float]] = None,
-                 prior_type: str = "inverse_gamma",
+                 prior_type: str = "gamma",
                  pos_passed: Dict[str, np.ndarray] = None):
         """
         Initialize PairSampler with sampler sequence information.
@@ -508,7 +508,7 @@ if __name__ == "__main__":
         sampler_sequence=sampler_sequence,
         sequence_idx=sequence_idx,
         #prior_type="jeffreys",  # Use Jeffreys prior for first sampler
-        prior_type="inverse_gamma",  # Use Jeffreys prior for first sampler
+        prior_type="gamma",  # Use Jeffreys prior for first sampler
     )
     pair_samp.run_mc(n_steps=10000, save_freq=100)
 #----------------------------------------------------------------------

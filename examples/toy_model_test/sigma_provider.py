@@ -109,7 +109,7 @@ class GMMSigmaProvider:
     """
     Provides sigma values from GMM fits and calculates negative log priors.
     Works with sampler sequences: 
-      - For the first sampler, uses uniform/Jeffreys/ inverse_gamma priors.
+      - For the first sampler, uses uniform/Jeffreys/ gamma priors.
       - For subsequent samplers, uses GMM parameters from a previous sampler's fit.
     """
 
@@ -427,10 +427,7 @@ class GMMSigmaProvider:
             # simple example
             if self.prior_type == "jeffreys":
                 log_prior += -np.log(val)
-            elif self.prior_type == "inverse_gamma":
-                # the distribution is defined by a shape and scale parameter
-                # the mathematical form is 
-                # p(sigma|alpha,beta) = beta**alpha / gamma(alpha) * sigma**(-alpha-1) * exp(-beta/sigma)
+            elif self.prior_type == "inverse_gamma":                
                 beta = 0.5  # scale parameter
                 alpha = 2.0 # shape parameter
                 variance = val**2
@@ -438,6 +435,14 @@ class GMMSigmaProvider:
                               - (alpha + 1) * np.log(variance) - beta / variance)
                 # Add the Jacobian adjustment for transformation from variance to sigma
                 log_prior += log_prior_variance + np.log(2 * val)  # Jacobian adjustment
+            elif self.prior_type == "gamma":
+                # load the scipy.stats gamma distribution with a small tail and away from zero
+                # This is a placeholder; adjust shape/scale as needed
+                # Example: gamma prior with shape=3, scale=1
+                from scipy.stats import gamma
+                shape = 3.0  # Example shape parameter
+                scale = 1.0  # Example scale parameter
+                log_prior += gamma.logpdf(val, a=shape, scale=scale)
             else:
                 log_prior += 0.0  # uniform in log space
         return -log_prior
@@ -576,8 +581,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prior",
         type=str,
-        default="inverse_gamma",
-        choices=["uniform", "jeffreys", "inverse_gamma"],
+        default="gamma",
+        choices=["uniform", "jeffreys", "gamma"],
         help="Prior type for the first sampler."
     )
     parser.add_argument(

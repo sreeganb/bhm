@@ -29,7 +29,7 @@ class OctetSampler(BaseMCSampler):
     def __init__(self, sampler_sequence: List[str], sequence_idx: int,
                  base_output_dir: str = "output_analysis", positions_os=None,
                  specific_chain: int = None, sigma_ranges: Dict[str, Tuple[float, float]] = None,
-                 prior_type: str = "inverse_gamma"):
+                 prior_type: str = "gamma"):
         """
         Initialize OctetSampler with sampler sequence information.
         
