@@ -27,7 +27,6 @@ SAMPLER_MAP = {
     "pair": PairSampler,
     "tetramer": TetramerSampler,
     "octet": OctetSampler,
-    "em": FullSampler,  # Add EM sampler
     "full": FullSampler  # Alias for EM sampler as "full system"
 }
 
@@ -78,7 +77,7 @@ def run_analysis(sampler_key: str, sampler_index: int, sampler_sequence: List[st
     print(f"\nRunning analysis for {sampler_key} sampler (occurrence #{sampler_index}) at sequence position {sequence_position}...")
     
     # Skip analysis for EM/full samplers as they don't use GMM fitting
-    if sampler_key in ["em", "full"]:
+    if sampler_key in ["full"]:
         print(f"Skipping GMM analysis for {sampler_key} sampler (EM-based scoring only)")
         return True
     
@@ -148,7 +147,7 @@ def run_single_chain(chain_idx: int,
     os.makedirs(chain_dir, exist_ok=True)
     
     # Initialize sampler with sequence information - UPDATED for EM sampler
-    if sampler_key in ["em", "full"]:
+    if sampler_key in ["full"]:
         # EM Sampler requires different initialization parameters
         sampler = sampler_class(
             sampler_sequence=sampler_sequence,
@@ -295,12 +294,12 @@ def main():
     # Example sequences with EM sampler:
     
     # Option 1: Traditional sequence + EM refinement
-    sampler_sequence = ["pair", "tetramer", "octet"]
-    mcmc_steps = [100000, 100000, 100000]
+    #sampler_sequence = ["pair", "tetramer", "octet"]
+    #mcmc_steps = [500000, 500000, 500000]
     
     # Option 2: EM-only sampling
-    #sampler_sequence = ["pair", "tetramer", "full"]
-    #mcmc_steps = [1000, 1000, 1000]
+    sampler_sequence = ["full"]
+    mcmc_steps = [100]
     
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
@@ -312,7 +311,7 @@ def main():
     
     # Setup
     output_folder = "output_analysis"
-    n_processes = 8  # Set to None to use all available CPUs
+    n_processes = 16  # Set to None to use all available CPUs
     
     # Initialize sequence manager
     sequence_manager = SamplerSequenceManager(sampler_sequence)
@@ -334,9 +333,9 @@ def main():
         config = {
             **base_config,
             "run": True,
-            "n_chains": 8,
+            "n_chains": 16,
             "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 250,
+            "save_freq": 1,
             # EM/full samplers don't use sigma distributions
             "use_sigma_dist": False if (is_first or sampler_key in ["em", "full"]) else True
         }

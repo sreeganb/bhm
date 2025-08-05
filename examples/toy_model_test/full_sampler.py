@@ -42,7 +42,7 @@ class FullSampler(BaseMCSampler):
                  sampler_sequence: List[str], 
                  sequence_idx: int,
                  em_map_file: str,
-                 resolution: float = 20.0,
+                 resolution: float = 50.0,
                  base_output_dir: str = "output_analysis", 
                  positions_init=None,
                  specific_chain: int = None):
@@ -68,10 +68,10 @@ class FullSampler(BaseMCSampler):
         
         # Move parameters
         self.position_step = 1.0
-        self.tetramer_trans_step = 0.5
-        self.tetramer_rot_step = 0.3
+        self.tetramer_trans_step = 0.25
+        self.tetramer_rot_step = 0.25
         self.octet_trans_step = 0.25
-        self.octet_rot_step = 0.2
+        self.octet_rot_step = 0.25
         
         # Handle positions - either load from previous sampler or initialize
         if positions_init is None:
@@ -482,10 +482,6 @@ class FullSampler(BaseMCSampler):
             self.target_density_map, self.resolution, 'cpu'
         )
         
-        # Convert to negative log-likelihood (lower CCC = higher penalty)
-        # Use transformation: score = -log(CCC + 1) where CCC is normalized to [0,1]
-        #normalized_ccc = (ccc + 1) / 2  # Normalize from [-1,1] to [0,1]
-        #score = -np.log(normalized_ccc + 1e-10)  # Add small epsilon to avoid log(0)
         # Instead of normalization, change to 1-ccc so that the ideal score is 0 and 
         # any deviation increase the score to be > 0.
         score = 100*(1 - ccc)
