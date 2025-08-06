@@ -135,7 +135,7 @@ def run_single_chain(chain_idx: int,
                     timestamp: str,
                     sampler_sequence: List[str],
                     sequence_position: int,
-                    sampler_key: str = None) -> Dict[str, Any]:  # Add sampler_key parameter
+                    sampler_key: str = None) -> Dict[str, Any]:
     """Run a single MCMC chain in its own process."""
     
     # Setup chain-specific directory
@@ -146,36 +146,40 @@ def run_single_chain(chain_idx: int,
     )
     os.makedirs(chain_dir, exist_ok=True)
     
-    # Initialize sampler with sequence information - UPDATED for EM sampler
-    if sampler_key in ["full"]:
-        # EM Sampler requires different initialization parameters
-        sampler = sampler_class(
-            sampler_sequence=sampler_sequence,
-            sequence_idx=sequence_position,
-            em_map_file="simulated_target_density.mrc",  # You may want to make this configurable
-            resolution=55.0,
-            base_output_dir=base_output_dir
-        )
-    else:
-        # Standard samplers
-        sampler = sampler_class(
-            sampler_sequence=sampler_sequence,
-            sequence_idx=sequence_position,
-            prior_type="gamma"
-        )
-    
     try:
+        # Initialize sampler based on type
+        if sampler_key == "full":
+            # FullSampler has different constructor parameters
+            sampler = sampler_class(
+                sampler_sequence=sampler_sequence,
+                sequence_idx=sequence_position,
+                em_map_file="simulated_target_density.mrc",  # Make sure this file exists
+                resolution=55.0,
+                base_output_dir=base_output_dir,
+                positions_init=None,  # Let it use default initialization
+                specific_chain=chain_idx  # Pass the chain index
+            )
+        else:
+            # Standard samplers (PairSampler, TetramerSampler, OctetSampler)
+            sampler = sampler_class(
+                sampler_sequence=sampler_sequence,
+                sequence_idx=sequence_position,
+                prior_type="gamma"
+            )
+        
+        # Run MCMC sampling
         best_positions, traj_file = sampler.run_mc(
             n_steps=config["n_steps"],
             save_freq=config["save_freq"],
             output_dir=chain_dir
         )
         
-        # Generate visualizations
-        params = SystemParameters()
-        
-        # Get final sigma values (dummy values for EM sampler)
-        final_sigma = getattr(sampler, 'sigma', {'AA': 1.0, 'AB': 1.0, 'BC': 1.0})
+        # Get final sigma values
+        if hasattr(sampler, 'sigma'):
+            final_sigma = sampler.sigma
+        else:
+            # Fallback for FullSampler which might not have sigma
+            final_sigma = {'AA': 1.0, 'AB': 1.0, 'BC': 1.0}
             
         return {
             'chain_idx': chain_idx,
@@ -187,6 +191,8 @@ def run_single_chain(chain_idx: int,
     
     except Exception as e:
         print(f"Error in chain {chain_idx}: {e}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")  # Add detailed error info
         return {
             'chain_idx': chain_idx,
             'output_dir': chain_dir,
@@ -199,20 +205,20 @@ def run_parallel_sampling(sampler_class: Type[BaseMCSampler],
                          n_processes: int = None,
                          sampler_sequence: List[str] = None,
                          sequence_position: int = 0,
-                         sampler_key: str = None) -> Dict[int, Dict[str, Any]]:  # Add sampler_key parameter
+                         sampler_key: str = None) -> Dict[int, Dict[str, Any]]:
     """Run multiple MCMC chains in parallel."""
     
     # Setup
     n_chains = config["n_chains"]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"  # Prevent HDF5 file locking issues
+    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
     os.makedirs(output_folder, exist_ok=True)
     
     # Prepare parallel execution
     n_processes = min(n_processes or mp.cpu_count(), n_chains)
     
-    # Create partial function with fixed arguments - UPDATED
-    run_chain = partial(
+    # Create partial function with all fixed arguments
+    run_chain_partial = partial(
         run_single_chain,
         sampler_class=sampler_class,
         config=config,
@@ -229,7 +235,7 @@ def run_parallel_sampling(sampler_class: Type[BaseMCSampler],
     
     with mp.Pool(processes=n_processes) as pool:
         with tqdm(total=n_chains, desc="Running chains") as pbar:
-            for result in pool.imap_unordered(run_chain, range(n_chains)):
+            for result in pool.imap_unordered(run_chain_partial, range(n_chains)):
                 chain_idx = result['chain_idx']
                 results[chain_idx] = result
                 pbar.update(1)
@@ -298,8 +304,8 @@ def main():
     #mcmc_steps = [500000, 500000, 500000]
     
     # Option 2: EM-only sampling
-    sampler_sequence = ["full"]
-    mcmc_steps = [100]
+    sampler_sequence = ["pair", "tetramer", "octet", "full"]
+    mcmc_steps = [1000, 500, 500, 100]
     
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
@@ -311,7 +317,7 @@ def main():
     
     # Setup
     output_folder = "output_analysis"
-    n_processes = 16  # Set to None to use all available CPUs
+    n_processes = 8  # Set to None to use all available CPUs
     
     # Initialize sequence manager
     sequence_manager = SamplerSequenceManager(sampler_sequence)
@@ -329,16 +335,27 @@ def main():
         # Determine if this is the first sampler in the entire sequence
         is_first = seq_idx == 0
         
-        # Create specific configuration for this sampler - UPDATED
-        config = {
-            **base_config,
-            "run": True,
-            "n_chains": 16,
-            "n_steps": mcmc_steps[seq_idx],
-            "save_freq": 1,
-            # EM/full samplers don't use sigma distributions
-            "use_sigma_dist": False if (is_first or sampler_key in ["em", "full"]) else True
-        }
+        # In main() function, when creating config for full sampler
+        if sampler_key == "full":
+            config = {
+                **base_config,
+                "run": True,
+                "n_chains": 8,
+                "n_steps": mcmc_steps[seq_idx],
+                "save_freq": 2,
+                "use_sigma_dist": False,  # FullSampler doesn't use sigma distributions
+                "em_map_file": "simulated_target_density.mrc",  # Add EM map file
+                "resolution": 15.0  # Add resolution parameter
+            }
+        else:
+            config = {
+                **base_config,
+                "run": True,
+                "n_chains": 8,
+                "n_steps": mcmc_steps[seq_idx],
+                "save_freq": 2,
+                "use_sigma_dist": False if (is_first or sampler_key in ["full"]) else True
+            }
         
         # Get sampler class from name
         sampler_class = SAMPLER_MAP.get(sampler_key)

@@ -344,7 +344,7 @@ def get_sampler_folder_name(sampler_type: str, sampler_position: int) -> str:
     Generate the folder name for a specific sampler at a given position in the sequence.
     
     Args:
-        sampler_type (str): Type of sampler ('pair', 'tetramer', 'octet')
+        sampler_type (str): Type of sampler ('pair', 'tetramer', 'octet', 'full')
         sampler_position (int): Position in the sequence (1-based)
     
     Returns:
@@ -759,11 +759,11 @@ def main():
     parser = argparse.ArgumentParser(description='Analyze MCMC results and fit GMM models for sampler sequences.')
     
     parser.add_argument('--sequence', type=str, required=True,
-                        help='Comma-separated sampler sequence (e.g., "pair,tetramer,pair,octet")')
-    
-    parser.add_argument('--sampler', type=str, required=True, choices=['pair', 'tetramer', 'octet'],
-                        help='Type of sampler to analyze (pair, tetramer, or octet)')
-    
+                        help='Comma-separated sampler sequence (e.g., "pair,tetramer,pair,octet, full")')
+
+    parser.add_argument('--sampler', type=str, required=True, choices=['pair', 'tetramer', 'octet', 'full'],
+                        help='Type of sampler to analyze (pair, tetramer, octet, or full)')
+
     parser.add_argument('--position', type=int, required=True,
                         help='0-based position of the sampler in the sequence')
     
@@ -786,7 +786,7 @@ def main():
     try:
         sampler_sequence = [s.strip().lower() for s in args.sequence.split(',')]
         # Validate sequence
-        valid_samplers = ['pair', 'tetramer', 'octet']
+        valid_samplers = ['pair', 'tetramer', 'octet', 'full']
         for sampler in sampler_sequence:
             if sampler not in valid_samplers:
                 print(f"Error: Invalid sampler '{sampler}' in sequence. Must be one of {valid_samplers}")

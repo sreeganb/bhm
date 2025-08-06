@@ -21,6 +21,9 @@ import mrcfile
 
 from base_sampler import BaseMCSampler
 from parameters import SystemParameters
+from pair_sampler import PairSampler
+from tetramer_sampler import TetramerSampler
+from octet_sampler import OctetSampler
 import networkx as nx
 
 # --- Backend Selection ---
@@ -66,13 +69,12 @@ class FullSampler(BaseMCSampler):
         self.sampler_sequence = sampler_sequence
         self.sequence_idx = sequence_idx
         
-        # Move parameters
-        self.position_step = 1.0
-        self.tetramer_trans_step = 0.25
-        self.tetramer_rot_step = 0.25
-        self.octet_trans_step = 0.25
-        self.octet_rot_step = 0.25
-        
+        # instantiate various samplers for move proposals
+        self.pair_sampler = PairSampler(sampler_sequence, sequence_idx)
+        self.tetramer_sampler = TetramerSampler(sampler_sequence, 
+                                                sequence_idx)
+        self.octet_sampler = OctetSampler(sampler_sequence, sequence_idx)
+
         # Handle positions - either load from previous sampler or initialize
         if positions_init is None:
             if sequence_idx > 0:
@@ -262,196 +264,59 @@ class FullSampler(BaseMCSampler):
 
     # =====================================================================
     # MOVE PROPOSAL FUNCTIONS
+    # All of the necessary proposal functions are already implemented in various
+    # files, such as base_sampler.py, tetramer_sampler.py, octet_sampler.py 
+    # and can be reused here without modification.
     # =====================================================================
+    # Create a new move, the full system treated as a single rigid body, and the 
+    # entire system is translated or rotated as a whole.
+    def propose_full_system_move(self, current_positions):
+        """Propose a move that translates/rotates the entire system."""
+        # Combine all positions into a single array
+        all_coords = []
+        for key in current_positions:
+            if isinstance(current_positions[key], np.ndarray) and len(current_positions[key]) > 0:
+                all_coords.append(current_positions[key])
+        combined_coords = np.vstack(all_coords)
 
-    def propose_position_move(self, positions: Dict[str, np.ndarray], 
-                             accept_rate: float = 0.3) -> Dict[str, np.ndarray]:
-        """Propose a random position move for a single particle."""
-        new_pos = {k: v.copy() for k, v in positions.items()}
+        # Calculate center of mass
+        com = np.mean(combined_coords, axis=0)
         
-        all_types = list(positions.keys())
-        if not all_types:
-            return new_pos
-        
-        particle_type = random.choice(all_types)
-        if len(new_pos[particle_type]) == 0:
-            return new_pos
-            
-        particle_idx = np.random.randint(len(new_pos[particle_type]))
-        
-        # Adjust step size based on acceptance rate
-        step_size = self.position_step
-        if accept_rate > 0.5:
-            step_size *= 1.05
-        elif accept_rate < 0.2:
-            step_size *= 0.95
-            
-        displacement = np.random.normal(0, step_size, 3)
-        new_pos[particle_type][particle_idx] += displacement
-        
-        return new_pos
+        # Random translation
+        full_trans_step = 1.0 # Translation step size
+        displacement = np.random.normal(0, full_trans_step, 3)
 
-    def get_tetramers(self, positions: Dict[str, np.ndarray]) -> List[Tuple[int, ...]]:
-        """Get tetramers from current positions."""
-        # Simplified tetramer identification
-        tetramers = []
-        n_a = len(positions['A'])
-        n_b = len(positions['B'])
-        n_c = len(positions['C'])
+        # Create a random vector passing through the COM
+        full_rot_step = 0.5
+        rand_vec = np.random.normal(size=3)
+        rand_vec /= np.linalg.norm(rand_vec) + 1e-10  # Normalize and avoid division by zero
+        angle = np.random.normal(0, full_rot_step)
         
-        for i in range(min(n_a, n_b)):
-            if i * 2 + 1 < n_c:
-                tetramers.append((i, i, i * 2, i * 2 + 1))
+        # Use Rodrigues' rotation formula
+        K = np.array([[0, -rand_vec[2], rand_vec[1]],
+                      [rand_vec[2], 0, -rand_vec[0]],
+                      [-rand_vec[1], rand_vec[0], 0]])
+        R = np.eye(3) + math.sin(angle) * K + (1 - math.cos(angle)) * (K @ K)
         
-        return tetramers
+        # Apply transformation to all coordinates
+        new_positions = {}
+        for key in current_positions:
+            if isinstance(current_positions[key], np.ndarray) and len(current_positions[key]) > 0:
+                coords = current_positions[key]
+                # Translate to origin
+                centered_coords = coords - com
+                # Rotate
+                rotated_coords = centered_coords @ R.T
+                # Translate back and apply displacement
+                new_coords = rotated_coords + com + displacement
+                new_positions[key] = new_coords
+            else:
+                new_positions[key] = current_positions[key]
 
-    def propose_tetramer_move(self, positions: Dict[str, np.ndarray], 
-                             accept_rate: float = 0.3) -> Dict[str, np.ndarray]:
-        """Propose a tetramer move."""
-        new_pos = {k: v.copy() for k, v in positions.items()}
-        tetramers = self.get_tetramers(positions)
-        
-        if not tetramers:
-            return new_pos
-            
-        # Select random tetramer
-        tet_idx = np.random.randint(len(tetramers))
-        a_idx, b_idx, c_idx1, c_idx2 = tetramers[tet_idx]
-        
-        # Get tetramer coordinates
-        tet_coords = np.array([
-            new_pos['A'][a_idx],
-            new_pos['B'][b_idx], 
-            new_pos['C'][c_idx1],
-            new_pos['C'][c_idx2]
-        ])
-        
-        centroid = np.mean(tet_coords, axis=0)
-        
-        # Apply random transformation
-        displacement = np.random.normal(0, self.tetramer_trans_step, 3)
-        axis = self._random_unit_vector()
-        angle = np.random.normal(0, self.tetramer_rot_step)
-        rotation_matrix = self._rotation_matrix(axis, angle)
-        
-        # Transform coordinates
-        transformed_coords = (tet_coords - centroid) @ rotation_matrix.T + centroid + displacement
-        
-        # Update positions
-        new_pos['A'][a_idx] = transformed_coords[0]
-        new_pos['B'][b_idx] = transformed_coords[1]
-        new_pos['C'][c_idx1] = transformed_coords[2]
-        new_pos['C'][c_idx2] = transformed_coords[3]
-        
-        return new_pos
-
-    def get_octets(self, positions: Dict[str, np.ndarray]) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
-        """Identify octets (pairs of tetramers) in the structure."""
-        tetramers = self.get_tetramers(positions)
-
-        if len(tetramers) < 2:
-            return [], tetramers
-
-        # Compute geometric centers for each tetramer
-        centers = np.zeros((len(tetramers), 3), dtype=np.float64)
-        for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
-            coords = np.vstack([
-                positions['A'][a_idx],
-                positions['B'][b_idx],
-                positions['C'][c_idx1],
-                positions['C'][c_idx2]
-            ])
-            centers[i] = np.mean(coords, axis=0)
-
-        # Build a graph and find maximum weight matching
-        G = nx.Graph()
-        for i_t in range(len(tetramers)):
-            G.add_node(i_t)
-        for i_t in range(len(tetramers)):
-            for j_t in range(i_t + 1, len(tetramers)):
-                dist_ij = np.linalg.norm(centers[i_t] - centers[j_t])
-                G.add_edge(i_t, j_t, weight=-dist_ij)  # Negative for max weight = min distance
-
-        matching = nx.algorithms.matching.max_weight_matching(G, maxcardinality=True)
-
-        octets = []
-        for i_t, j_t in matching:
-            i_t, j_t = sorted([i_t, j_t])
-            octets.append((tetramers[i_t], tetramers[j_t]))
-
-        return octets, tetramers
-
-    def propose_octet_move(self, positions: Dict[str, np.ndarray], octets) -> Dict[str, np.ndarray]:
-        """Propose a move for a randomly selected octet."""
-        new_pos = {k: v.copy() for k, v in positions.items()}
-        
-        if not octets:
-            return new_pos
-        
-        # Select random octet
-        octet_idx = np.random.randint(len(octets))
-        tetramer1, tetramer2 = octets[octet_idx]
-        
-        # Collect all particle indices in the octet
-        octet_particles = []
-        for tet in [tetramer1, tetramer2]:
-            octet_particles.extend([
-                ('A', tet[0]), ('B', tet[1]), ('C', tet[2]), ('C', tet[3])
-            ])
-        
-        # Group indices by particle type
-        grouped_indices = {}
-        for particle_type, particle_idx in octet_particles:
-            grouped_indices.setdefault(particle_type, []).append(particle_idx)
-        
-        # Get coordinates
-        octet_coords_list = []
-        for particle_type, indices_list in grouped_indices.items():
-            octet_coords_list.append(new_pos[particle_type][indices_list])
-        
-        if not octet_coords_list:
-            return new_pos 
-            
-        all_octet_coords = np.vstack(octet_coords_list)
-        centroid = np.mean(all_octet_coords, axis=0)
-        
-        # Generate transformation
-        displacement = np.random.normal(0, self.octet_trans_step, 3)
-        axis = self._random_unit_vector()
-        angle = np.random.normal(0, self.octet_rot_step)
-        rotation_matrix = self._rotation_matrix(axis, angle)
-        
-        # Apply transformation
-        for particle_type, indices_list in grouped_indices.items():
-            current_positions = new_pos[particle_type][indices_list]
-            transformed_positions = (current_positions - centroid) @ rotation_matrix.T + centroid + displacement
-            new_pos[particle_type][indices_list] = transformed_positions
-            
-        return new_pos
-
-    def _random_unit_vector(self):
-        """Generate a random unit vector."""
-        vec = np.random.randn(3)
-        vec /= np.linalg.norm(vec) + 1e-10
-        return vec
-
-    def _rotation_matrix(self, axis, theta):
-        """Create a 3D rotation matrix using Rodrigues' formula."""
-        axis = np.asarray(axis)
-        axis = axis / np.linalg.norm(axis)
-        a = np.cos(theta / 2.0)
-        b, c, d = -axis * np.sin(theta / 2.0)
-        
-        return np.array([
-            [a*a+b*b-c*c-d*d, 2*(b*c-a*d), 2*(b*d+a*c)],
-            [2*(b*c+a*d), a*a+c*c-b*b-d*d, 2*(c*d-a*b)],
-            [2*(b*d-a*c), 2*(c*d+a*b), a*a+d*d-b*b-c*c]
-        ])
-
+        return new_positions
     # =====================================================================
     # SCORING AND MCMC
     # =====================================================================
-
     def calculate_em_score(self, positions: Dict[str, np.ndarray]) -> Tuple[float, dict]:
         """Calculate the EM density map score for the current configuration."""
         all_coords = []
@@ -514,12 +379,12 @@ class FullSampler(BaseMCSampler):
             'correlation': np.zeros(n_steps // save_freq + 1),
             'score': np.zeros(n_steps // save_freq + 1)
         }
-        accepts = {'position': 0, 'tetramer': 0, 'octet': 0}
-        attempts = {'position': 0, 'tetramer': 0, 'octet': 0}
+        accepts = {'position': 0, 'tetramer': 0, 'octet': 0, 'full': 0}
+        attempts = {'position': 0, 'tetramer': 0, 'octet': 0, 'full': 0}
 
         # Initialize state
         current_positions = {k: v.copy() for k, v in self.positions_os.items()}
-        current_octets, current_tetramers = self.get_octets(current_positions)
+        current_octets, current_tetramers = self.octet_sampler.get_octets(current_positions)
 
         # Calculate initial score
         current_score, curr_em_info = self.calculate_em_score(current_positions)
@@ -536,8 +401,8 @@ class FullSampler(BaseMCSampler):
         self.save_state_to_disk(0, current_positions, self.sigma, current_score, traj_file=trajectory_file)
 
         # MCMC parameters
-        move_types = ['position', 'tetramer', 'octet']
-        move_probs = [0.3, 0.3, 0.4]
+        move_types = ['position', 'tetramer', 'octet', 'full']
+        move_probs = [0.05, 0.075, 0.125, 0.75]
         temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
@@ -556,12 +421,14 @@ class FullSampler(BaseMCSampler):
                 proposed_positions = self.propose_position_move(current_positions, accept_rate)
             elif move_type == 'tetramer':
                 accept_rate = accepts['tetramer'] / max(1, attempts['tetramer'])
-                proposed_positions = self.propose_tetramer_move(current_positions, accept_rate)
+                proposed_positions = self.tetramer_sampler.propose_tetramer_move(current_positions, accept_rate)
+            elif move_type == 'full':
+                proposed_positions = self.propose_full_system_move(current_positions)
             else:  # octet
-                proposed_positions = self.propose_octet_move(current_positions, current_octets)
+                proposed_positions = self.octet_sampler.propose_octet_move(current_positions, current_octets)
 
             # Calculate score
-            proposed_octets, proposed_tetramers = self.get_octets(proposed_positions)
+            proposed_octets, proposed_tetramers = self.octet_sampler.get_octets(proposed_positions)
             proposed_score, prop_em_info = self.calculate_em_score(proposed_positions)
 
             if not np.isfinite(proposed_score) or not np.isfinite(current_score):

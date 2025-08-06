@@ -140,21 +140,45 @@ def create_dummy_map_from_model(coords, radii, resolution, voxel_size, box_size,
     """Generates and saves a simulated .mrc map from a coarse-grained model."""
     print(f"Creating a dummy target map '{filename}'...")
     
+    # Debug: Check coordinate bounds
+    min_coords = np.min(coords, axis=0)
+    max_coords = np.max(coords, axis=0)
+    print(f"Coordinate bounds: X=[{min_coords[0]:.1f}, {max_coords[0]:.1f}], "
+          f"Y=[{min_coords[1]:.1f}, {max_coords[1]:.1f}], "
+          f"Z=[{min_coords[2]:.1f}, {max_coords[2]:.1f}]")
+    print(f"Map bounds: [-{box_size/2:.1f}, {box_size/2:.1f}]")
+    
     # Create grid definition for the new map
     grid_dim = int(box_size / voxel_size)
+    print(f"Grid dimensions: {grid_dim}x{grid_dim}x{grid_dim}")
     bins = [np.linspace(-box_size/2, box_size/2, grid_dim + 1)] * 3
     
     # Generate the blurred density from the model
     weights = radii**3
+    print(f"Weights range: [{np.min(weights):.1f}, {np.max(weights):.1f}]")
+    print(f"Using resolution: {resolution} Å, voxel size: {voxel_size} Å")
+    
     simulated_density = calc_projection_cpu(coords, weights, bins, resolution)
+    
+    # Debug: Check density statistics
+    print(f"Raw density stats:")
+    print(f"  min={np.min(simulated_density):.6f}")
+    print(f"  max={np.max(simulated_density):.6f}")
+    print(f"  mean={np.mean(simulated_density):.6f}")
+    print(f"  std={np.std(simulated_density):.6f}")
+    print(f"  non-zero voxels: {np.count_nonzero(simulated_density)}/{simulated_density.size}")
+    
+    if np.std(simulated_density) < 1e-10:
+        print("ERROR: Generated density has zero variance!")
+        return None
     
     # Save as an MRC file
     with mrcfile.new(filename, overwrite=True) as mrc:
         mrc.set_data(simulated_density.astype(np.float32))
         mrc.voxel_size = voxel_size
-        #mrc.header.map = mrcfile.MAP_ID
+    
     print("Dummy map created successfully.")
-
+    return simulated_density
 
 if __name__ == "__main__":
     # 1. DEFINE YOUR TOY MODEL DATA
@@ -173,9 +197,9 @@ if __name__ == "__main__":
     print(f"Model has {len(ideal_coords)} total particles.")
 
     # 2. CREATE A DUMMY "EXPERIMENTAL" MAP FROM THE IDEAL MODEL
-    RESOLUTION = 20.0  # Resolution of the map in Angstroms
-    VOXEL_SIZE = 5.0   # Voxel size of the map in Angstroms/pixel
-    BOX_SIZE = 250.0   # Box size of the map in Angstroms
+    RESOLUTION = 8.0  # Resolution of the map in Angstroms
+    VOXEL_SIZE = 1.0   # Voxel size of the map in Angstroms/pixel
+    BOX_SIZE = 300.0   # Box size of the map in Angstroms
     TARGET_MAP_FILE = "target_map.mrc"
     
     create_dummy_map_from_model(ideal_coords, ideal_radii, RESOLUTION, VOXEL_SIZE, BOX_SIZE, filename=TARGET_MAP_FILE)
