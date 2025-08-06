@@ -271,10 +271,14 @@ def analyze_trajectory_restraints(filename: str, burnin_fraction=0.2, tolerance=
     results = {
         'step': [],
         'frame_number': [],
-        'aa_satisfied_percent': [],
-        'ab_satisfied_percent': [],
-        'bc_satisfied_percent': [],
-        'total_satisfied_percent': [],
+        'aa_satisfied_count': [],          # Changed from percent to count
+        'ab_satisfied_count': [],          # Changed from percent to count
+        'bc_satisfied_count': [],          # Changed from percent to count
+        'total_satisfied_count': [],       # Changed from percent to count
+        'aa_total_restraints': [],         # Added total restraints for reference
+        'ab_total_restraints': [],         # Added total restraints for reference
+        'bc_total_restraints': [],         # Added total restraints for reference
+        'total_restraints': [],            # Added total restraints for reference
         'aa_mean_distance': [],
         'ab_mean_distance': [],
         'bc_mean_distance': [],
@@ -318,28 +322,26 @@ def analyze_trajectory_restraints(filename: str, burnin_fraction=0.2, tolerance=
                         for i in range(len(b_coords)) 
                         for j in range(len(c_coords))])
             
-            # Calculate restraint satisfaction
+            # Calculate restraint satisfaction (raw counts)
             aa_satisfied = np.sum(np.abs(aa_dists - ideal_aa) <= tolerance * ideal_aa)
             ab_satisfied = np.sum(np.abs(ab_dists - ideal_ab) <= tolerance * ideal_ab)
             bc_satisfied = np.sum(np.abs(bc_dists - ideal_bc) <= tolerance * ideal_bc)
             
-            # Calculate percentages
-            aa_satisfied_pct = 100 * aa_satisfied / len(aa_dists)
-            ab_satisfied_pct = 100 * ab_satisfied / len(ab_dists)
-            bc_satisfied_pct = 100 * bc_satisfied / len(bc_dists)
-            
-            # Total satisfied percentage (weighted by number of restraints)
+            # Total satisfied count
             total_restraints = len(aa_dists) + len(ab_dists) + len(bc_dists)
             total_satisfied = aa_satisfied + ab_satisfied + bc_satisfied
-            total_satisfied_pct = 100 * total_satisfied / total_restraints
             
-            # Store results
+            # Store results (raw counts instead of percentages)
             results['step'].append(step)
             results['frame_number'].append(frame_idx + 1)
-            results['aa_satisfied_percent'].append(aa_satisfied_pct)
-            results['ab_satisfied_percent'].append(ab_satisfied_pct)
-            results['bc_satisfied_percent'].append(bc_satisfied_pct)
-            results['total_satisfied_percent'].append(total_satisfied_pct)
+            results['aa_satisfied_count'].append(aa_satisfied)
+            results['ab_satisfied_count'].append(ab_satisfied)
+            results['bc_satisfied_count'].append(bc_satisfied)
+            results['total_satisfied_count'].append(total_satisfied)
+            results['aa_total_restraints'].append(len(aa_dists))
+            results['ab_total_restraints'].append(len(ab_dists))
+            results['bc_total_restraints'].append(len(bc_dists))
+            results['total_restraints'].append(total_restraints)
             results['aa_mean_distance'].append(np.mean(aa_dists))
             results['ab_mean_distance'].append(np.mean(ab_dists))
             results['bc_mean_distance'].append(np.mean(bc_dists))
@@ -347,7 +349,7 @@ def analyze_trajectory_restraints(filename: str, burnin_fraction=0.2, tolerance=
             results['ab_std_distance'].append(np.std(ab_dists))
             results['bc_std_distance'].append(np.std(bc_dists))
             
-            print(f"  Frame {frame_idx+1}: AA={aa_satisfied_pct:.1f}%, AB={ab_satisfied_pct:.1f}%, BC={bc_satisfied_pct:.1f}%, Total={total_satisfied_pct:.1f}%")
+            print(f"  Frame {frame_idx+1}: AA={aa_satisfied}/{len(aa_dists)}, AB={ab_satisfied}/{len(ab_dists)}, BC={bc_satisfied}/{len(bc_dists)}, Total={total_satisfied}/{total_restraints}")
             
         except Exception as e:
             print(f"  Error processing step {step}: {e}")
@@ -360,102 +362,99 @@ def analyze_trajectory_restraints(filename: str, burnin_fraction=0.2, tolerance=
     df = pd.DataFrame(results)
     
     # Save results with burnin info in filename
-    output_file = os.path.join(output_dir, f"trajectory_restraints_burnin{int(burnin_fraction*100)}.csv")
+    output_file = os.path.join(output_dir, f"trajectory_restraints_counts_burnin{int(burnin_fraction*100)}.csv")
     df.to_csv(output_file, index=False)
     print(f"Results saved to {output_file}")
     
-    # Create comprehensive plots
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    # Create comprehensive plots with raw counts
+    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
     
-    # Plot 1: Restraint satisfaction vs frame
-    axes[0, 0].plot(df['frame_number'], df['aa_satisfied_percent'], 'o-', label='A-A', alpha=0.7)
-    axes[0, 0].plot(df['frame_number'], df['ab_satisfied_percent'], 's-', label='A-B', alpha=0.7)
-    axes[0, 0].plot(df['frame_number'], df['bc_satisfied_percent'], '^-', label='B-C', alpha=0.7)
-    axes[0, 0].plot(df['frame_number'], df['total_satisfied_percent'], 'D-', label='Total', alpha=0.9, linewidth=2)
+    # Plot 1: Number of satisfied restraints vs frame
+    axes[0, 0].plot(df['frame_number'], df['aa_satisfied_count'], 'o-', label=f'A-A (max: {df["aa_total_restraints"].iloc[0]})', alpha=0.7)
+    axes[0, 0].plot(df['frame_number'], df['ab_satisfied_count'], 's-', label=f'A-B (max: {df["ab_total_restraints"].iloc[0]})', alpha=0.7)
+    axes[0, 0].plot(df['frame_number'], df['bc_satisfied_count'], '^-', label=f'B-C (max: {df["bc_total_restraints"].iloc[0]})', alpha=0.7)
+    axes[0, 0].plot(df['frame_number'], df['total_satisfied_count'], 'D-', label=f'Total (max: {df["total_restraints"].iloc[0]})', alpha=0.9, linewidth=2)
     axes[0, 0].set_xlabel('Frame Number')
-    axes[0, 0].set_ylabel('Restraints Satisfied (%)')
-    axes[0, 0].set_title(f'Restraint Satisfaction vs Frame (±{tolerance*100}% tolerance)')
+    axes[0, 0].set_ylabel('Number of Satisfied Restraints')
+    axes[0, 0].set_title(f'Satisfied Restraints vs Frame (±{tolerance*100}% tolerance)')
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
     
-    # Plot 2: Mean distances vs frame
-    axes[0, 1].plot(df['frame_number'], df['aa_mean_distance'], 'o-', label=f'A-A (ideal: {ideal_aa:.1f})', alpha=0.7)
-    axes[0, 1].plot(df['frame_number'], df['ab_mean_distance'], 's-', label=f'A-B (ideal: {ideal_ab:.1f})', alpha=0.7)
-    axes[0, 1].plot(df['frame_number'], df['bc_mean_distance'], '^-', label=f'B-C (ideal: {ideal_bc:.1f})', alpha=0.7)
-    axes[0, 1].axhline(ideal_aa, color='blue', linestyle='--', alpha=0.5)
-    axes[0, 1].axhline(ideal_ab, color='orange', linestyle='--', alpha=0.5)
-    axes[0, 1].axhline(ideal_bc, color='green', linestyle='--', alpha=0.5)
-    axes[0, 1].set_xlabel('Frame Number')
-    axes[0, 1].set_ylabel('Mean Distance (Å)')
-    axes[0, 1].set_title('Mean Distances vs Frame')
+    # Add horizontal lines showing maximum possible for each type
+    axes[0, 0].axhline(df['aa_total_restraints'].iloc[0], color='blue', linestyle=':', alpha=0.5, label='AA max')
+    axes[0, 0].axhline(df['ab_total_restraints'].iloc[0], color='green', linestyle=':', alpha=0.5, label='AB max')
+    axes[0, 0].axhline(df['bc_total_restraints'].iloc[0], color='orange', linestyle=':', alpha=0.5, label='BC max')
+            
+    # Plot 2: Distribution of total satisfied restraints
+    axes[0, 1].hist(df['total_satisfied_count'], bins=20, alpha=0.7, color='purple')
+    axes[0, 1].axvline(df['total_satisfied_count'].mean(), color='red', linestyle='--', 
+                      label=f'Mean: {df["total_satisfied_count"].mean():.1f}')
+    axes[0, 1].axvline(df['total_restraints'].iloc[0], color='black', linestyle=':', 
+                      label=f'Maximum: {df["total_restraints"].iloc[0]}')
+    axes[0, 1].set_xlabel('Total Satisfied Restraints')
+    axes[0, 1].set_ylabel('Frequency')
+    axes[0, 1].set_title('Distribution of Total Satisfied Restraints')
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
-    
-    # Plot 3: Standard deviation of distances
-    axes[0, 2].plot(df['frame_number'], df['aa_std_distance'], 'o-', label='A-A', alpha=0.7)
-    axes[0, 2].plot(df['frame_number'], df['ab_std_distance'], 's-', label='A-B', alpha=0.7)
-    axes[0, 2].plot(df['frame_number'], df['bc_std_distance'], '^-', label='B-C', alpha=0.7)
-    axes[0, 2].set_xlabel('Frame Number')
-    axes[0, 2].set_ylabel('Std Dev of Distance (Å)')
-    axes[0, 2].set_title('Distance Variability vs Frame')
-    axes[0, 2].legend()
-    axes[0, 2].grid(True, alpha=0.3)
-    
-    # Plot 4: Distribution of total satisfaction
-    axes[1, 0].hist(df['total_satisfied_percent'], bins=20, alpha=0.7, color='purple')
-    axes[1, 0].axvline(df['total_satisfied_percent'].mean(), color='red', linestyle='--', 
-                      label=f'Mean: {df["total_satisfied_percent"].mean():.1f}%')
-    axes[1, 0].set_xlabel('Total Restraints Satisfied (%)')
-    axes[1, 0].set_ylabel('Frequency')
-    axes[1, 0].set_title('Distribution of Total Restraint Satisfaction')
+
+    # Plot 3: Running average of total satisfied restraints
+    window_size = max(1, len(df) // 10)
+    running_avg = df['total_satisfied_count'].rolling(window=window_size).mean()
+    axes[1, 0].plot(df['frame_number'], df['total_satisfied_count'], 'o-', alpha=0.3, label='Individual')
+    axes[1, 0].plot(df['frame_number'], running_avg, '-', linewidth=2, label=f'Running avg (window={window_size})')
+    axes[1, 0].axhline(df['total_restraints'].iloc[0], color='black', linestyle=':', label='Maximum possible')
+    axes[1, 0].set_xlabel('Frame Number')
+    axes[1, 0].set_ylabel('Total Satisfied Restraints')
+    axes[1, 0].set_title('Convergence of Satisfied Restraints')
     axes[1, 0].legend()
     axes[1, 0].grid(True, alpha=0.3)
+
+    # Plot 4: Stacked bar chart showing restraint breakdown for selected frames
+    # Sample every 10th frame or max 20 frames for readability
+    sample_indices = np.linspace(0, len(df)-1, min(20, len(df)), dtype=int)
+    sampled_df = df.iloc[sample_indices]
     
-    # Plot 5: Running average of total satisfaction
-    window_size = max(1, len(df) // 10)
-    running_avg = df['total_satisfied_percent'].rolling(window=window_size).mean()
-    axes[1, 1].plot(df['frame_number'], df['total_satisfied_percent'], 'o-', alpha=0.3, label='Individual')
-    axes[1, 1].plot(df['frame_number'], running_avg, '-', linewidth=2, label=f'Running avg (window={window_size})')
-    axes[1, 1].set_xlabel('Frame Number')
-    axes[1, 1].set_ylabel('Total Restraints Satisfied (%)')
-    axes[1, 1].set_title('Convergence of Restraint Satisfaction')
+    width = 0.8
+    x_pos = np.arange(len(sampled_df))
+    
+    p1 = axes[1, 1].bar(x_pos, sampled_df['aa_satisfied_count'], width, label='A-A', alpha=0.8)
+    p2 = axes[1, 1].bar(x_pos, sampled_df['ab_satisfied_count'], width, 
+                       bottom=sampled_df['aa_satisfied_count'], label='A-B', alpha=0.8)
+    p3 = axes[1, 1].bar(x_pos, sampled_df['bc_satisfied_count'], width,
+                       bottom=sampled_df['aa_satisfied_count'] + sampled_df['ab_satisfied_count'], 
+                       label='B-C', alpha=0.8)
+    
+    axes[1, 1].set_xlabel('Sampled Frames')
+    axes[1, 1].set_ylabel('Number of Satisfied Restraints')
+    axes[1, 1].set_title('Restraint Satisfaction Breakdown (Sampled Frames)')
+    axes[1, 1].set_xticks(x_pos)
+    axes[1, 1].set_xticklabels([f'{int(f)}' for f in sampled_df['frame_number']], rotation=45)
     axes[1, 1].legend()
-    axes[1, 1].grid(True, alpha=0.3)
+    axes[1, 1].grid(True, alpha=0.3, axis='y')
     
-    # Plot 6: Correlation matrix of satisfaction percentages
-    corr_data = df[['aa_satisfied_percent', 'ab_satisfied_percent', 'bc_satisfied_percent']].corr()
-    im = axes[1, 2].imshow(corr_data, cmap='coolwarm', vmin=-1, vmax=1)
-    axes[1, 2].set_xticks(range(3))
-    axes[1, 2].set_yticks(range(3))
-    axes[1, 2].set_xticklabels(['A-A', 'A-B', 'B-C'])
-    axes[1, 2].set_yticklabels(['A-A', 'A-B', 'B-C'])
-    axes[1, 2].set_title('Restraint Satisfaction Correlation')
-    
-    # Add correlation values to the plot
-    for i in range(3):
-        for j in range(3):
-            axes[1, 2].text(j, i, f'{corr_data.iloc[i, j]:.2f}', 
-                           ha='center', va='center', fontweight='bold')
-    
-    plt.colorbar(im, ax=axes[1, 2])
+    # Add total line
+    axes[1, 1].axhline(df['total_restraints'].iloc[0], color='red', linestyle='--', 
+                      label=f'Max possible: {df["total_restraints"].iloc[0]}')
     
     # Overall title
-    fig.suptitle(f'Trajectory Restraint Analysis (burnin={burnin_fraction}, tolerance=±{tolerance*100}%)', 
+    fig.suptitle(f'Trajectory Restraint Analysis - Raw Counts (burnin={burnin_fraction}, tolerance=±{tolerance*100}%)', 
                 fontsize=16, fontweight='bold')
     
     plt.tight_layout()
     
     # Save high-quality plot
-    plot_file = os.path.join(output_dir, f'trajectory_restraints_burnin{int(burnin_fraction*100)}.pdf')
+    plot_file = os.path.join(output_dir, f'trajectory_restraints_counts_burnin{int(burnin_fraction*100)}.pdf')
     plt.savefig(plot_file, format='pdf', dpi=300, bbox_inches='tight')
     print(f"Plot saved to {plot_file}")
     
-    # Print summary statistics
-    print(f"\n=== Restraint Satisfaction Summary (burnin={burnin_fraction}) ===")
-    print(f"A-A Satisfaction: mean={df['aa_satisfied_percent'].mean():.1f}%, std={df['aa_satisfied_percent'].std():.1f}%")
-    print(f"A-B Satisfaction: mean={df['ab_satisfied_percent'].mean():.1f}%, std={df['ab_satisfied_percent'].std():.1f}%")
-    print(f"B-C Satisfaction: mean={df['bc_satisfied_percent'].mean():.1f}%, std={df['bc_satisfied_percent'].std():.1f}%")
-    print(f"Total Satisfaction: mean={df['total_satisfied_percent'].mean():.1f}%, std={df['total_satisfied_percent'].std():.1f}%")
+    # Print summary statistics with raw counts
+    print(f"\n=== Restraint Satisfaction Summary - Raw Counts (burnin={burnin_fraction}) ===")
+    print(f"Total possible restraints: AA={df['aa_total_restraints'].iloc[0]}, AB={df['ab_total_restraints'].iloc[0]}, BC={df['bc_total_restraints'].iloc[0]}")
+    print(f"A-A Satisfied: mean={df['aa_satisfied_count'].mean():.1f}, std={df['aa_satisfied_count'].std():.1f}, max={df['aa_satisfied_count'].max()}")
+    print(f"A-B Satisfied: mean={df['ab_satisfied_count'].mean():.1f}, std={df['ab_satisfied_count'].std():.1f}, max={df['ab_satisfied_count'].max()}")
+    print(f"B-C Satisfied: mean={df['bc_satisfied_count'].mean():.1f}, std={df['bc_satisfied_count'].std():.1f}, max={df['bc_satisfied_count'].max()}")
+    print(f"Total Satisfied: mean={df['total_satisfied_count'].mean():.1f}, std={df['total_satisfied_count'].std():.1f}, max={df['total_satisfied_count'].max()}")
+    print(f"Overall satisfaction rate: {df['total_satisfied_count'].mean():.1f}/{df['total_restraints'].iloc[0]} = {100*df['total_satisfied_count'].mean()/df['total_restraints'].iloc[0]:.1f}%")
     
     plt.show()
     
@@ -464,13 +463,13 @@ def analyze_trajectory_restraints(filename: str, burnin_fraction=0.2, tolerance=
 # Usage example
 if __name__ == "__main__":
     # Specify your trajectory file
-    trajectory_file = "../output_analysis/tetramersampler_results_1/trajectory_chain_8.h5"  # Update this path
+    trajectory_file = "../output_analysis/pairsampler_results_1/trajectory_chain_10.h5"  # Update this path
     
     # Analyze restraint satisfaction over trajectory
     restraint_results = analyze_trajectory_restraints(
         trajectory_file, 
-        burnin_fraction=0.5, 
-        tolerance=0.01
+        burnin_fraction=0.6, 
+        tolerance=0.001
     )
     
     if restraint_results is not None:
