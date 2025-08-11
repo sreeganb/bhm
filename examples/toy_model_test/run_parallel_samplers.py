@@ -304,8 +304,10 @@ def main():
     #mcmc_steps = [500000, 500000, 500000]
     
     # Option 2: EM-only sampling
-    sampler_sequence = ["pair", "tetramer", "octet", "full"]
-    mcmc_steps = [1000, 500, 500, 100]
+    #sampler_sequence = ["pair", "tetramer", "octet", "full"]
+    #mcmc_steps = [100000, 50000, 50000, 2000]
+    sampler_sequence = ["pair", "tetramer", "full"]
+    mcmc_steps = [5000, 1000, 200]
     
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
@@ -342,10 +344,10 @@ def main():
                 "run": True,
                 "n_chains": 8,
                 "n_steps": mcmc_steps[seq_idx],
-                "save_freq": 2,
+                "save_freq": 5,
                 "use_sigma_dist": False,  # FullSampler doesn't use sigma distributions
                 "em_map_file": "simulated_target_density.mrc",  # Add EM map file
-                "resolution": 15.0  # Add resolution parameter
+                "resolution": 55.0  # Add resolution parameter
             }
         else:
             config = {
@@ -353,7 +355,7 @@ def main():
                 "run": True,
                 "n_chains": 8,
                 "n_steps": mcmc_steps[seq_idx],
-                "save_freq": 2,
+                "save_freq": 10,
                 "use_sigma_dist": False if (is_first or sampler_key in ["full"]) else True
             }
         

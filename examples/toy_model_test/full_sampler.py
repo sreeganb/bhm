@@ -42,25 +42,14 @@ class FullSampler(BaseMCSampler):
     Sampler that uses only EM density map scoring with self-contained CCC calculation.
     """
     def __init__(self, 
-                 sampler_sequence: List[str], 
-                 sequence_idx: int,
-                 em_map_file: str,
-                 resolution: float = 50.0,
-                 base_output_dir: str = "output_analysis", 
-                 positions_init=None,
-                 specific_chain: int = None):
-        """
-        Initialize EM_Sampler with EM density map.
-        
-        Args:
-            sampler_sequence: List of sampler names in execution order
-            sequence_idx: Current position in the sampler sequence
-            em_map_file: Path to the EM density map file (MRC format)
-            resolution: Resolution for EM density map scoring (Angstroms)
-            base_output_dir: Base directory for analysis results
-            positions_init: Optional initial positions to use
-            specific_chain: Specific chain to load from (if not specified, random)
-        """
+                sampler_sequence: List[str], 
+                sequence_idx: int,
+                em_map_file: str,
+                resolution: float = 50.0,
+                base_output_dir: str = "output_analysis", 
+                positions_init=None,
+                specific_chain: int = None):
+        """Initialize EM_Sampler with EM density map."""
         super().__init__()
         
         # Initialize parameters and positions
@@ -69,19 +58,42 @@ class FullSampler(BaseMCSampler):
         self.sampler_sequence = sampler_sequence
         self.sequence_idx = sequence_idx
         
+        # Set up EM restraint parameters FIRST
+        self.em_map_file = em_map_file
+        self.resolution = resolution
+        
+        # Load target map BEFORE trying to use it
+        if not os.path.exists(self.em_map_file):
+            raise ValueError(f"EM map file not found: {self.em_map_file}")
+            
+        self.target_density_map = self.parse_density(self.em_map_file)
+        print(f"Successfully loaded EM map: {self.em_map_file}")
+        # Debug the loaded density map
+        self.debug_density_map()
+
+        # Debug map properties
+        print(f"Map grid: {self.target_density_map.header.nx} x {self.target_density_map.header.ny} x {self.target_density_map.header.nz}")
+        print(f"Voxel size: {self.target_density_map.voxel_size.x:.2f} Å")
+
+        # NOW we can create bins from the loaded density map
+        self.bins = self.bins_from_density(self.target_density_map)
+        self.box_min = np.array([b[0] for b in self.bins])
+        self.box_max = np.array([b[-1] for b in self.bins])
+
+        print(f"Calculated map bounds: X=[{self.box_min[0]:.1f}, {self.box_max[0]:.1f}], "
+            f"Y=[{self.box_min[1]:.1f}, {self.box_max[1]:.1f}], "
+            f"Z=[{self.box_min[2]:.1f}, {self.box_max[2]:.1f}]")
+        
         # instantiate various samplers for move proposals
         self.pair_sampler = PairSampler(sampler_sequence, sequence_idx)
-        self.tetramer_sampler = TetramerSampler(sampler_sequence, 
-                                                sequence_idx)
+        self.tetramer_sampler = TetramerSampler(sampler_sequence, sequence_idx)
         self.octet_sampler = OctetSampler(sampler_sequence, sequence_idx)
 
         # Handle positions - either load from previous sampler or initialize
         if positions_init is None:
             if sequence_idx > 0:
-                # Try to load from previous sampler
                 self.positions_os = self._load_from_previous_sampler()
             else:
-                # Initialize new positions
                 self.positions_os = self.initialize_positions()
         else:
             self.positions_os = positions_init
@@ -89,16 +101,76 @@ class FullSampler(BaseMCSampler):
         # Create dummy sigma values (not used but needed for compatibility)
         self.sigma = {'AA': 1.0, 'AB': 1.0, 'BC': 1.0}
         
-        # Set up EM restraint
-        self.em_map_file = em_map_file
-        self.resolution = resolution
+        # DEBUG: Check if initial positions are in bounds
+        self._debug_position_bounds()
+#=====================================================================
+    def debug_density_map(self):
+        """Debug the loaded density map properties."""
+        density = self.target_density_map
         
-        # Load target map
-        if not os.path.exists(self.em_map_file):
-            raise ValueError(f"EM map file not found: {self.em_map_file}")
+        print("=== DENSITY MAP DEBUGGING ===")
+        print(f"Map file: {self.em_map_file}")
+        print(f"Grid dimensions: {density.header.nx} x {density.header.ny} x {density.header.nz}")
+        print(f"Voxel size: {density.voxel_size.x:.3f} x {density.voxel_size.y:.3f} x {density.voxel_size.z:.3f}")
+        
+        # Check data statistics
+        data = density.data
+        print(f"Data shape: {data.shape}")
+        print(f"Data type: {data.dtype}")
+        print(f"Data range: [{np.min(data):.6f}, {np.max(data):.6f}]")
+        print(f"Data mean: {np.mean(data):.6f}")
+        print(f"Data std: {np.std(data):.6f}")
+        print(f"Non-zero voxels: {np.count_nonzero(data)}/{data.size}")
+        
+        # Check map origin/centering
+        print(f"Map origin: ({density.header.origin.x:.1f}, {density.header.origin.y:.1f}, {density.header.origin.z:.1f})")
+        
+        # Calculate expected bounds
+        x_extent = density.header.nx * density.voxel_size.x / 2
+        y_extent = density.header.ny * density.voxel_size.y / 2
+        z_extent = density.header.nz * density.voxel_size.z / 2
+        print(f"Expected bounds: X=[{-x_extent:.1f}, {x_extent:.1f}], Y=[{-y_extent:.1f}, {y_extent:.1f}], Z=[{-z_extent:.1f}, {z_extent:.1f}]")
+        
+        if np.std(data) < 1e-10:
+            print("❌ ERROR: Map has zero variance - will cause zero correlation!")
+        else:
+            print("✓ Map has non-zero variance")
+#=====================================================================
+    def _debug_position_bounds(self):
+        """Debug function to check if positions are within map bounds."""
+        all_coords = []
+        for key in ['A', 'B', 'C']:
+            if key in self.positions_os and len(self.positions_os[key]) > 0:
+                all_coords.append(self.positions_os[key])
+        
+        if all_coords:
+            combined = np.vstack(all_coords)
+            min_pos = np.min(combined, axis=0)
+            max_pos = np.max(combined, axis=0)
             
-        self.target_density_map = self.parse_density(self.em_map_file)
-        print(f"Successfully loaded EM map: {self.em_map_file}")
+            print(f"Initial particle bounds: X=[{min_pos[0]:.1f}, {max_pos[0]:.1f}], "
+                f"Y=[{min_pos[1]:.1f}, {max_pos[1]:.1f}], "
+                f"Z=[{min_pos[2]:.1f}, {max_pos[2]:.1f}]")
+            
+            print(f"Map bounds: X=[{self.box_min[0]:.1f}, {self.box_max[0]:.1f}], "
+                f"Y=[{self.box_min[1]:.1f}, {self.box_max[1]:.1f}], "
+                f"Z=[{self.box_min[2]:.1f}, {self.box_max[2]:.1f}]")
+            
+            # Check if any particles are out of bounds
+            out_of_bounds = np.any((combined < self.box_min) | (combined > self.box_max), axis=1)
+            n_out = np.sum(out_of_bounds)
+            
+            if n_out > 0:
+                print(f"WARNING: {n_out}/{len(combined)} particles are out of map bounds!")
+                print("This will cause zero correlation and high penalty scores.")
+                
+                # Show which particles are out of bounds
+                for i, is_out in enumerate(out_of_bounds):
+                    if is_out:
+                        coord = combined[i]
+                        print(f"  Particle {i}: [{coord[0]:.1f}, {coord[1]:.1f}, {coord[2]:.1f}]")
+            else:
+                print("All particles are within map bounds.")
 
     def _load_from_previous_sampler(self) -> Dict[str, np.ndarray]:
         """Load positions from the previous sampler in the sequence."""
@@ -160,10 +232,26 @@ class FullSampler(BaseMCSampler):
         return density
 
     def bins_from_density(self, density) -> list:
-        """Generate bins from density map."""
-        binsx = (np.linspace(0, density.header.nx, density.header.nx + 1) - density.header.nx/2) * density.voxel_size.x
-        binsy = (np.linspace(0, density.header.ny, density.header.ny + 1) - density.header.ny/2) * density.voxel_size.y
-        binsz = (np.linspace(0, density.header.nz, density.header.nz + 1) - density.header.nz/2) * density.voxel_size.z
+        """Generate bins from density map - CORRECTED VERSION."""
+        # Get grid dimensions and voxel size
+        nx, ny, nz = density.header.nx, density.header.ny, density.header.nz
+        vx, vy, vz = density.voxel_size.x, density.voxel_size.y, density.voxel_size.z
+        
+        # Calculate the actual map bounds (centered at origin)
+        # Map spans from -size/2 to +size/2
+        x_extent = nx * vx / 2
+        y_extent = ny * vy / 2  
+        z_extent = nz * vz / 2
+        
+        # Create bins that match the map generation
+        binsx = np.linspace(-x_extent, x_extent, nx + 1)
+        binsy = np.linspace(-y_extent, y_extent, ny + 1)
+        binsz = np.linspace(-z_extent, z_extent, nz + 1)
+        
+        print(f"Corrected map bounds: X=[{-x_extent:.1f}, {x_extent:.1f}], "
+            f"Y=[{-y_extent:.1f}, {y_extent:.1f}], "
+            f"Z=[{-z_extent:.1f}, {z_extent:.1f}]")
+        
         return (binsx, binsy, binsz)
 
     def calc_projection_cpu(self, coords, weights, bins, resolution: float):
@@ -341,6 +429,14 @@ class FullSampler(BaseMCSampler):
         sphere_coords = np.vstack(all_coords)
         sphere_radii = np.concatenate(all_radii)
         
+        out_penalty = 0.0
+        for coords in [positions.get('A', np.array([])), positions.get('B', np.array([])), positions.get('C', np.array([]))]:
+            if len(coords) > 0:
+                out = np.any((coords < self.box_min) | (coords > self.box_max), axis=1)
+                out_penalty += np.sum(out) * 1000.0  # Large penalty per out-of-bounds particle
+        if out_penalty > 0:
+            return 100.0 + out_penalty, {"correlation": 0.0}  # Worse than CCC=0
+        
         # Calculate cross-correlation coefficient
         ccc = self.calculate_ccc_score(
             sphere_coords, sphere_radii, 
@@ -402,8 +498,8 @@ class FullSampler(BaseMCSampler):
 
         # MCMC parameters
         move_types = ['position', 'tetramer', 'octet', 'full']
-        move_probs = [0.05, 0.075, 0.125, 0.75]
-        temp_start, temp_end = 5.0, 0.1
+        move_probs = [0.2, 0.2, 0.2, 0.4]
+        temp_start, temp_end = 10.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
         print(f"Starting MCMC sampling for {n_steps} total steps...")

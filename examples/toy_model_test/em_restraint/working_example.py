@@ -197,9 +197,9 @@ if __name__ == "__main__":
     print(f"Model has {len(ideal_coords)} total particles.")
 
     # 2. CREATE A DUMMY "EXPERIMENTAL" MAP FROM THE IDEAL MODEL
-    RESOLUTION = 8.0  # Resolution of the map in Angstroms
-    VOXEL_SIZE = 1.0   # Voxel size of the map in Angstroms/pixel
-    BOX_SIZE = 300.0   # Box size of the map in Angstroms
+    RESOLUTION = 15.0  # Resolution of the map in Angstroms
+    VOXEL_SIZE = 4.0   # Voxel size of the map in Angstroms/pixel
+    BOX_SIZE = 800.0   # Box size of the map in Angstroms
     TARGET_MAP_FILE = "target_map.mrc"
     
     create_dummy_map_from_model(ideal_coords, ideal_radii, RESOLUTION, VOXEL_SIZE, BOX_SIZE, filename=TARGET_MAP_FILE)
