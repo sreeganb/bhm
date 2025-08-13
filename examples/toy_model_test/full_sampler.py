@@ -70,7 +70,7 @@ class FullSampler(BaseMCSampler):
         print(f"Successfully loaded EM map: {self.em_map_file}")
         
         # Debug the loaded density map
-        self.debug_density_map()
+#        self.debug_density_map()
 
         # **NEW: Center the density map BEFORE creating bins**
         self.target_density_map = self.center_density_map(self.target_density_map)
@@ -139,9 +139,9 @@ class FullSampler(BaseMCSampler):
         print(f"Expected bounds: X=[{-x_extent:.1f}, {x_extent:.1f}], Y=[{-y_extent:.1f}, {y_extent:.1f}], Z=[{-z_extent:.1f}, {z_extent:.1f}]")
         
         if np.std(data) < 1e-10:
-            print("❌ ERROR: Map has zero variance - will cause zero correlation!")
+            print("ERROR: Map has zero variance - will cause zero correlation!")
         else:
-            print("✓ Map has non-zero variance")
+            print("Map has non-zero variance")
 #======================================================================
     def center_density_map(self, density_map):
         """
@@ -232,7 +232,7 @@ class FullSampler(BaseMCSampler):
                 raise e
                 
         else:
-            print("❌ ERROR: Density map has zero total density!")
+            print("ERROR: Density map has zero total density!")
             return density_map
 
     def center_particles_to_origin(self, positions):
@@ -277,7 +277,7 @@ class FullSampler(BaseMCSampler):
             new_com = np.mean(combined_coords_new, axis=0)
             print(f"New particle center of mass: ({new_com[0]:.2f}, {new_com[1]:.2f}, {new_com[2]:.2f})")
         
-        print("✓ Particles centered successfully")
+        print("Particles centered successfully")
         return centered_positions
 #=====================================================================
     def _debug_position_bounds(self):
@@ -392,9 +392,9 @@ class FullSampler(BaseMCSampler):
         binsy = np.linspace(-y_extent, y_extent, ny + 1)
         binsz = np.linspace(-z_extent, z_extent, nz + 1)
         
-        print(f"Corrected map bounds: X=[{-x_extent:.1f}, {x_extent:.1f}], "
-            f"Y=[{-y_extent:.1f}, {y_extent:.1f}], "
-            f"Z=[{-z_extent:.1f}, {z_extent:.1f}]")
+        #print(f"Corrected map bounds: X=[{-x_extent:.1f}, {x_extent:.1f}], "
+        #    f"Y=[{-y_extent:.1f}, {y_extent:.1f}], "
+        #    f"Z=[{-z_extent:.1f}, {z_extent:.1f}]")
         
         return (binsx, binsy, binsz)
 
@@ -515,11 +515,11 @@ class FullSampler(BaseMCSampler):
         com = np.mean(combined_coords, axis=0)
         
         # Random translation
-        full_trans_step = 1.0 # Translation step size
+        full_trans_step = 0.9 # Translation step size
         displacement = np.random.normal(0, full_trans_step, 3)
 
         # Create a random vector passing through the COM
-        full_rot_step = 0.5
+        full_rot_step = 0.25
         rand_vec = np.random.normal(size=3)
         rand_vec /= np.linalg.norm(rand_vec) + 1e-10  # Normalize and avoid division by zero
         angle = np.random.normal(0, full_rot_step)
@@ -647,8 +647,8 @@ class FullSampler(BaseMCSampler):
         self.save_state_to_disk(0, current_positions, self.sigma, current_score, traj_file=trajectory_file)
 
         # MCMC parameters
-        move_types = ['position', 'tetramer', 'octet', 'full']
-        move_probs = [0.2, 0.2, 0.2, 0.4]
+        move_types = ['tetramer', 'octet', 'full']
+        move_probs = [0.12, 0.18, 0.7]
         temp_start, temp_end = 10.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
