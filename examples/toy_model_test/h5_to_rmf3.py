@@ -143,10 +143,119 @@ def inspect_hdf5_structure(hdf5_file):
     print(f"=== HDF5 Structure: {hdf5_file} ===")
     with h5py.File(hdf5_file, 'r') as f:
         f.visititems(print_structure)
+#def convert_fullsampler_hdf5_to_rmf3(hdf5_file, rmf3_file):
+#    """
+#    Convert FullSampler HDF5 trajectory to RMF3 format with proper frame handling.
+#    Works with the structure: trajectory/state_XXXXX/positions/{A,B,C}
+#    """
+#    with h5py.File(hdf5_file, 'r') as f:
+#        traj_grp = f['trajectory']
+#        states = sorted([k for k in traj_grp.keys() if k.startswith('state_')])
+#        
+#        if not states:
+#            print("No states found in trajectory.")
+#            return
+#        
+#        print(f"Found {len(states)} states in trajectory")
+#        
+#        # Read first state to get structure
+#        first_state = traj_grp[states[0]]
+#        pos_grp = first_state['positions']
+#        
+#        # Define particle properties based on your system
+#        particle_types = []
+#        initial_coords = []
+#        radii = {'A': 24.0, 'B': 14.0, 'C': 16.0}  # Your actual radii
+#        
+#        # Process particles in order: A, B, C
+#        for particle_type in ['A', 'B', 'C']:
+#            if particle_type in pos_grp:
+#                coords = pos_grp[particle_type][:]
+#                n_particles = len(coords)
+#                particle_types.extend([particle_type] * n_particles)
+#                initial_coords.extend(coords)
+#                print(f"Found {n_particles} particles of type {particle_type}")
+#        
+#        initial_coords = np.array(initial_coords)
+#        n_total = len(initial_coords)
+#        
+#        print(f"Total particles: {n_total}")
+#        
+#        # Create RMF file
+#        rmf = RMF.create_rmf_file(rmf3_file)
+#        rmf.set_description("FullSampler trajectory converted from HDF5 to RMF3")
+#        
+#        # Create RMF node structure
+#        root_node = rmf.get_root_node()
+#        model_node = root_node.add_child("model", RMF.REPRESENTATION)
+#        
+#        # Add particle factory
+#        pf = RMF.ParticleFactory(rmf)
+#        
+#        # Create RMF particles
+#        rmf_particles = []
+#        particle_counter = {'A': 0, 'B': 0, 'C': 0}
+#        
+#        for i, ptype in enumerate(particle_types):
+#            # Create particle node with name set during creation
+#            particle_name = f"{ptype}_{particle_counter[ptype]}"
+#            particle_node = model_node.add_child(particle_name, RMF.REPRESENTATION)
+#            particle_counter[ptype] += 1
+#            
+#            # Set particle data
+#            particle_data = pf.get(particle_node)
+#            
+#            # Convert numpy array to RMF Vector3
+#            coord = initial_coords[i]
+#            rmf_coord = RMF.Vector3(float(coord[0]), float(coord[1]), float(coord[2]))
+#            particle_data.set_coordinates(rmf_coord)
+#            particle_data.set_radius(float(radii[ptype]))
+#            particle_data.set_mass(1.0)
+#            
+#            # Store the particle data
+#            rmf_particles.append((particle_node, particle_data))
+#        
+#        # Process ALL frames (including the first one)
+#        print(f"Converting {len(states)} frames...")
+#        for frame_idx, state_name in enumerate(states):
+#            if frame_idx % 50 == 0:  # Print progress every 50 frames
+#                print(f"Processing frame {frame_idx+1}/{len(states)}")
+#            
+#            # Add frame for each state
+#            rmf.add_frame(f"frame_{frame_idx}", RMF.FRAME)
+#            
+#            state_grp = traj_grp[state_name]
+#            pos_grp = state_grp['positions']
+#            
+#            # Collect coordinates for this state in the same order
+#            all_coords = []
+#            for particle_type in ['A', 'B', 'C']:
+#                if particle_type in pos_grp:
+#                    coords = pos_grp[particle_type][:]
+#                    all_coords.extend(coords)
+#            
+#            all_coords = np.array(all_coords)
+#            
+#            # Update coordinates for this frame
+#            for j, (particle_node, particle_data) in enumerate(rmf_particles):
+#                coord = all_coords[j]
+#                rmf_coord = RMF.Vector3(float(coord[0]), float(coord[1]), float(coord[2]))
+#                particle_data.set_coordinates(rmf_coord)
+#        
+#        # Flush and close
+#        rmf.flush()
+#        del rmf  # Proper cleanup
+#        
+#        print(f"Conversion complete! RMF3 file saved: {rmf3_file}")
+#        print(f"Open with: chimerax {rmf3_file}")
+#        print("\nIn ChimeraX, use these commands:")
+#        print("  rmf readtraj #1")
+#        print("  coordset slider #1")
 def convert_fullsampler_hdf5_to_rmf3(hdf5_file, rmf3_file):
     """
-    Convert FullSampler HDF5 trajectory to RMF3 format.
+    Convert FullSampler HDF5 trajectory to RMF3 format with proper frame handling and colors.
     Works with the structure: trajectory/state_XXXXX/positions/{A,B,C}
+    Colors: A=Red, B=Green, C=Blue
     """
     with h5py.File(hdf5_file, 'r') as f:
         traj_grp = f['trajectory']
@@ -166,6 +275,11 @@ def convert_fullsampler_hdf5_to_rmf3(hdf5_file, rmf3_file):
         particle_types = []
         initial_coords = []
         radii = {'A': 24.0, 'B': 14.0, 'C': 16.0}  # Your actual radii
+        colors = {
+            'A': IMP.display.Color(1.0, 0.0, 0.0),  # Red
+            'B': IMP.display.Color(0.0, 1.0, 0.0),  # Green  
+            'C': IMP.display.Color(0.0, 0.0, 1.0)   # Blue
+        }
         
         # Process particles in order: A, B, C
         for particle_type in ['A', 'B', 'C']:
@@ -180,55 +294,64 @@ def convert_fullsampler_hdf5_to_rmf3(hdf5_file, rmf3_file):
         n_total = len(initial_coords)
         
         print(f"Total particles: {n_total}")
+        print("Colors: A=Red, B=Green, C=Blue")
         
-        # Create RMF file FIRST
-        rmf = RMF.create_rmf_file(rmf3_file)
-        rmf.set_description("FullSampler trajectory converted from HDF5 to RMF3")
+        # Create IMP Model (REQUIRED for proper RMF trajectories)
+        model = IMP.Model()
         
-        # Create RMF node structure
-        root_node = rmf.get_root_node()
-        model_node = root_node.add_child("model", RMF.REPRESENTATION)
+        # Create root hierarchy
+        p_root = IMP.Particle(model)
+        root_h = IMP.atom.Hierarchy.setup_particle(p_root)
+        p_root.set_name("root")
         
-        # Add particle factory
-        pf = RMF.ParticleFactory(rmf)
-        
-        # Create RMF particles
-        rmf_particles = []
+        # Create IMP particles with proper hierarchy
+        particles = []
         particle_counter = {'A': 0, 'B': 0, 'C': 0}
         
         for i, ptype in enumerate(particle_types):
-            # Create particle node
+            # Create IMP particle
+            p = IMP.Particle(model)
             particle_name = f"{ptype}_{particle_counter[ptype]}"
-            particle_node = model_node.add_child(particle_name, RMF.REPRESENTATION)
+            p.set_name(particle_name)
             particle_counter[ptype] += 1
             
-            # Set particle data
-            particle_data = pf.get(particle_node)
-            
-            # Convert numpy array to RMF Vector3 - FIX HERE
+            # Setup XYZR (coordinates and radius)
+            xyzr = IMP.core.XYZR.setup_particle(p)
             coord = initial_coords[i]
-            rmf_coord = RMF.Vector3(float(coord[0]), float(coord[1]), float(coord[2]))
-            particle_data.set_coordinates(rmf_coord)
-            particle_data.set_radius(float(radii[ptype]))
-            particle_data.set_mass(1.0)
+            xyzr.set_coordinates(IMP.algebra.Vector3D(coord[0], coord[1], coord[2]))
+            xyzr.set_radius(radii[ptype])
+            xyzr.set_coordinates_are_optimized(True)  # Allow coordinate updates
             
-            # Set particle name
-            particle_node.set_name(particle_name)
+            # Setup mass (optional but recommended)
+            IMP.atom.Mass.setup_particle(p, 1.0)
             
-            rmf_particles.append((particle_node, particle_data))
+            # Setup color based on particle type
+            colored = IMP.display.Colored.setup_particle(p, colors[ptype])
+            
+            # Setup hierarchy and add to root
+            h = IMP.atom.Hierarchy.setup_particle(p)
+            root_h.add_child(h)
+            
+            particles.append(p)
         
-        # Add first frame
-        rmf.add_frame("frame_0", RMF.FRAME)
+        # Create RMF file
+        rmf = RMF.create_rmf_file(rmf3_file)
+        rmf.set_description("FullSampler trajectory converted from HDF5 to RMF3 with colors")
+        
+        # Add hierarchy to RMF (this creates the proper structure)
+        IMP.rmf.add_hierarchy(rmf, root_h)
+        
+        # IMPORTANT: Add coloring to RMF
+        IMP.rmf.add_restraints(rmf, [])  # Empty restraints list but enables color support
+        
+        # Save the first frame
+        IMP.rmf.save_frame(rmf, "frame_0")
         
         # Process remaining frames
         print(f"Converting {len(states)} frames...")
         for frame_idx, state_name in enumerate(states):
-            if frame_idx % 10 == 0:
+            if frame_idx % 50 == 0:  # Print progress every 50 frames
                 print(f"Processing frame {frame_idx+1}/{len(states)}")
-            
-            # Add frame if not the first one
-            if frame_idx > 0:
-                rmf.add_frame(f"frame_{frame_idx}", RMF.FRAME)
             
             state_grp = traj_grp[state_name]
             pos_grp = state_grp['positions']
@@ -242,19 +365,29 @@ def convert_fullsampler_hdf5_to_rmf3(hdf5_file, rmf3_file):
             
             all_coords = np.array(all_coords)
             
-            # Update coordinates for this frame - FIX HERE TOO
-            for j, (particle_node, particle_data) in enumerate(rmf_particles):
+            # Update coordinates in IMP particles
+            for j, p in enumerate(particles):
                 coord = all_coords[j]
-                rmf_coord = RMF.Vector3(float(coord[0]), float(coord[1]), float(coord[2]))
-                particle_data.set_coordinates(rmf_coord)
+                xyzr = IMP.core.XYZR(p)
+                xyzr.set_coordinates(IMP.algebra.Vector3D(coord[0], coord[1], coord[2]))
+            
+            # Update model
+            model.update()
+            
+            # Save frame with proper frame name
+            IMP.rmf.save_frame(rmf, f"frame_{frame_idx}")
         
-        # Flush and close
-        rmf.flush()
+        # Properly close the RMF file
         rmf.close()
+        del rmf
         
         print(f"Conversion complete! RMF3 file saved: {rmf3_file}")
+        print(f"Colors applied: A=Red, B=Green, C=Blue")
         print(f"Open with: chimerax {rmf3_file}")
-                
+        print("\nIn ChimeraX, use these commands:")
+        print("  rmf readtraj #1")
+        print("  coordset slider #1")
+                   
 # Example usage:
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--inspect":
