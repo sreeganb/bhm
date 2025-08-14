@@ -306,8 +306,8 @@ def main():
     # Option 2: EM-only sampling
     #sampler_sequence = ["pair", "tetramer", "octet", "full"]
     #mcmc_steps = [100000, 50000, 50000, 2000]
-    sampler_sequence = ["pair", "tetramer", "full"]
-    mcmc_steps = [500, 100, 50]
+    sampler_sequence = ["pair", "tetramer", "octet"]
+    mcmc_steps = [20000, 20000, 20000]
     
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
@@ -355,7 +355,7 @@ def main():
                 "run": True,
                 "n_chains": 8,
                 "n_steps": mcmc_steps[seq_idx],
-                "save_freq": 10,
+                "save_freq": 50,
                 "use_sigma_dist": False if (is_first or sampler_key in ["full"]) else True
             }
         

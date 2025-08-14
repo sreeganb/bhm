@@ -10,7 +10,7 @@ import json
 import random
 import pickle
 from typing import List, Dict, Tuple, Optional
-from base_sampler import BaseMCSampler, Priors
+from base_sampler import BaseMCSampler
 from parameters import SystemParameters
 from tetramer_sampler import TetramerSampler
 from visualization import visualize_3d_configuration

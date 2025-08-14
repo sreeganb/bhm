@@ -9,7 +9,7 @@ import pandas as pd
 import h5py
 import random
 from typing import List, Dict, Tuple
-from base_sampler import BaseMCSampler, Priors
+from base_sampler import BaseMCSampler
 from parameters import SystemParameters
 from scipy.spatial.distance import cdist
 from pair_sampler import PairSampler
