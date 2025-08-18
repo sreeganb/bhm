@@ -180,6 +180,8 @@ class GMMSigmaProvider:
         self.sigma_ranges = self._setup_sigma_ranges(sigma_ranges)
         self.default_sigma = self._get_default_sigmas()
 
+        self._debug_printed =False
+        
         # Print the assigned ranges
         self.logger.debug(f"Sigma ranges for {self.sampler_name}:")
         for pair_type, (mn, mx) in self.sigma_ranges.items():
@@ -454,24 +456,66 @@ class GMMSigmaProvider:
 
         gmm = self.gmm_params[pair_type]
         try:
-            n_components = gmm['n_components']
+            # Debug: Print available keys to understand the structure
+            if hasattr(self, '_debug_printed') and not self._debug_printed:
+                self.logger.debug(f"Available GMM keys for {pair_type}: {list(gmm.keys())}")
+                self._debug_printed = True
+            
+            # Check for required keys
+            required_keys = ['n_components', 'means', 'weights']
+            if not all(key in gmm for key in required_keys):
+                self.logger.error(f"Missing required keys in GMM for {pair_type}. Available: {list(gmm.keys())}")
+                return -np.inf
+            
+            n_components = int(gmm['n_components'])
             means = np.array(gmm['means']).flatten()
-            covariances = np.array(gmm['covariances']).flatten()
             weights = np.array(gmm['weights']) / np.sum(gmm['weights'])
-
-            # For each component, compute univariate Gaussian log prob
-            covariances = np.maximum(covariances, 1e-12)  # Avoid zero variance
+            
+            # Handle covariances - try different possible key names
+            covariances = None
+            if 'covariances' in gmm:
+                covariances = np.array(gmm['covariances']).flatten()
+            elif 'covariances_' in gmm:
+                covariances = np.array(gmm['covariances_']).flatten()
+            elif 'variances' in gmm:
+                covariances = np.array(gmm['variances']).flatten()
+            elif 'std' in gmm:
+                std_devs = np.array(gmm['std']).flatten()
+                covariances = std_devs ** 2
+            elif 'precisions' in gmm:
+                precisions = np.array(gmm['precisions']).flatten()
+                covariances = 1.0 / precisions
+            else:
+                # Fallback: assume unit variance for all components
+                self.logger.warning(f"No covariance information found for {pair_type}, assuming unit variance")
+                covariances = np.ones(n_components)
+            
+            # Ensure positive variance
+            covariances = np.maximum(covariances, 1e-12)
+            
+            # Validate array sizes
+            if len(means) != n_components or len(weights) != n_components or len(covariances) != n_components:
+                self.logger.error(f"Array size mismatch for {pair_type}: means={len(means)}, weights={len(weights)}, covariances={len(covariances)}, n_components={n_components}")
+                return -np.inf
+            
+            # Calculate log probability for each component
             diff = val - means
             exponents = -0.5 * (diff**2 / covariances)
             norms = np.log(weights) - 0.5 * np.log(2 * np.pi * covariances)
             component_log_probs = norms + exponents
-
-            # Sum in log space
+            
+            # Sum in log space using log-sum-exp trick
             max_lp = np.max(component_log_probs)
+            if not np.isfinite(max_lp):
+                return -np.inf
+            
             log_sum_exp = max_lp + np.log(np.sum(np.exp(component_log_probs - max_lp)))
+            
             return log_sum_exp
+            
         except Exception as e:
             self.logger.error(f"Error in GMM log prob for {pair_type}: {e}")
+            self.logger.debug(f"GMM structure: {gmm}")
             return -np.inf
 
     ###########################################################################

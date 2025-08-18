@@ -1,4 +1,6 @@
+from email import parser
 import os
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'  # Fix Qt platform plugin warning
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py
@@ -11,6 +13,8 @@ import json
 import argparse
 import sys
 from diagnostics import AdvancedConvergenceDiagnostics
+
+# Replace your load_trajectory_from_hdf5 function with this corrected version:
 
 def load_trajectory_from_hdf5(filename: str) -> list:
     """
@@ -32,54 +36,79 @@ def load_trajectory_from_hdf5(filename: str) -> list:
         for state_name in traj_grp:
             state_grp = traj_grp[state_name]
             state = {
-                "step": state_grp.attrs.get("step", 0),
-                "total_score": state_grp.attrs.get("total_score", 0.0),
-                "prior_score": state_grp.attrs.get("prior_score", 0.0),
-                "pair_score": state_grp.attrs.get("pair_score", 0.0),
-                "exvol_score": state_grp.attrs.get("exvol_score", 0.0),
-                "tet_score": state_grp.attrs.get("tet_score", 0.0),      # Added missing field
-                "oct_score": state_grp.attrs.get("oct_score", 0.0),      # Added missing field
+                "step": int(state_grp.attrs.get("step", 0)),
+                "total_score": float(state_grp.attrs.get("total_score", 0.0)),
+                "prior_score": float(state_grp.attrs.get("prior_score", 0.0)),
+                "pair_score": float(state_grp.attrs.get("pair_score", 0.0)),
+                "exvol_score": float(state_grp.attrs.get("exvol_score", 0.0)),
+                "tet_score": float(state_grp.attrs.get("tet_score", 0.0)),
+                "oct_score": float(state_grp.attrs.get("oct_score", 0.0)),
                 "sigma": {},
                 "positions": {},
                 "types": {},
                 "bead_numbers": {}
             }
             
-            # Safely read sigma values
+            # FIX: Safely read sigma values - handle HDF5 attributes properly
             if 'sigma' in state_grp:
                 sigma_grp = state_grp['sigma']
                 for key in sigma_grp.attrs:
-                    state["sigma"][key] = float(sigma_grp.attrs[key])
+                    # Get the raw value and ensure it's a Python float
+                    raw_value = sigma_grp.attrs[key]
+                    if hasattr(raw_value, 'item'):  # numpy scalar
+                        state["sigma"][key] = float(raw_value.item())
+                    elif isinstance(raw_value, (int, float, np.integer, np.floating)):
+                        state["sigma"][key] = float(raw_value)
+                    else:
+                        print(f"Warning: unexpected sigma value type {type(raw_value)} for {key}")
+                        state["sigma"][key] = 0.0
 
             # Safely read positions
             if 'positions' in state_grp:
                 pos_grp = state_grp['positions']
                 for type_name in pos_grp:
-                    state["positions"][type_name] = pos_grp[type_name][()]
+                    # Read the dataset and convert to numpy array
+                    dataset = pos_grp[type_name]
+                    state["positions"][type_name] = np.array(dataset[:])
 
             # Safely read types
             if 'types_keys' in state_grp and 'types_vals' in state_grp:
-                types_keys_dataset = state_grp['types_keys'][()]
-                types_vals_dataset = state_grp['types_vals'][()]
-                if len(types_keys_dataset) == len(types_vals_dataset):
-                    for i in range(len(types_keys_dataset)):
-                        k = types_keys_dataset[i]
-                        v = types_vals_dataset[i]
-                        if isinstance(k, bytes):
-                            k = k.decode('utf-8', errors='ignore')
-                        if isinstance(v, bytes):
-                            v = v.decode('utf-8', errors='ignore')
-                        state["types"][k] = v
+                try:
+                    types_keys_data = state_grp['types_keys'][:]
+                    types_vals_data = state_grp['types_vals'][:]
+                    if len(types_keys_data) == len(types_vals_data):
+                        for i in range(len(types_keys_data)):
+                            k = types_keys_data[i]
+                            v = types_vals_data[i]
+                            if isinstance(k, bytes):
+                                k = k.decode('utf-8', errors='ignore')
+                            if isinstance(v, bytes):
+                                v = v.decode('utf-8', errors='ignore')
+                            state["types"][str(k)] = str(v)
+                except Exception as e:
+                    print(f"Warning: failed to read types: {e}")
             
             # Safely read bead_numbers
             if 'bead_keys' in state_grp and 'bead_vals' in state_grp:
-                bead_keys_dataset = state_grp['bead_keys'][()]
-                bead_vals_dataset = state_grp['bead_vals'][()]
-                if len(bead_keys_dataset) == len(bead_vals_dataset):
-                    for i in range(len(bead_keys_dataset)):
-                        bkey = bead_keys_dataset[i]
-                        bval = bead_vals_dataset[i]
-                        state["bead_numbers"][int(bkey)] = int(bval)
+                try:
+                    bead_keys_data = state_grp['bead_keys'][:]
+                    bead_vals_data = state_grp['bead_vals'][:]
+                    if len(bead_keys_data) == len(bead_vals_data):
+                        for i in range(len(bead_keys_data)):
+                            bkey = bead_keys_data[i]
+                            bval = bead_vals_data[i]
+                            # Convert to Python int
+                            if hasattr(bkey, 'item'):
+                                bkey = int(bkey.item())
+                            else:
+                                bkey = int(bkey)
+                            if hasattr(bval, 'item'):
+                                bval = int(bval.item())
+                            else:
+                                bval = int(bval)
+                            state["bead_numbers"][bkey] = bval
+                except Exception as e:
+                    print(f"Warning: failed to read bead_numbers: {e}")
 
             all_states.append(state)
 
@@ -296,351 +325,342 @@ def plot_combined_gmm(all_data: dict, all_gmms: dict, sigma_type: str, sampler_n
     plt.savefig(os.path.join(output_dir, f"gmm_combined_plot_{sigma_type}_{sampler_name}.png"))
     plt.close()
 
-def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: int, burnin: float = 0.4, 
-                     do_trace_plots: bool = True, do_gmm_fits: bool = True, 
-                     do_diagnostics: bool = True):
-    """
-    Analyzes MCMC data, including trace plots, R-hat statistics, and GMM fitting.
-
-    Args:
-        output_folder (str): Base directory for output files.
-        sampler_type (str): Type of sampler ('pair', 'tetramer', 'octet').
-        sampler_position (int): Position of this sampler in the sequence (1-based).
-        burnin (float): Fraction of initial samples to discard.
-        do_trace_plots (bool): Whether to generate trace plots and score plots.
-        do_gmm_fits (bool): Whether to perform GMM fitting and plotting.
-    """
-
-    if not 0.0 <= burnin < 1.0:
-        raise ValueError("burnin must be between 0.0 and 1.0")
-
-    # Generate folder name based on sampler type and position
+def analyze_mcmc_data(output_folder: str, sampler_type: str, sampler_position: int, 
+                     burnin=0.4, do_trace_plots=True, do_gmm_fits=True, 
+                     do_diagnostics=True):
+    """Analyzes MCMC data with improved burnin handling."""
+    
+    # Setup paths and validation
     sampler_folder_name = get_sampler_folder_name(sampler_type, sampler_position)
     sampler_output_dir = os.path.join(output_folder, sampler_folder_name)
     
     if not os.path.exists(sampler_output_dir):
         print(f"Directory not found: {sampler_output_dir}")
         return
-
-    # Create analysis output directory within the sampler folder
-    #analysis_output_dir = os.path.join(sampler_output_dir, "analysis")
-    analysis_output_dir = sampler_output_dir
-    if not os.path.exists(analysis_output_dir):
-        os.makedirs(analysis_output_dir)
-
-    trajectory_files = [f for f in os.listdir(sampler_output_dir) if f.startswith("trajectory_") and f.endswith(".h5")]
+    
+    trajectory_files = [f for f in os.listdir(sampler_output_dir) 
+                        if f.startswith("trajectory_") and f.endswith(".h5")]
     if not trajectory_files:
         print(f"No trajectory files found in: {sampler_output_dir}")
         return
 
-    # Generate descriptive sampler name for plots
     sampler_display_name = f"{sampler_type.capitalize()}Sampler_{sampler_position}"
-
+    analysis_output_dir = sampler_output_dir
+    
+    # Load all trajectory data first (without burn-in applied)
     all_sigma_histories = defaultdict(lambda: defaultdict(list))
-    all_scores = defaultdict(lambda: defaultdict(list))  # Only used if do_trace_plots
-
+    all_scores = defaultdict(lambda: defaultdict(list)) if do_trace_plots else None
+    
     for traj_file in trajectory_files:
         level_name = traj_file.replace("trajectory_", "").replace(".h5", "")
         traj_path = os.path.join(sampler_output_dir, traj_file)
         trajectory_data = load_trajectory_from_hdf5(traj_path)
-
-        num_samples = len(trajectory_data)
-        burnin_samples = int(num_samples * burnin)
-        trajectory_data = trajectory_data[burnin_samples:]
-
+        
         for state in trajectory_data:
-            for sigma_type, sigma_value in state['sigma'].items():
-                all_sigma_histories[level_name][sigma_type].append(sigma_value)
+            # Defensive sigma handling
+            if 'sigma' in state and isinstance(state['sigma'], dict):
+                for sigma_type, sigma_value in state['sigma'].items():
+                    try:
+                        if hasattr(sigma_value, 'item'):
+                            sigma_value = float(sigma_value.item())
+                        else:
+                            sigma_value = float(sigma_value)
+                        all_sigma_histories[level_name][sigma_type].append(sigma_value)
+                    except (ValueError, TypeError) as e:
+                        print(f"Warning: Could not convert sigma value to float: {e}")
+                        continue
+            
+            # Defensive score handling
             if do_trace_plots:
-                all_scores['total_score'][level_name].append(state['total_score'])
-                all_scores['prior_score'][level_name].append(state['prior_score'])
-                all_scores['pair_score'][level_name].append(state['pair_score'])
-                all_scores['exvol_score'][level_name].append(state['exvol_score'])
-                all_scores['tet_score'][level_name].append(state['tet_score'])      
-                all_scores['oct_score'][level_name].append(state['oct_score'])      
+                try:
+                    all_scores['total_score'][level_name].append(float(state.get('total_score', 0)))
+                    all_scores['prior_score'][level_name].append(float(state.get('prior_score', 0)))
+                    all_scores['pair_score'][level_name].append(float(state.get('pair_score', 0)))
+                    all_scores['exvol_score'][level_name].append(float(state.get('exvol_score', 0)))
+                    all_scores['tet_score'][level_name].append(float(state.get('tet_score', 0)))      
+                    all_scores['oct_score'][level_name].append(float(state.get('oct_score', 0)))
+                except (ValueError, TypeError) as e:
+                    print(f"Warning: Could not convert score values to float: {e}")
+                    continue
     
-    # AUTO burn-in adjustment
+    # Determine burn-in fraction
+    burnin_fraction = burnin
     if isinstance(burnin, str) and burnin.lower() == "auto":
-        # Build chains dict for diagnostics (per sigma param)
         diag_chains = {}
         for chain_id, sig_dict in all_sigma_histories.items():
             for sigma_type, series in sig_dict.items():
                 diag_chains.setdefault(sigma_type, []).append(np.array(series))
-        diag = AdvancedConvergenceDiagnostics(diag_chains)
-        auto_frac = diag.auto_burnin_fraction()
-        print(f"[Diagnostics] Auto burn-in fraction selected: {auto_frac:.3f}")
-        burnin = auto_frac
-        # Re-apply burn-in to histories
-        new_hist = {}
-        for chain_id, sig_dict in all_sigma_histories.items():
-            new_hist[chain_id] = {}
+        
+        if diag_chains:
+            diag = AdvancedConvergenceDiagnostics(diag_chains)
+            burnin_fraction = diag.auto_burnin_fraction()
+            print(f"[Diagnostics] Auto burn-in fraction selected: {burnin_fraction:.3f}")
+        else:
+            burnin_fraction = 0.4  # fallback
+    
+    # Apply burn-in to all data
+    def apply_burnin(data_dict, fraction):
+        result = defaultdict(lambda: defaultdict(list))
+        for chain_id, sig_dict in data_dict.items():
             for sigma_type, series in sig_dict.items():
                 n = len(series)
-                cut = int(burnin * n)
-                new_hist[chain_id][sigma_type] = series[cut:]
-        all_sigma_histories = new_hist
-        
-    # --- Trace Plots and R-hat (if requested) ---
+                cut = int(fraction * n)
+                result[chain_id][sigma_type] = series[cut:]
+        return result
+    
+    all_sigma_histories = apply_burnin(all_sigma_histories, burnin_fraction)
     if do_trace_plots:
-        pdf_filename_trace = os.path.join(analysis_output_dir, f"{sampler_display_name}_report.pdf")
-        with PdfPages(pdf_filename_trace) as pdf:
-            sns.set(style="darkgrid")
-            palette = sns.color_palette("husl", 4)
+        all_scores = apply_burnin(all_scores, burnin_fraction)
+    
+    # Generate reports
+    if do_trace_plots:
+        _generate_trace_plots_and_diagnostics(all_sigma_histories, all_scores, 
+                                            sampler_display_name, analysis_output_dir)
+    
+    if do_diagnostics:
+        _generate_convergence_diagnostics(all_sigma_histories, sampler_display_name, 
+                                        analysis_output_dir, burnin_fraction)
+    
+    if do_gmm_fits:
+        _generate_gmm_fits(all_sigma_histories, sampler_display_name, analysis_output_dir)
 
-            # --- Sigma trace plots ---
-            for chain_idx, chain_id in enumerate(all_sigma_histories):
-                plt.figure(figsize=(12, 8))
-                #for i, sigma_type in enumerate(["AA", "AB", "BC", "CC"]):
-                for i, sigma_type in enumerate(["AA", "AB", "BC"]):
-                    if sigma_type in all_sigma_histories[chain_id]:
-                        plt.plot(all_sigma_histories[chain_id][sigma_type], label=sigma_type, color=palette[i])
-                plt.title(f'Combined Sigma Trace Plot - Chain {chain_idx} ({sampler_display_name})', fontsize=16)
-                plt.xlabel('MCMC Step (Post Burn-in)', fontsize=14)
-                plt.ylabel('Sigma Value', fontsize=14)
-                plt.xticks(fontsize=12)
-                plt.yticks(fontsize=12)
-                plt.legend(fontsize=12)
-                plt.tight_layout()
-                pdf.savefig()
-                plt.savefig(os.path.join(analysis_output_dir, f'trace_sigma_combined_chain{chain_idx}_{sampler_display_name}.png'))
-                plt.close()
 
-            # --- Score plots ---
+def _generate_trace_plots_and_diagnostics(all_sigma_histories, all_scores, sampler_display_name, analysis_output_dir):
+    """Generate trace plots, R-hat, and autocorrelation analysis."""
+    pdf_filename = os.path.join(analysis_output_dir, f"{sampler_display_name}_report.pdf")
+    
+    with PdfPages(pdf_filename) as pdf:
+        sns.set(style="darkgrid")
+        palette = sns.color_palette("husl", 4)
+        
+        # Sigma trace plots
+        for chain_idx, chain_id in enumerate(all_sigma_histories):
+            plt.figure(figsize=(12, 8))
+            for i, sigma_type in enumerate(["AA", "AB", "BC"]):
+                if sigma_type in all_sigma_histories[chain_id]:
+                    plt.plot(all_sigma_histories[chain_id][sigma_type], 
+                            label=sigma_type, color=palette[i])
+            
+            plt.title(f'Sigma Trace Plot - Chain {chain_idx} ({sampler_display_name})', fontsize=16)
+            plt.xlabel('MCMC Step (Post Burn-in)', fontsize=14)
+            plt.ylabel('Sigma Value', fontsize=14)
+            plt.legend(fontsize=12)
+            plt.tight_layout()
+            pdf.savefig()
+            plt.close()
+        
+        # Score plots
+        if all_scores:
             for score_type in all_scores:
                 plt.figure(figsize=(12, 8))
                 for chain_id in all_scores[score_type]:
                     plt.plot(all_scores[score_type][chain_id], label=chain_id, alpha=0.7)
-                plt.title(f'Score vs. Frame: {score_type} ({sampler_display_name})', fontsize=16)
+                plt.title(f'{score_type} ({sampler_display_name})', fontsize=16)
                 plt.xlabel('MCMC Step (Post Burn-in)', fontsize=14)
                 plt.ylabel('Score Value', fontsize=14)
-                plt.xticks(fontsize=12)
-                plt.yticks(fontsize=12)
                 plt.legend(fontsize=12)
                 plt.tight_layout()
                 pdf.savefig()
-                plt.savefig(os.path.join(analysis_output_dir, f'score_vs_frame_{score_type}_{sampler_display_name}.png'))
                 plt.close()
+        
+        # R-hat analysis
+        _add_rhat_analysis(pdf, all_sigma_histories, sampler_display_name, analysis_output_dir)
+        
+        # Autocorrelation analysis
+        _add_autocorr_analysis(pdf, all_sigma_histories, all_scores, sampler_display_name, analysis_output_dir)
 
-            print(f"\nR-hat Statistics for Sigma Components ({sampler_display_name}):")
-            rhat_values = {}
-            rhat_filename = os.path.join(analysis_output_dir, f"rhat_statistics_{sampler_display_name}.txt")
 
-            combined_sigma_data = defaultdict(list)
-            for chain_data in all_sigma_histories.values():
-                for sigma_type, values in chain_data.items():
-                    combined_sigma_data[sigma_type].append(values)
-            
-            # Replace the R-hat calculation section with this version:
-            with open(rhat_filename, 'w') as f:
-                f.write(f"R-hat Statistics for Sigma Components ({sampler_display_name}):\n")
-                rhat_values = {}
-                for sigma_type, histories in combined_sigma_data.items():
-                    chain_lengths = [len(chain) for chain in histories]
-                    max_length = max(chain_lengths)
-                    # Filter out trajectories that are shorter than the maximum length.
-                    filtered_histories = [chain for chain in histories if len(chain) == max_length]
-                    dropped = len(histories) - len(filtered_histories)
+def _add_rhat_analysis(pdf, all_sigma_histories, sampler_display_name, analysis_output_dir):
+    """Add R-hat analysis to PDF and save text file."""
+    print(f"\nR-hat Statistics for Sigma Components ({sampler_display_name}):")
+    
+    combined_sigma_data = defaultdict(list)
+    for chain_data in all_sigma_histories.values():
+        for sigma_type, values in chain_data.items():
+            combined_sigma_data[sigma_type].append(values)
+    
+    rhat_values = {}
+    rhat_filename = os.path.join(analysis_output_dir, f"rhat_statistics_{sampler_display_name}.txt")
+    
+    with open(rhat_filename, 'w') as f:
+        f.write(f"R-hat Statistics for Sigma Components ({sampler_display_name}):\n")
+        
+        for sigma_type, histories in combined_sigma_data.items():
+            if len(histories) < 2:
+                message = f"  {sigma_type}: R-hat not calculated - insufficient chains"
+                print(message)
+                f.write(message + "\n")
+                rhat_values[sigma_type] = None
+            else:
+                try:
+                    # Use equal length chains
+                    min_len = min(len(chain) for chain in histories)
+                    truncated = [chain[:min_len] for chain in histories]
+                    r_hat = float(az.rhat(np.array(truncated)))
+                    rhat_values[sigma_type] = r_hat
+                    message = f"  {sigma_type}: {r_hat:.3f} using {len(truncated)} chains (length={min_len})"
+                    print(message)
+                    f.write(message + "\n")
+                except Exception as e:
+                    message = f"  {sigma_type}: R-hat calculation failed - {str(e)}"
+                    print(message)
+                    f.write(message + "\n")
+                    rhat_values[sigma_type] = None
+    
+    # Add R-hat table to PDF
+    fig, ax = plt.subplots(figsize=(6, 2 + 0.3*len(rhat_values)))
+    fig.suptitle(f"R-hat Values ({sampler_display_name})", fontsize=14)
+    ax.axis('off')
+    
+    rows = [[sigma_type, f"{r_hat:.3f}" if r_hat is not None else "N/A"] 
+            for sigma_type, r_hat in rhat_values.items()]
+    
+    table = ax.table(cellText=rows, colLabels=["Sigma Type", "R-hat"], loc='center')
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.5)
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
+def _add_autocorr_analysis(pdf, all_sigma_histories, all_scores, sampler_display_name, analysis_output_dir):
+    """Add autocorrelation analysis to PDF."""
+    print("\nCalculating autocorrelation and effective sample sizes...")
+    
+    # Get representative trajectory length for max_lag calculation
+    sample_chain = next(iter(all_sigma_histories.values()))
+    sample_series = next(iter(sample_chain.values()))
+    max_lag = min(50, len(sample_series) // 10)
+    
+    ess_values = {}
+    combined_sigma_data = defaultdict(list)
+    for chain_data in all_sigma_histories.values():
+        for sigma_type, values in chain_data.items():
+            combined_sigma_data[sigma_type].append(values)
+    
+    # Autocorr plots for sigma parameters
+    for sigma_type in combined_sigma_data:
+        plt.figure(figsize=(12, 8))
+        for chain_idx, chain_values in enumerate(combined_sigma_data[sigma_type]):
+            if len(chain_values) > 10:
+                autocorr = calculate_autocorrelation(chain_values, nlags=max_lag)
+                if autocorr is not None:
+                    plt.plot(autocorr, label=f'Chain {chain_idx}', alpha=0.7)
                     
-                    if len(filtered_histories) < 2:
-                        message = (f"  {sigma_type}: R-hat not calculated - only "
-                                   f"{len(filtered_histories)} chain(s) available after filtering "
-                                   f"(dropped {dropped} chain(s) out of {len(histories)})")
-                        print(message)
-                        f.write(message + "\n")
-                        rhat_values[sigma_type] = None
+                    ess = calculate_effective_sample_size(chain_values)
+                    if ess is not None:
+                        ess_values.setdefault(sigma_type, []).append(ess)
+        
+        plt.axhline(y=0, color='r', linestyle='--')
+        plt.title(f'Autocorrelation for {sigma_type} ({sampler_display_name})', fontsize=16)
+        plt.xlabel('Lag', fontsize=14)
+        plt.ylabel('Autocorrelation', fontsize=14)
+        plt.legend(fontsize=12)
+        plt.tight_layout()
+        pdf.savefig()
+        plt.close()
+    
+    # ESS table
+    if ess_values:
+        fig, ax = plt.subplots(figsize=(8, 2 + 0.3*len(ess_values)))
+        fig.suptitle(f"Effective Sample Size ({sampler_display_name})", fontsize=14)
+        ax.axis('off')
+        
+        rows = []
+        for sigma_type, ess_list in ess_values.items():
+            if ess_list:
+                rows.append([sigma_type, f"{np.mean(ess_list):.1f}", 
+                           f"{np.min(ess_list):.1f}", f"{np.max(ess_list):.1f}", str(len(ess_list))])
+        
+        table = ax.table(cellText=rows, 
+                        colLabels=["Sigma Type", "Mean ESS", "Min ESS", "Max ESS", "N Chains"], 
+                        loc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 1.5)
+        pdf.savefig(fig)
+        plt.close(fig)
+        
+        # Save ESS to file
+        ess_filename = os.path.join(analysis_output_dir, f"ess_statistics_{sampler_display_name}.txt")
+        with open(ess_filename, 'w') as f:
+            f.write(f"Effective Sample Size for Sigma Components ({sampler_display_name}):\n")
+            for sigma_type, ess_list in ess_values.items():
+                if ess_list:
+                    f.write(f"{sigma_type}: Mean={np.mean(ess_list):.1f}, "
+                           f"Min={np.min(ess_list):.1f}, Max={np.max(ess_list):.1f}, "
+                           f"Chains={len(ess_list)}\n")
+        print(f"ESS statistics saved to: {ess_filename}")
+
+def _generate_convergence_diagnostics(all_sigma_histories, sampler_display_name, analysis_output_dir, burnin_fraction):
+    """Generate advanced convergence diagnostics."""
+    diag_chains = {}
+    for chain_id, sig_dict in all_sigma_histories.items():
+        for sigma_type, series in sig_dict.items():
+            # Ensure series is a proper numpy array of floats
+            clean_series = []
+            for val in series:
+                try:
+                    if hasattr(val, 'item'):
+                        clean_series.append(float(val.item()))
                     else:
-                        try:
-                            # All filtered chains have the same length (== max_length)
-                            r_hat = az.rhat(np.array(filtered_histories))
-                            rhat_values[sigma_type] = r_hat
-                            message = (f"  {sigma_type}: {r_hat:.3f} calculated using "
-                                       f"{len(filtered_histories)} chains (max_length = {max_length}, "
-                                       f"dropped {dropped} chain(s) out of {len(histories)})")
-                            print(message)
-                            f.write(message + "\n")
-                        except Exception as e:
-                            message = f"  {sigma_type}: R-hat calculation failed - {str(e)}"
-                            print(message)
-                            f.write(message + "\n")
-                            rhat_values[sigma_type] = None
-
-            # --- Add R-hat table to the same PDF ---
-            fig, ax = plt.subplots(figsize=(6, 2 + 0.3*len(rhat_values)))  # Adjust figure size to fit the table
-            fig.suptitle(f"R-hat Values for Sigma Components ({sampler_display_name})", fontsize=14)
-            ax.axis('off')
-
-            # Build table data
-            header = ["Sigma Type", "R-hat"]
-            rows = []
-            for sigma_type, r_hat in rhat_values.items():
-                # Format r_hat as a float; handle the None case with 'N/A'
-                val_str = f"{r_hat:.3f}" if r_hat is not None else "N/A"
-                rows.append([sigma_type, val_str])
-
-            # Create table in the axes
-            table = ax.table(
-                cellText=rows,
-                colLabels=header,
-                loc='center'
-            )
-            table.auto_set_font_size(False)
-            table.set_fontsize(10)
-            table.scale(1, 1.5)
-
-            pdf.savefig(fig)
-            plt.close(fig)
+                        clean_series.append(float(val))
+                except (ValueError, TypeError) as e:
+                    print(f"Warning: Could not convert value {val} to float: {e}")
+                    continue
             
-            # --- Add autocorrelation plots to PDF ---
-            print("\nCalculating autocorrelation and effective sample sizes...")
-            ess_values = {}
+            if clean_series:  # Only add if we have valid data
+                diag_chains.setdefault(sigma_type, []).append(np.array(clean_series))
+    
+    if diag_chains:
+        try:
+            diag = AdvancedConvergenceDiagnostics(diag_chains)
             
-            # Analyze each sigma parameter across chains
-            for sigma_type in combined_sigma_data:
-                # Process each chain separately
-                plt.figure(figsize=(12, 8))
-                max_lag = min(50, int(len(trajectory_data) / 10))  # Use reasonable max lag
-                
-                for chain_idx, chain_values in enumerate(combined_sigma_data[sigma_type]):
-                    if len(chain_values) > 10:  # Need sufficient data points
-                        autocorr = calculate_autocorrelation(chain_values, nlags=max_lag)
-                        if autocorr is not None:
-                            plt.plot(autocorr, label=f'Chain {chain_idx}', alpha=0.7)
-                            
-                            # Calculate ESS
-                            ess = calculate_effective_sample_size(chain_values)
-                            if ess is not None:
-                                if sigma_type not in ess_values:
-                                    ess_values[sigma_type] = []
-                                ess_values[sigma_type].append(ess)
-                
-                plt.axhline(y=0, color='r', linestyle='--')
-                plt.title(f'Autocorrelation for {sigma_type} ({sampler_display_name})', fontsize=16)
-                plt.xlabel('Lag', fontsize=14)
-                plt.ylabel('Autocorrelation', fontsize=14)
-                plt.xticks(fontsize=12)
-                plt.yticks(fontsize=12)
-                plt.legend(fontsize=12)
-                plt.tight_layout()
-                pdf.savefig()
-                plt.savefig(os.path.join(analysis_output_dir, f'autocorr_{sigma_type}_{sampler_display_name}.png'))
-                plt.close()
-                
-            # --- Add ESS table to PDF ---
-            if ess_values:
-                fig, ax = plt.subplots(figsize=(8, 2 + 0.3*len(ess_values)))
-                fig.suptitle(f"Effective Sample Size (ESS) for Sigma Components ({sampler_display_name})", fontsize=14)
-                ax.axis('off')
-                
-                # Build table data
-                header = ["Sigma Type", "Mean ESS", "Min ESS", "Max ESS", "N Chains"]
-                rows = []
-                
-                for sigma_type, ess_list in ess_values.items():
-                    if ess_list:
-                        rows.append([
-                            sigma_type,
-                            f"{np.mean(ess_list):.1f}",
-                            f"{np.min(ess_list):.1f}",
-                            f"{np.max(ess_list):.1f}",
-                            f"{len(ess_list)}"
-                        ])
-                    else:
-                        rows.append([sigma_type, "N/A", "N/A", "N/A", "0"])
-                
-                # Create table in the axes
-                table = ax.table(
-                    cellText=rows,
-                    colLabels=header,
-                    loc='center'
-                )
-                table.auto_set_font_size(False)
-                table.set_fontsize(10)
-                table.scale(1, 1.5)
-                
-                pdf.savefig(fig)
-                plt.close(fig)
-                
-                # Save ESS values to file
-                ess_filename = os.path.join(analysis_output_dir, f"ess_statistics_{sampler_display_name}.txt")
-                with open(ess_filename, 'w') as f:
-                    f.write(f"Effective Sample Size (ESS) for Sigma Components ({sampler_display_name}):\n")
-                    for sigma_type, ess_list in ess_values.items():
-                        if ess_list:
-                            f.write(f"{sigma_type}: Mean={np.mean(ess_list):.1f}, Min={np.min(ess_list):.1f}, " 
-                                   f"Max={np.max(ess_list):.1f}, Chains={len(ess_list)}\n")
-                        else:
-                            f.write(f"{sigma_type}: No valid ESS values\n")
-                print(f"ESS statistics saved to: {ess_filename}")
+            # Generate PDF and CSV reports with error handling
+            try:
+                pdf_path = diag.generate_pdf_report(analysis_output_dir, sampler_display_name, burnin_fraction)
+                print(f"[Diagnostics] PDF report saved: {pdf_path}")
+            except Exception as e:
+                print(f"[Diagnostics] PDF generation failed: {e}")
             
-            # --- Also add autocorrelation for score components ---
-            if all_scores:
-                for score_type in all_scores:
-                    plt.figure(figsize=(12, 8))
-                    max_lag = min(50, int(len(trajectory_data) / 10))
+            try:
+                csv_path = diag.save_diagnostics_csv(analysis_output_dir, sampler_display_name, burnin_fraction)
+                print(f"[Diagnostics] CSV report saved: {csv_path}")
+            except Exception as e:
+                print(f"[Diagnostics] CSV generation failed: {e}")
+                
+        except Exception as e:
+            print(f"[Diagnostics] Failed to create diagnostics: {e}")
+    else:
+        print("[Diagnostics] No valid chain data for diagnostics")
+
+
+def _generate_gmm_fits(all_sigma_histories, sampler_display_name, analysis_output_dir):
+    """Generate GMM fits and plots."""
+    pdf_filename = os.path.join(analysis_output_dir, f"{sampler_display_name}_combined_gmm_plots.pdf")
+    
+    with PdfPages(pdf_filename) as pdf:
+        for sigma_type in ["AA", "AB", "BC"]:
+            print(f"\nFitting GMM for {sigma_type}...")
+            all_data_for_type = {}
+            all_gmms_for_type = {}
+
+            for chain_id, chain_data in all_sigma_histories.items():
+                if sigma_type in chain_data:
+                    data = np.array(chain_data[sigma_type])
+                    print(f"  Chain {chain_id}: {len(data)} samples")
                     
-                    for chain_id, score_values in all_scores[score_type].items():
-                        if len(score_values) > 10:
-                            autocorr = calculate_autocorrelation(score_values, nlags=max_lag)
-                            if autocorr is not None:
-                                plt.plot(autocorr, label=f'Chain {chain_id}', alpha=0.7)
+                    gmm = fit_gmm_robust(data, sigma_type, max_components=4)
                     
-                    plt.axhline(y=0, color='r', linestyle='--')
-                    plt.title(f'Autocorrelation for {score_type} ({sampler_display_name})', fontsize=16)
-                    plt.xlabel('Lag', fontsize=14)
-                    plt.ylabel('Autocorrelation', fontsize=14)
-                    plt.xticks(fontsize=12)
-                    plt.yticks(fontsize=12)
-                    plt.legend(fontsize=12)
-                    plt.tight_layout()
-                    pdf.savefig()
-                    plt.savefig(os.path.join(analysis_output_dir, f'autocorr_{score_type}_{sampler_display_name}.png'))
-                    plt.close()
-                    
-    # Run convergence diagnostics (post-burn-in) if requested
-    if do_diagnostics:
-        diag_chains2 = {}
-        for chain_id, sig_dict in all_sigma_histories.items():
-            for sigma_type, series in sig_dict.items():
-                diag_chains2.setdefault(sigma_type, []).append(np.array(series))
-        diag2 = AdvancedConvergenceDiagnostics(diag_chains2)
-        df_diag = diag2.compute_summary_dataframe(burnin_fraction=0.0)
-        diag_csv = os.path.join(analysis_output_dir, f"{sampler_display_name}_diagnostics.csv")
-        df_diag.to_csv(diag_csv, index=False)
-        print(f"[Diagnostics] Saved summary to {diag_csv}")
-            
-    # --- GMM Fits and Plots (if requested) ---
-    if do_gmm_fits:
-        pdf_filename_gmm = os.path.join(analysis_output_dir, f"{sampler_display_name}_combined_gmm_plots.pdf")
-        with PdfPages(pdf_filename_gmm) as pdf:
-            sigma_types = ["AA", "AB", "BC"]
-            
-            for sigma_type in sigma_types:
-                print(f"\nFitting GMM for {sigma_type}...")
-                all_data_for_type = {}
-                all_gmms_for_type = {}
+                    if gmm is not None:
+                        all_data_for_type[chain_id] = data
+                        all_gmms_for_type[chain_id] = gmm
+                        save_gmm_with_validation(gmm, sigma_type, chain_id, analysis_output_dir, data)
 
-                for chain_id, chain_data in all_sigma_histories.items():
-                    if sigma_type in chain_data:
-                        data = np.array(chain_data[sigma_type])
-                        print(f"  Chain {chain_id}: {len(data)} samples")
-                        
-                        # Use robust GMM fitting
-                        gmm = fit_gmm_robust(data, sigma_type, max_components=4)  # Reduced max components
-                        
-                        if gmm is not None:
-                            all_data_for_type[chain_id] = data
-                            all_gmms_for_type[chain_id] = gmm
-                            
-                            # Save with validation
-                            save_gmm_with_validation(gmm, sigma_type, chain_id, analysis_output_dir, data)
-                        else:
-                            print(f"  Failed to fit GMM for {sigma_type} chain {chain_id}")
-
-                if all_data_for_type:
-                    plot_combined_gmm(all_data_for_type, all_gmms_for_type, sigma_type, sampler_display_name, analysis_output_dir, pdf)
-                    print(f"Combined GMM plot for {sigma_type} saved.")
-                else:
-                    print(f"No valid GMMs for {sigma_type} - skipping plot")
+            if all_data_for_type:
+                plot_combined_gmm(all_data_for_type, all_gmms_for_type, 
+                                sigma_type, sampler_display_name, analysis_output_dir, pdf)
+                print(f"Combined GMM plot for {sigma_type} saved.")
 
 def analyze_sampler_in_sequence(sampler_sequence: list, sampler_type: str, sampler_position: int, 
                                output_folder: str = "output_analysis", burnin: float = 0.4, 
@@ -712,15 +732,26 @@ def main():
     parser.add_argument('--no-gmm', action='store_true',
                         help='Disable GMM fitting')
 
-    parser.add_argument('--burnin', '-b', type=str, default="auto",
-                        help='Burn-in fraction (e.g. 0.4) or "auto" for automatic detection')
-
     parser.add_argument('--no-diagnostics', action='store_true',
                         help='Disable convergence diagnostics')
+    parser.add_argument('--burnin', '-b', type=str, default='0.4',
+                       help='Burn-in fraction (e.g. 0.4) or "auto" for automatic detection')
     
-    # Parse arguments
     args = parser.parse_args()
     
+    # Fix the burnin handling - parse ONCE and correctly
+    if args.burnin and args.burnin.lower() == "auto":
+        burnin = "auto"  # Keep as string literal
+    else:
+        try:
+            burnin = float(args.burnin)
+            if not (0.0 <= burnin < 1.0):
+                print(f"Warning: burnin {burnin} not in [0,1), using 0.4")
+                burnin = 0.4
+        except (ValueError, TypeError):
+            print(f"Warning: invalid burnin value '{args.burnin}', using 0.4")
+            burnin = 0.4
+                
     # Parse the sequence
     try:
         sampler_sequence = [s.strip().lower() for s in args.sequence.split(',')]
@@ -734,24 +765,15 @@ def main():
         print(f"Error parsing sequence: {e}")
         return
     
-# After parsing:
-    # Parse burnin numeric or auto
-    try:
-        if args.burnin.lower() != "auto":
-            burnin_val = float(args.burnin)
-        else:
-            burnin_val = "auto"
-    except:
-        print("Invalid --burnin value; use float or 'auto'")
-        return    
-    
+
+            
     # Run analysis with specified parameters
     success = analyze_sampler_in_sequence(
         sampler_sequence=sampler_sequence,
         sampler_type=args.sampler,
         sampler_position=args.position,
         output_folder=args.output, 
-        burnin=burnin_val,
+        burnin=burnin,
         do_trace_plots=not args.no_traces,
         do_gmm_fits=not args.no_gmm,
         do_diagnostics=not args.no_diagnostics

@@ -174,7 +174,7 @@ class TetramerSampler(BaseMCSampler):
                             print(f"  Second {type_name} position: {positions[type_name][1]}")
             
             # Additional validation: Check if positions are within expected bounds
-            box_size = getattr(self.params, 'box_size', 100.0)  # Default fallback
+            box_size = getattr(self.params, 'box_size', 800.0)  # Default fallback
             for type_name, pos_array in positions.items():
                 if len(pos_array) > 0:
                     min_coords = np.min(pos_array, axis=0)
@@ -182,8 +182,9 @@ class TetramerSampler(BaseMCSampler):
                     print(f"{type_name} position range: min={min_coords}, max={max_coords}")
                     
                     # Check if any coordinates are outside expected bounds
-                    if np.any(min_coords < 0) or np.any(max_coords > box_size):
-                        print(f"WARNING: {type_name} positions outside expected bounds [0, {box_size}]")
+                    half_box = box_size / 2.0
+                    if np.any(min_coords < -half_box) or np.any(max_coords > half_box):
+                        print(f"WARNING: {type_name} positions outside expected bounds [-{half_box}, {half_box}]")
             
             return positions
 

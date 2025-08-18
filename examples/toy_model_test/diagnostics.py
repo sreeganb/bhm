@@ -3,6 +3,11 @@ import pandas as pd
 import arviz as az
 from scipy import stats
 from typing import Dict, List, Tuple, Optional
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+import seaborn as sns
+import os
+
 
 class AdvancedConvergenceDiagnostics:
     """Convergence diagnostics + automatic burn-in estimation."""
@@ -46,6 +51,101 @@ class AdvancedConvergenceDiagnostics:
             if ok_all:
                 return float(f)
         return float(max_frac)
+    
+    def generate_pdf_report(self, output_dir: str, sampler_name: str, 
+                            burnin_fraction: float = 0.0) -> str:
+        """
+        Generate a comprehensive PDF diagnostic report.
+        Safe‐guards against any Dataset→float conversion errors in the 'full' diagnostics.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        pdf_filename = os.path.join(output_dir, f"{sampler_name}_convergence_diagnostics.pdf")
+
+        # 1) Always compute the simple summary
+        summary_df = self.compute_summary_dataframe(burnin_fraction)
+
+        # 2) Try the “full” diagnostics (may fail if some Dataset object lurks)
+        full_ok = True
+        text_report = None
+        try:
+            full_df = self.compute_all_diagnostics()
+            text_report = self.generate_diagnostic_report(full_df)
+        except Exception as e:
+            full_ok = False
+            print(f"[Diagnostics] Skipping full diagnostics page due to error: {e}")
+
+        with PdfPages(pdf_filename) as pdf:
+            # Page 1: summary table
+            fig, ax = plt.subplots(figsize=(12, 8))
+            ax.axis('tight'); ax.axis('off')
+            if not summary_df.empty:
+                tbl = ax.table(
+                    cellText=summary_df.round(3).values,
+                    colLabels=summary_df.columns,
+                    cellLoc='center', loc='center'
+                )
+                tbl.auto_set_font_size(False); tbl.set_fontsize(9); tbl.scale(1.2,1.5)
+            ax.set_title(f'MCMC Convergence Summary\n{sampler_name} (burnin {burnin_fraction:.1%})',
+                        fontsize=14, fontweight='bold')
+            pdf.savefig(fig); plt.close(fig)
+
+            # Page 2: R-hat & ESS bar plots
+            if not summary_df.empty and 'Rhat' in summary_df.columns:
+                fig, (ax1,ax2) = plt.subplots(1,2,figsize=(14,6))
+                # R-hat
+                rh = summary_df.dropna(subset=['Rhat'])
+                cols = ['red' if x>1.01 else 'orange' if x>1.005 else 'green' for x in rh['Rhat']]
+                ax1.bar(range(len(rh)), rh['Rhat'], color=cols, alpha=0.7)
+                ax1.set_xticks(range(len(rh))); ax1.set_xticklabels(rh['Parameter'],rotation=45)
+                ax1.axhline(1.01, color='red', linestyle='--'); ax1.axhline(1.005, color='orange', linestyle='--')
+                ax1.set_title('R-hat by Parameter')
+
+                # ESS
+                es = summary_df.dropna(subset=['ESS'])
+                ax2.bar(range(len(es)), es['ESS'], color='steelblue', alpha=0.7)
+                ax2.set_xticks(range(len(es))); ax2.set_xticklabels(es['Parameter'],rotation=45)
+                ax2.axhline(400, color='red', linestyle='--')
+                ax2.set_title('ESS by Parameter')
+                plt.tight_layout(); pdf.savefig(fig); plt.close(fig)
+
+            # Page 3&4: “Full” diagnostics and traces
+            if full_ok:
+                # Text report page
+                fig, ax = plt.subplots(figsize=(11,8.5)); ax.axis('off')
+                lines = text_report.split('\n')
+                ax.text(0.01,0.99, "\n".join(lines), va='top', family='monospace', fontsize=8)
+                pdf.savefig(fig); plt.close(fig)
+
+                # Chain traces for each parameter
+                n_params = len(self.chains)
+                ncols = min(3,n_params); nrows = (n_params + ncols-1)//ncols
+                fig, axes = plt.subplots(nrows,ncols,figsize=(4*ncols,3*nrows))
+                axes = axes.flatten() if n_params>1 else [axes]
+                for i,(param,chs) in enumerate(self.chains.items()):
+                    ax = axes[i]
+                    for c in chs:
+                        cut = int(burnin_fraction*len(c))
+                        ax.plot(c[cut:], alpha=0.7)
+                    ax.set_title(param); ax.grid(True)
+                # hide extras
+                for j in range(i+1,len(axes)):
+                    axes[j].set_visible(False)
+                plt.tight_layout(); pdf.savefig(fig); plt.close(fig)
+
+        print(f"[Diagnostics] PDF report saved: {pdf_filename}")
+        return pdf_filename
+
+    def save_diagnostics_csv(self, output_dir: str, sampler_name: str, 
+                            burnin_fraction: float = 0.0) -> str:
+        """Save summary diagnostics as CSV."""
+        os.makedirs(output_dir, exist_ok=True)
+        csv_filename = os.path.join(output_dir, f"{sampler_name}_convergence_summary.csv")
+        
+        summary_df = self.compute_summary_dataframe(burnin_fraction)
+        summary_df.to_csv(csv_filename, index=False)
+        
+        print(f"[Diagnostics] CSV summary saved: {csv_filename}")
+        return csv_filename
 
     def compute_summary_dataframe(self, burnin_fraction: float = 0.0) -> pd.DataFrame:
         """Return simple table: param, chains, samples, Rhat, ESS."""

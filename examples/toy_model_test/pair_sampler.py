@@ -182,15 +182,12 @@ class PairSampler(BaseMCSampler):
                     print(f"{type_name} position range: min={min_coords}, max={max_coords}")
                     
                     # Check if any coordinates are outside expected bounds
-                    if np.any(min_coords < 0) or np.any(max_coords > box_size):
-                        print(f"WARNING: {type_name} positions outside expected bounds [0, {box_size}]")
-            
-            return positions
+                    # define half box size
+                    half_box = box_size / 2.0
+                    if np.any(min_coords < -half_box) or np.any(max_coords > half_box):
+                        print(f"WARNING: {type_name} positions outside expected bounds [-{half_box}, {half_box}]")
 
-        except Exception as e:
-            print(f"Error loading trajectory from {traj_dir}: {e}")
-            print("Falling back to initialized positions")
-            return self.initialize_positions()
+            return positions
 
         except Exception as e:
             print(f"Error loading trajectory from {traj_dir}: {e}")
@@ -295,11 +292,6 @@ class PairSampler(BaseMCSampler):
         
         # 3) Prior penalty using sigma provider
         prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
-
-        # Clean up debug file if opened
-#        if debug_fh:
-#            debug_fh.close()
-#            print(f"Particle pairing debug information written to {debug_file}")
 
         total_score = exclusion_score + pairwise_score + prior_penalty
         
