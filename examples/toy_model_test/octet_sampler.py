@@ -443,13 +443,13 @@ class OctetSampler(BaseMCSampler):
             delta = proposed_score - current_score
             accept_prob = 0.0
 
-            if move_type == 'sigma' and pair_type is not None:
-                # Jacobian correction for sigma moves proposed in log-space
-                jacobian_term = np.log(proposed_sigma[pair_type] / current_sigma[pair_type])
-                delta += jacobian_term
-                if step % save_freq == 0:
-                    print(f"  Sigma move: {pair_type} {current_sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
-                        f"Jacobian term: {jacobian_term:.4f}")
+#            if move_type == 'sigma' and pair_type is not None:
+#                # Jacobian correction for sigma moves proposed in log-space
+#                jacobian_term = np.log(proposed_sigma[pair_type] / current_sigma[pair_type])
+#                delta += jacobian_term
+#                if step % save_freq == 0:
+#                    print(f"  Sigma move: {pair_type} {current_sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
+#                        f"Jacobian term: {jacobian_term:.4f}")
 
             if delta < 0:
                 accept_prob = 1.0

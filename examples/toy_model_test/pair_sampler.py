@@ -425,14 +425,14 @@ class PairSampler(BaseMCSampler):
             # Metropolis criterion with Jacobian correction for sigma moves
             delta = proposed_score - current_score
             
-            # Add Jacobian correction for sigma moves (log(sigma'/sigma))
-            if move_type == 'sigma' and pair_type is not None:
-                # Add log(sigma'/sigma) to delta for proper detailed balance
-                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
-                delta += jacobian_term
-                if debug and step % save_freq == 0:
-                    print(f"  Sigma move: {pair_type} {self.sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
-                        f"Jacobian term: {jacobian_term:.4f}")
+#            # Add Jacobian correction for sigma moves (log(sigma'/sigma))
+#            if move_type == 'sigma' and pair_type is not None:
+#                # Add log(sigma'/sigma) to delta for proper detailed balance
+#                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
+#                delta += jacobian_term
+#                if debug and step % save_freq == 0:
+#                    print(f"  Sigma move: {pair_type} {self.sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
+#                        f"Jacobian term: {jacobian_term:.4f}")
             
             # Acceptance probability
             accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
