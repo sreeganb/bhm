@@ -92,7 +92,7 @@ def run_analysis(sampler_key: str, sampler_index: int, sampler_sequence: List[st
             "--sequence", sequence_str,
             "--sampler", sampler_key,
             "--position", str(sequence_position),
-            "--burnin", "0.4"
+            "--burnin", "auto"
         ]
         
         print(f"Executing command: {' '.join(cmd)}")
