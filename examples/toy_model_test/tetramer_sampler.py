@@ -412,9 +412,9 @@ class TetramerSampler(BaseMCSampler):
             # Metropolis criterion with Jacobian correction for sigma moves
             delta = proposed_score - current_score
             
-            if move_type == 'sigma' and pair_type is not None:
-                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
-                delta += jacobian_term
+#            if move_type == 'sigma' and pair_type is not None:
+#                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
+#                delta += jacobian_term
             
             # Accept/reject
             accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
