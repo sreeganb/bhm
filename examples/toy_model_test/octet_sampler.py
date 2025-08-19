@@ -505,7 +505,29 @@ class OctetSampler(BaseMCSampler):
                 used.add(j)
         
         return octets, tetramers
-            
+    def _compute_tetramer_centers_vectorized(self, tetramers: List[Tuple[int, ...]], positions: Dict[str, np.ndarray]) -> np.ndarray:
+        """Efficiently compute tetramer centers using vectorization."""
+        if not tetramers:
+            return np.array([]).reshape(0, 3)
+        
+        n_tetramers = len(tetramers)
+        centers = np.zeros((n_tetramers, 3))
+        
+        # Vectorized computation
+        for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
+            # Stack all coordinates and compute mean
+            coords = np.array([
+                positions['A'][a_idx],
+                positions['B'][b_idx],
+                positions['C'][c_idx1],
+                positions['C'][c_idx2]
+            ])
+            centers[i] = np.mean(coords, axis=0)
+        
+        return centers     
+#==============================================================================
+#   Main Monte Carlo sampling method
+#==============================================================================
     def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/octetsampler_results/"):
         """
         Monte Carlo sampling with position, sigma, tetramer, and octet moves.
