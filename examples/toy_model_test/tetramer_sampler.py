@@ -277,73 +277,136 @@ class TetramerSampler(BaseMCSampler):
     #=======================================================================
     # New tetramer generation method using biophysical constraints
     #=======================================================================
+#    def get_tetramers(self, positions: Dict[str, np.ndarray]) -> List[Tuple[int, ...]]:
+#        """Generate tetramers based on optimal distance matching."""
+#        try:
+#            # Validate input
+#            if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
+#                return []
+#            
+#            a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
+#            
+#            # Get target distances from parameters
+#            ab_target = self.params.pair_distances['AB']
+#            bc_target = self.params.pair_distances['BC']
+#            
+#            # Calculate distance matrices
+#            dist_AB = cdist(a_pos, b_pos)
+#            
+#            # Score each A-B pair based on closeness to target distance
+#            ab_scores = np.abs(dist_AB - ab_target)
+#            
+#            # Create arrays to track used particles
+#            a_used = np.zeros(len(a_pos), dtype=bool)
+#            b_used = np.zeros(len(b_pos), dtype=bool)
+#            c_used = np.zeros(len(c_pos), dtype=bool)
+#            
+#            tetramers = []
+#            
+#            # Process A-B pairs in order of increasing score (closest to target)
+#            flat_indices = np.argsort(ab_scores.flatten())
+#            
+#            for flat_idx in flat_indices:
+#                a_idx = flat_idx // len(b_pos)
+#                b_idx = flat_idx % len(b_pos)
+#                
+#                # Skip if either particle is used
+#                if a_used[a_idx] or b_used[b_idx]:
+#                    continue
+#                
+#                # Find available C particles
+#                available_c = np.where(~c_used)[0]
+#                if len(available_c) < 2:
+#                    break
+#                    
+#                # Calculate distances from B to all available C particles
+#                b_c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos[available_c])[0]
+#                
+#                # Score C particles by distance to target
+#                c_scores = np.abs(b_c_dists - bc_target)
+#                
+#                # Get the two best C particles
+#                best_c_indices = available_c[np.argsort(c_scores)[:2]]
+#                
+#                # Form tetramer
+#                tetramers.append((a_idx, b_idx, best_c_indices[0], best_c_indices[1]))
+#                
+#                # Mark particles as used
+#                a_used[a_idx] = True
+#                b_used[b_idx] = True
+#                c_used[best_c_indices] = True
+#                
+#                # Stop if we have enough tetramers
+#                if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
+#                    break
+#            
+#            return tetramers
+#            
+#        except Exception as e:
+#            print(f"Error in tetramer generation: {e}")
+#            return []
+
+    # Alternative: Hungarian algorithm approach for optimal matching
     def get_tetramers(self, positions: Dict[str, np.ndarray]) -> List[Tuple[int, ...]]:
-        """Generate tetramers based on optimal distance matching."""
+        """Use Hungarian algorithm for optimal A-B matching, then greedy C selection."""
         try:
+            from scipy.optimize import linear_sum_assignment
+            
             # Validate input
             if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
                 return []
-            
+                
             a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
             
-            # Get target distances from parameters
+            # Get target distances
             ab_target = self.params.pair_distances['AB']
             bc_target = self.params.pair_distances['BC']
             
-            # Calculate distance matrices
+            # Calculate AB cost matrix (deviation from target distance)
             dist_AB = cdist(a_pos, b_pos)
+            cost_matrix = np.abs(dist_AB - ab_target)
             
-            # Score each A-B pair based on closeness to target distance
-            ab_scores = np.abs(dist_AB - ab_target)
+            # Solve optimal assignment problem
+            a_indices, b_indices = linear_sum_assignment(cost_matrix)
             
-            # Create arrays to track used particles
-            a_used = np.zeros(len(a_pos), dtype=bool)
-            b_used = np.zeros(len(b_pos), dtype=bool)
-            c_used = np.zeros(len(c_pos), dtype=bool)
+            # Pre-calculate BC distances
+            dist_BC = cdist(b_pos, c_pos)
             
+            # Now assign C particles greedily based on B assignments
+            c_used = set()
             tetramers = []
             
-            # Process A-B pairs in order of increasing score (closest to target)
-            flat_indices = np.argsort(ab_scores.flatten())
+            # Sort A-B pairs by their cost (best matches first)
+            pair_costs = cost_matrix[a_indices, b_indices]
+            sorted_pairs = np.argsort(pair_costs)
             
-            for flat_idx in flat_indices:
-                a_idx = flat_idx // len(b_pos)
-                b_idx = flat_idx % len(b_pos)
-                
-                # Skip if either particle is used
-                if a_used[a_idx] or b_used[b_idx]:
-                    continue
+            for pair_idx in sorted_pairs:
+                a_idx = a_indices[pair_idx]
+                b_idx = b_indices[pair_idx]
                 
                 # Find available C particles
-                available_c = np.where(~c_used)[0]
+                available_c = [i for i in range(len(c_pos)) if i not in c_used]
                 if len(available_c) < 2:
                     break
-                    
-                # Calculate distances from B to all available C particles
-                b_c_dists = cdist(b_pos[b_idx].reshape(1, -1), c_pos[available_c])[0]
                 
-                # Score C particles by distance to target
-                c_scores = np.abs(b_c_dists - bc_target)
+                # Get best C pair for this B
+                bc_dists = dist_BC[b_idx, available_c]
+                c_scores = np.abs(bc_dists - bc_target)
                 
-                # Get the two best C particles
-                best_c_indices = available_c[np.argsort(c_scores)[:2]]
+                best_c_local = np.argsort(c_scores)[:2]
+                best_c_indices = [available_c[i] for i in best_c_local]
                 
                 # Form tetramer
                 tetramers.append((a_idx, b_idx, best_c_indices[0], best_c_indices[1]))
+                c_used.update(best_c_indices)
                 
-                # Mark particles as used
-                a_used[a_idx] = True
-                b_used[b_idx] = True
-                c_used[best_c_indices] = True
-                
-                # Stop if we have enough tetramers
                 if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
                     break
             
             return tetramers
             
         except Exception as e:
-            print(f"Error in tetramer generation: {e}")
+            print(f"Error in Hungarian tetramer generation: {e}")
             return []
     #=======================================================================
     def run_mc(self, n_steps=50000, save_freq=1000, output_dir="output_analysis/tetramersampler_results/", debug=False):
