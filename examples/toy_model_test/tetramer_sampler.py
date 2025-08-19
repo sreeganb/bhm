@@ -82,116 +82,129 @@ class TetramerSampler(BaseMCSampler):
             prior_type=prior_type,
             pos_passed=self.positions_ts
         )
-
+        
     def get_positions(self) -> Dict[str, np.ndarray]:
         """
-        Load positions from the previous sampler in the sequence.
+        Load positions from the previous sampler in the sequence or initialize if first.
+        This method uses the class attributes and calls the standalone function.
         """
-        import pathlib
+        return self.get_positions_from_previous_sampler(
+            sampler_sequence=self.sampler_sequence,
+            current_sequence_idx=self.sequence_idx,
+            specific_chain=getattr(self, 'specific_chain', None),
+            base_output_dir="output_analysis",
+            params=self.params
+        )
         
-        if self.sequence_idx == 0:
-            print("First sampler in sequence - using initialized positions")
-            return self.initialize_positions()
-        
-        # Get the previous sampler info
-        previous_sampler = self.sampler_sequence[self.sequence_idx - 1]
-        
-        # Count occurrences of the previous sampler up to current position
-        occurrence_count = 0
-        for i in range(self.sequence_idx):
-            if self.sampler_sequence[i] == previous_sampler:
-                occurrence_count += 1
-        
-        # Construct directory name
-        traj_dir = pathlib.Path(os.getcwd()) / f"output_analysis/{previous_sampler}sampler_results_{occurrence_count}"
-        
-        try:
-            # Get trajectory files
-            trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
-            
-            if not trajectory_files:
-                print(f"No trajectory files found in {traj_dir}")
-                print("Falling back to initialized positions")
-                return self.initialize_positions()
-            
-            # Select specific chain or random
-            if self.specific_chain is not None:
-                target_file = traj_dir / f"trajectory_chain_{self.specific_chain}.h5"
-                if target_file.exists():
-                    filepath = target_file
-                    chain_num = self.specific_chain
-                else:
-                    print(f"Specified chain {self.specific_chain} not found, selecting random")
-                    filepath = random.choice(trajectory_files)
-                    chain_num = int(filepath.stem.split('_')[-1])
-            else:
-                filepath = random.choice(trajectory_files)
-                chain_num = int(filepath.stem.split('_')[-1])
-            
-            print(f"Loading positions from {previous_sampler}sampler_results_{occurrence_count}, chain: {chain_num}")
-            
-            with h5py.File(filepath, 'r') as f:
-                if 'trajectory' not in f:
-                    raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
-                
-                traj_grp = f['trajectory']
-                keys = list(traj_grp.keys())
-                
-                if not keys:
-                    raise ValueError("Empty trajectory file")
-                
-                # Sort keys properly (state_00000, state_00001, etc.)
-                def extract_step_number(state_name):
-                    try:
-                        return int(state_name.split('_')[-1])
-                    except (ValueError, IndexError):
-                        return 0
-                
-                keys.sort(key=extract_step_number)
-                
-                # Get last frame
-                last_key = keys[-1]
-                print(f"Using last frame: {last_key}")
-                
-                # Debug: Print step number and total score of last frame
-                last_state_grp = traj_grp[last_key]
-                step_num = last_state_grp.attrs.get("step", 0)
-                total_score = last_state_grp.attrs.get("total_score", 0.0)
-                print(f"Last frame details: step={step_num}, score={total_score:.4f}")
-                
-                # Read positions
-                positions = {}
-                pos_grp = traj_grp[last_key]['positions']
-                
-                for type_name in pos_grp:
-                    positions[type_name] = pos_grp[type_name][:].copy()
-                    print(f"Loaded {len(positions[type_name])} {type_name} particles")
-                    
-                    # Debug: Print first few positions to verify they're reasonable
-                    if len(positions[type_name]) > 0:
-                        print(f"  First {type_name} position: {positions[type_name][0]}")
-                        if len(positions[type_name]) > 1:
-                            print(f"  Second {type_name} position: {positions[type_name][1]}")
-            
-            # Additional validation: Check if positions are within expected bounds
-            box_size = getattr(self.params, 'box_size', 800.0)  # Default fallback
-            for type_name, pos_array in positions.items():
-                if len(pos_array) > 0:
-                    min_coords = np.min(pos_array, axis=0)
-                    max_coords = np.max(pos_array, axis=0)
-                    print(f"{type_name} position range: min={min_coords}, max={max_coords}")
-                    
-                    # Check if any coordinates are outside expected bounds
-                    half_box = box_size / 2.0
-                    if np.any(min_coords < -half_box) or np.any(max_coords > half_box):
-                        print(f"WARNING: {type_name} positions outside expected bounds [-{half_box}, {half_box}]")
-            
-            return positions
-
-        except Exception as e:
-            print(f"Error loading trajectory from {traj_dir}: {e}")
-            print("Falling back to initialized positions")
-            return self.initialize_positions()
+#    def get_positions(self) -> Dict[str, np.ndarray]:
+#        """
+#        Load positions from the previous sampler in the sequence.
+#        """
+#        import pathlib
+#        
+#        if self.sequence_idx == 0:
+#            print("First sampler in sequence - using initialized positions")
+#            return self.initialize_positions()
+#        
+#        # Get the previous sampler info
+#        previous_sampler = self.sampler_sequence[self.sequence_idx - 1]
+#        
+#        # Count occurrences of the previous sampler up to current position
+#        occurrence_count = 0
+#        for i in range(self.sequence_idx):
+#            if self.sampler_sequence[i] == previous_sampler:
+#                occurrence_count += 1
+#        
+#        # Construct directory name
+#        traj_dir = pathlib.Path(os.getcwd()) / f"output_analysis/{previous_sampler}sampler_results_{occurrence_count}"
+#        
+#        try:
+#            # Get trajectory files
+#            trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
+#            
+#            if not trajectory_files:
+#                print(f"No trajectory files found in {traj_dir}")
+#                print("Falling back to initialized positions")
+#                return self.initialize_positions()
+#            
+#            # Select specific chain or random
+#            if self.specific_chain is not None:
+#                target_file = traj_dir / f"trajectory_chain_{self.specific_chain}.h5"
+#                if target_file.exists():
+#                    filepath = target_file
+#                    chain_num = self.specific_chain
+#                else:
+#                    print(f"Specified chain {self.specific_chain} not found, selecting random")
+#                    filepath = random.choice(trajectory_files)
+#                    chain_num = int(filepath.stem.split('_')[-1])
+#            else:
+#                filepath = random.choice(trajectory_files)
+#                chain_num = int(filepath.stem.split('_')[-1])
+#            
+#            print(f"Loading positions from {previous_sampler}sampler_results_{occurrence_count}, chain: {chain_num}")
+#            
+#            with h5py.File(filepath, 'r') as f:
+#                if 'trajectory' not in f:
+#                    raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
+#                
+#                traj_grp = f['trajectory']
+#                keys = list(traj_grp.keys())
+#                
+#                if not keys:
+#                    raise ValueError("Empty trajectory file")
+#                
+#                # Sort keys properly (state_00000, state_00001, etc.)
+#                def extract_step_number(state_name):
+#                    try:
+#                        return int(state_name.split('_')[-1])
+#                    except (ValueError, IndexError):
+#                        return 0
+#                
+#                keys.sort(key=extract_step_number)
+#                
+#                # Get last frame
+#                last_key = keys[-1]
+#                print(f"Using last frame: {last_key}")
+#                
+#                # Debug: Print step number and total score of last frame
+#                last_state_grp = traj_grp[last_key]
+#                step_num = last_state_grp.attrs.get("step", 0)
+#                total_score = last_state_grp.attrs.get("total_score", 0.0)
+#                print(f"Last frame details: step={step_num}, score={total_score:.4f}")
+#                
+#                # Read positions
+#                positions = {}
+#                pos_grp = traj_grp[last_key]['positions']
+#                
+#                for type_name in pos_grp:
+#                    positions[type_name] = pos_grp[type_name][:].copy()
+#                    print(f"Loaded {len(positions[type_name])} {type_name} particles")
+#                    
+#                    # Debug: Print first few positions to verify they're reasonable
+#                    if len(positions[type_name]) > 0:
+#                        print(f"  First {type_name} position: {positions[type_name][0]}")
+#                        if len(positions[type_name]) > 1:
+#                            print(f"  Second {type_name} position: {positions[type_name][1]}")
+#            
+#            # Additional validation: Check if positions are within expected bounds
+#            box_size = getattr(self.params, 'box_size', 800.0)  # Default fallback
+#            for type_name, pos_array in positions.items():
+#                if len(pos_array) > 0:
+#                    min_coords = np.min(pos_array, axis=0)
+#                    max_coords = np.max(pos_array, axis=0)
+#                    print(f"{type_name} position range: min={min_coords}, max={max_coords}")
+#                    
+#                    # Check if any coordinates are outside expected bounds
+#                    half_box = box_size / 2.0
+#                    if np.any(min_coords < -half_box) or np.any(max_coords > half_box):
+#                        print(f"WARNING: {type_name} positions outside expected bounds [-{half_box}, {half_box}]")
+#            
+#            return positions
+#
+#        except Exception as e:
+#            print(f"Error loading trajectory from {traj_dir}: {e}")
+#            print("Falling back to initialized positions")
+#            return self.initialize_positions()
 
 #    def get_tetramers(self, positions: Dict[str, np.ndarray], temp: float = 0.9) -> List[Tuple[int, ...]]:
 #        """Generate tetramers with particle exclusivity and distance-weighted selection."""
@@ -476,10 +489,6 @@ class TetramerSampler(BaseMCSampler):
             # Metropolis criterion with Jacobian correction for sigma moves
             delta = proposed_score - current_score
             
-#            if move_type == 'sigma' and pair_type is not None:
-#                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
-#                delta += jacobian_term
-            
             # Accept/reject
             accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
             
@@ -529,55 +538,139 @@ class TetramerSampler(BaseMCSampler):
         return best_positions, trajectory_file
 
     def propose_tetramer_move(self, positions: Dict[str, np.ndarray], acceptance_rate: float) -> Dict[str, np.ndarray]:
-        """Tetramer move: translate and rotate a randomly selected tetramer."""
+        """
+        Optimized tetramer move proposal with decoupled translation/rotation.
+        60% probability for translation, 30% for rotation, 10% for mixed moves.
+        Clips coordinates to stay within box boundaries minus particle radius.
+        """
         new_pos = {k: v.copy() for k, v in positions.items()}
-
         tetramers = self.get_tetramers(positions)
+        
         if not tetramers:
             return new_pos
-
+        
+        # Get box boundaries with particle radius buffer
+        box_size = getattr(self.params, 'box_size', 800.0)
+        particle_radius = getattr(self.params, 'particle_radius', 5.0)  # Default radius
+        half_box = box_size / 2.0
+        max_coord = half_box - 2 * particle_radius
+        min_coord = -max_coord
+        
         # Select random tetramer
         tetramer = tetramers[np.random.randint(len(tetramers))]
         a_idx, b_idx, c_idx1, c_idx2 = tetramer
+        
+        # Pre-extract tetramer particle information efficiently
         particles = [('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)]
-
-        # Get coordinates and centroid
+        
+        # Get coordinates in a vectorized way
         coords = np.array([new_pos[part][idx] for part, idx in particles])
         centroid = np.mean(coords, axis=0)
-
+        
+        # Calculate tetramer size for adaptive scaling
+        distances_from_center = np.linalg.norm(coords - centroid, axis=1)
+        tetramer_radius = np.max(distances_from_center)
+        size_factor = max(0.5, min(2.0, tetramer_radius))
+        
         # Fixed step sizes
         trans_step = 0.25
         rot_step = 0.2
-
-        # Translation
-        displacement = np.random.normal(0.0, trans_step, 3)
-
-        # Rotation
-        rotation_axis = np.random.randn(3)
-        rotation_axis /= np.linalg.norm(rotation_axis) + 1e-10
-        rotation_angle = np.random.normal(0.0, rot_step)
-
-        # Build rotation matrix
-        half_angle = rotation_angle / 2.0
-        qw = np.cos(half_angle)
-        qx = rotation_axis[0] * np.sin(half_angle)
-        qy = rotation_axis[1] * np.sin(half_angle)
-        qz = rotation_axis[2] * np.sin(half_angle)
-        rot_matrix = np.array([
-            [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qw*qz), 2*(qx*qz + qw*qy)],
-            [2*(qx*qy + qw*qz), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qw*qx)],
-            [2*(qx*qz - qw*qy), 2*(qy*qz + qw*qx), 1 - 2*(qx**2 + qy**2)]
-        ])
-
-        # Apply transformation
-        for i, (part, idx) in enumerate(particles):
-            vec = coords[i] - centroid
-            rotated = rot_matrix @ vec
-            final_pos = centroid + rotated + displacement
-            new_pos[part][idx] = np.mod(final_pos, self.params.box_size)
-
+        
+        # Choose move type: 60% translation, 30% rotation, 10% mixed
+        rand_val = np.random.random()
+        
+        if rand_val < 0.6:
+            # --- TRANSLATION MOVE ---
+            # Generate displacement with size-adaptive scaling
+            displacement = np.random.normal(0.0, trans_step * size_factor, 3)
+            
+            # Apply translation to all particles in the tetramer
+            for i, (part, idx) in enumerate(particles):
+                final_pos = coords[i] + displacement
+                # Clip coordinates to stay within bounds
+                final_pos = np.clip(final_pos, min_coord, max_coord)
+                new_pos[part][idx] = final_pos
+        
+        elif rand_val < 0.9:  # 0.6 to 0.9 = 30% probability
+            # --- ROTATION MOVE ---
+            # Generate random rotation using Marsaglia method for unit vector
+            while True:
+                x1, x2 = np.random.uniform(-1, 1, 2)
+                if x1*x1 + x2*x2 < 1:
+                    break
+            
+            sqrt_term = np.sqrt(1 - x1*x1 - x2*x2)
+            rotation_axis = np.array([2*x1*sqrt_term, 2*x2*sqrt_term, 1 - 2*(x1*x1 + x2*x2)])
+            
+            # Generate rotation angle
+            rotation_angle = np.random.normal(0.0, rot_step)
+            
+            # Build rotation matrix using quaternion (numerically stable)
+            half_angle = rotation_angle / 2.0
+            qw = np.cos(half_angle)
+            qx = rotation_axis[0] * np.sin(half_angle)
+            qy = rotation_axis[1] * np.sin(half_angle)
+            qz = rotation_axis[2] * np.sin(half_angle)
+            
+            rot_matrix = np.array([
+                [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qw*qz), 2*(qx*qz + qw*qy)],
+                [2*(qx*qy + qw*qz), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qw*qx)],
+                [2*(qx*qz - qw*qy), 2*(qy*qz + qw*qx), 1 - 2*(qx**2 + qy**2)]
+            ])
+            
+            # Apply rotation around centroid to all particles
+            for i, (part, idx) in enumerate(particles):
+                vec = coords[i] - centroid
+                rotated = rot_matrix @ vec
+                final_pos = centroid + rotated
+                # Clip coordinates to stay within bounds
+                final_pos = np.clip(final_pos, min_coord, max_coord)
+                new_pos[part][idx] = final_pos
+        
+        else:  # 0.9 to 1.0 = 10% probability
+            # --- MIXED MOVE (Translation + Rotation) ---
+            # Use smaller step sizes for combined moves to maintain reasonable acceptance
+            trans_scale = 0.7
+            rot_scale = 0.7
+            
+            # Generate displacement with reduced step size
+            displacement = np.random.normal(0.0, trans_step * size_factor * trans_scale, 3)
+            
+            # Generate rotation with reduced step size
+            while True:
+                x1, x2 = np.random.uniform(-1, 1, 2)
+                if x1*x1 + x2*x2 < 1:
+                    break
+            
+            sqrt_term = np.sqrt(1 - x1*x1 - x2*x2)
+            rotation_axis = np.array([2*x1*sqrt_term, 2*x2*sqrt_term, 1 - 2*(x1*x1 + x2*x2)])
+            
+            rotation_angle = np.random.normal(0.0, rot_step * rot_scale)
+            
+            # Build rotation matrix
+            half_angle = rotation_angle / 2.0
+            qw = np.cos(half_angle)
+            qx = rotation_axis[0] * np.sin(half_angle)
+            qy = rotation_axis[1] * np.sin(half_angle)
+            qz = rotation_axis[2] * np.sin(half_angle)
+            
+            rot_matrix = np.array([
+                [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qw*qz), 2*(qx*qz + qw*qy)],
+                [2*(qx*qy + qw*qz), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qw*qx)],
+                [2*(qx*qz - qw*qy), 2*(qy*qz + qw*qx), 1 - 2*(qx**2 + qy**2)]
+            ])
+            
+            # Apply combined transformation: rotate around centroid, then translate
+            for i, (part, idx) in enumerate(particles):
+                vec = coords[i] - centroid
+                rotated = rot_matrix @ vec
+                final_pos = centroid + rotated + displacement
+                # Clip coordinates to stay within bounds
+                final_pos = np.clip(final_pos, min_coord, max_coord)
+                new_pos[part][idx] = final_pos
+        
         return new_pos
-
+#------------------------------------------------------------------------------
     def calculate_tetramer_scores_batch(self, positions, tetramers, sig, debug_logging=False):
         """Calculate scores for all tetramers."""
         if not tetramers:

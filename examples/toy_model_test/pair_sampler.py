@@ -86,114 +86,16 @@ class PairSampler(BaseMCSampler):
     def get_positions(self) -> Dict[str, np.ndarray]:
         """
         Load positions from the previous sampler in the sequence or initialize if first.
+        This method uses the class attributes and calls the standalone function.
         """
-        import pathlib
+        return self.get_positions_from_previous_sampler(
+            sampler_sequence=self.sampler_sequence,
+            current_sequence_idx=self.sequence_idx,
+            specific_chain=getattr(self, 'specific_chain', None),
+            base_output_dir="output_analysis",
+            params=self.params
+        )
         
-        if self.sequence_idx == 0:
-            print("First sampler in sequence - using initialized positions")
-            return self.initialize_positions()
-        
-        # Get the previous sampler info
-        previous_sampler = self.sampler_sequence[self.sequence_idx - 1]
-        
-        # Count occurrences of the previous sampler up to current position
-        occurrence_count = 0
-        for i in range(self.sequence_idx):
-            if self.sampler_sequence[i] == previous_sampler:
-                occurrence_count += 1
-        
-        # Construct directory name
-        traj_dir = pathlib.Path(os.getcwd()) / f"output_analysis/{previous_sampler}sampler_results_{occurrence_count}"
-        
-        try:
-            # Get trajectory files
-            trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
-            
-            if not trajectory_files:
-                print(f"No trajectory files found in {traj_dir}")
-                print("Falling back to initialized positions")
-                return self.initialize_positions()
-            
-            # Select specific chain or random
-            if self.specific_chain is not None:
-                target_file = traj_dir / f"trajectory_chain_{self.specific_chain}.h5"
-                if target_file.exists():
-                    filepath = target_file
-                    chain_num = self.specific_chain
-                else:
-                    print(f"Specified chain {self.specific_chain} not found, selecting random")
-                    filepath = random.choice(trajectory_files)
-                    chain_num = int(filepath.stem.split('_')[-1])
-            else:
-                filepath = random.choice(trajectory_files)
-                chain_num = int(filepath.stem.split('_')[-1])
-            
-            print(f"Loading positions from {previous_sampler}sampler_results_{occurrence_count}, chain: {chain_num}")
-            
-            with h5py.File(filepath, 'r') as f:
-                if 'trajectory' not in f:
-                    raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
-                
-                traj_grp = f['trajectory']
-                keys = list(traj_grp.keys())
-                
-                if not keys:
-                    raise ValueError("Empty trajectory file")
-                
-                # Sort keys properly (state_00000, state_00001, etc.)
-                def extract_step_number(state_name):
-                    try:
-                        return int(state_name.split('_')[-1])
-                    except (ValueError, IndexError):
-                        return 0
-                
-                keys.sort(key=extract_step_number)
-                
-                # Get last frame
-                last_key = keys[-1]
-                print(f"Using last frame: {last_key}")
-                
-                # Debug: Print step number and total score of last frame
-                last_state_grp = traj_grp[last_key]
-                step_num = last_state_grp.attrs.get("step", 0)
-                total_score = last_state_grp.attrs.get("total_score", 0.0)
-                print(f"Last frame details: step={step_num}, score={total_score:.4f}")
-                
-                # Read positions
-                positions = {}
-                pos_grp = traj_grp[last_key]['positions']
-                
-                for type_name in pos_grp:
-                    positions[type_name] = pos_grp[type_name][:].copy()
-                    print(f"Loaded {len(positions[type_name])} {type_name} particles")
-                    
-                    # Debug: Print first few positions to verify they're reasonable
-                    if len(positions[type_name]) > 0:
-                        print(f"  First {type_name} position: {positions[type_name][0]}")
-                        if len(positions[type_name]) > 1:
-                            print(f"  Second {type_name} position: {positions[type_name][1]}")
-            
-            # Additional validation: Check if positions are within expected bounds
-            box_size = getattr(self.params, 'box_size', 100.0)  # Default fallback
-            for type_name, pos_array in positions.items():
-                if len(pos_array) > 0:
-                    min_coords = np.min(pos_array, axis=0)
-                    max_coords = np.max(pos_array, axis=0)
-                    print(f"{type_name} position range: min={min_coords}, max={max_coords}")
-                    
-                    # Check if any coordinates are outside expected bounds
-                    # define half box size
-                    half_box = box_size / 2.0
-                    if np.any(min_coords < -half_box) or np.any(max_coords > half_box):
-                        print(f"WARNING: {type_name} positions outside expected bounds [-{half_box}, {half_box}]")
-
-            return positions
-
-        except Exception as e:
-            print(f"Error loading trajectory from {traj_dir}: {e}")
-            print("Falling back to initialized positions")
-            return self.initialize_positions()
-                 
     def calculate_score(
         self,
         pos: Dict[str, np.ndarray],  # input positions
@@ -295,7 +197,7 @@ class PairSampler(BaseMCSampler):
 
         total_score = exclusion_score + pairwise_score + prior_penalty
         
-        debug = False  # Disable debug logging after first run
+        debug = True  # Disable debug logging after first run
         if debug:
             # Create debug folder if it doesn't exist
             debug_folder = "debug_info"
@@ -416,15 +318,6 @@ class PairSampler(BaseMCSampler):
             
             # Metropolis criterion with Jacobian correction for sigma moves
             delta = proposed_score - current_score
-            
-#            # Add Jacobian correction for sigma moves (log(sigma'/sigma))
-#            if move_type == 'sigma' and pair_type is not None:
-#                # Add log(sigma'/sigma) to delta for proper detailed balance
-#                jacobian_term = np.log(proposed_sigma[pair_type] / self.sigma[pair_type])
-#                delta += jacobian_term
-#                if debug and step % save_freq == 0:
-#                    print(f"  Sigma move: {pair_type} {self.sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
-#                        f"Jacobian term: {jacobian_term:.4f}")
             
             # Acceptance probability
             accept = delta < 0 or np.random.random() < np.exp(-delta / temp)

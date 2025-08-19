@@ -3,6 +3,11 @@ import numpy as np
 from typing import Dict, Tuple
 from scipy.spatial.distance import cdist
 from parameters import SystemParameters
+from typing import List, Optional
+import os
+import pathlib
+import random
+import h5py
 
 class BaseMCSampler:
     def __init__(self):
@@ -26,7 +31,154 @@ class BaseMCSampler:
             sigma_range[pair_type] = (lower_bound, upper_bound)
         
         # return sigma, range
-        return sigma, sigma_range 
+        return sigma, sigma_range
+     
+    def get_positions_from_previous_sampler(self,
+        sampler_sequence: List[str], 
+        current_sequence_idx: int, 
+        specific_chain: Optional[int] = None,
+        base_output_dir: str = "output_analysis",
+        params: Optional[SystemParameters] = None
+    ) -> Dict[str, np.ndarray]:
+        """
+        Load positions from the previous sampler in the sequence or initialize if first.
+        
+        Args:
+            sampler_sequence: Complete sequence of samplers (e.g., ['pair', 'tetramer', 'pair', 'octet'])
+            current_sequence_idx: Index of current sampler in the sequence (0-based)
+            specific_chain: Optional chain number to load from (if None, selects random)
+            base_output_dir: Base directory for output files
+            params: SystemParameters instance (if None, creates default)
+        
+        Returns:
+            Dictionary of positions by particle type
+        """
+        
+        # Initialize params if not provided
+        if params is None:
+            params = SystemParameters()
+        
+        if current_sequence_idx == 0:
+            print("First sampler in sequence - using initialized positions")
+            return self.initialize_positions()
+        
+        # Get the previous sampler info
+        previous_sampler = sampler_sequence[current_sequence_idx - 1]
+        
+        # Count occurrences of the previous sampler up to current position
+        occurrence_count = 0
+        for i in range(current_sequence_idx):
+            if sampler_sequence[i] == previous_sampler:
+                occurrence_count += 1
+        
+        # Construct directory name
+        traj_dir = pathlib.Path(os.getcwd()) / f"{base_output_dir}/{previous_sampler}sampler_results_{occurrence_count}"
+        
+        try:
+            # Get trajectory files
+            trajectory_files = list(traj_dir.glob("trajectory_chain_*.h5"))
+            
+            if not trajectory_files:
+                print(f"No trajectory files found in {traj_dir}")
+                print("Falling back to initialized positions")
+                return self.initialize_positions()
+            
+            # Select specific chain or random
+            if specific_chain is not None:
+                target_file = traj_dir / f"trajectory_chain_{specific_chain}.h5"
+                if target_file.exists():
+                    filepath = target_file
+                    chain_num = specific_chain
+                else:
+                    print(f"Specified chain {specific_chain} not found, selecting random")
+                    filepath = random.choice(trajectory_files)
+                    chain_num = int(filepath.stem.split('_')[-1])
+            else:
+                filepath = random.choice(trajectory_files)
+                chain_num = int(filepath.stem.split('_')[-1])
+            
+            print(f"Loading positions from {previous_sampler}sampler_results_{occurrence_count}, chain: {chain_num}")
+            
+            with h5py.File(filepath, 'r') as f:
+                if 'trajectory' not in f:
+                    raise KeyError("Invalid trajectory file format: missing 'trajectory' group")
+                
+                traj_grp = f['trajectory']
+                keys = list(traj_grp.keys())
+                
+                if not keys:
+                    raise ValueError("Empty trajectory file")
+                
+                # Sort keys properly (state_00000, state_00001, etc.)
+                def extract_step_number(state_name):
+                    try:
+                        return int(state_name.split('_')[-1])
+                    except (ValueError, IndexError):
+                        return 0
+                
+                keys.sort(key=extract_step_number)
+                
+                # Get last frame
+                last_key = keys[-1]
+                print(f"Using last frame: {last_key}")
+                
+                # Debug: Print step number and total score of last frame
+                last_state_grp = traj_grp[last_key]
+                step_num = last_state_grp.attrs.get("step", 0)
+                total_score = last_state_grp.attrs.get("total_score", 0.0)
+                print(f"Last frame details: step={step_num}, score={total_score:.4f}")
+                
+                # Read positions
+                positions = {}
+                pos_grp = traj_grp[last_key]['positions']
+                
+                for type_name in pos_grp:
+                    # read dataset to numpy array
+                    positions[type_name] = pos_grp[type_name][:].copy()
+                    print(f"Loaded {len(positions[type_name])} {type_name} particles")
+                    
+                    # Debug: Print first few positions to verify they're reasonable
+                    if len(positions[type_name]) > 0:
+                        print(f"  First {type_name} position: {positions[type_name][0]}")
+                        if len(positions[type_name]) > 1:
+                            print(f"  Second {type_name} position: {positions[type_name][1]}")
+            
+            # Additional validation / recentering: use centered box [-box_size/2, box_size/2]
+            box_size = float(getattr(params, 'box_size', 100.0))
+            half_box = box_size / 2.0
+            tol = box_size * 1e-6  # small tolerance
+            
+            for type_name, pos_array in positions.items():
+                if len(pos_array) == 0:
+                    continue
+                min_coords = np.min(pos_array, axis=0)
+                max_coords = np.max(pos_array, axis=0)
+                print(f"{type_name} position range: min={min_coords}, max={max_coords}")
+                
+                # Case A: positions already centered in [-half, half] (expected)
+                if np.all(min_coords >= -half_box - tol) and np.all(max_coords <= half_box + tol):
+                    # already correct coordinate system
+                    print(f"{type_name} positions appear centered in [-{half_box}, {half_box}].")
+                
+                # Case B: positions in [0, box_size] -> recenter to [-half, half]
+                elif np.all(min_coords >= -tol) and np.all(max_coords <= box_size + tol):
+                    print(f"{type_name} positions appear in [0, {box_size}]; recentering to [-{half_box}, {half_box}].")
+                    positions[type_name] = positions[type_name] - half_box
+                    min_coords2 = np.min(positions[type_name], axis=0)
+                    max_coords2 = np.max(positions[type_name], axis=0)
+                    print(f"  After recenter: min={min_coords2}, max={max_coords2}")
+                
+                else:
+                    # Unexpected coordinate range: warn but keep data
+                    print(f"WARNING: {type_name} positions outside expected centered bounds [-{half_box}, {half_box}] "
+                        f"and not clearly in [0,{box_size}]. Leaving as-is.")
+            
+            return positions
+
+        except Exception as e:
+            print(f"Error loading trajectory from {traj_dir}: {e}")
+            print("Falling back to initialized positions")
+            return self.initialize_positions()
 
     def initialize_positions(self, is_ideal: int = 0) -> Dict[str, np.ndarray]:
         """Initialize positions either as ideal or randomly within the box.

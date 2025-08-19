@@ -271,15 +271,15 @@ class GMMSigmaProvider:
             return
 
         for pair_type, gmm_info in self.gmm_params.items():
-            if gmm_info and all(k in gmm_info for k in ['means', 'covariances', 'weights']):
+            if gmm_info and all(k in gmm_info for k in ['means', 'variances', 'weights']):
                 try:
                     means = np.array(gmm_info['means'])
-                    covariances = np.array(gmm_info['covariances'])
+                    variances = np.array(gmm_info['variances'])
                     weights = np.array(gmm_info['weights'])
                     normalized_weights = weights / np.sum(weights)
 
                     mean_val = np.sum(means * normalized_weights)
-                    variance = np.sum(normalized_weights * (means - mean_val)**2) + np.sum(normalized_weights * covariances)
+                    variance = np.sum(normalized_weights * (means - mean_val)**2) + np.sum(normalized_weights * variances)
                     std_val = np.sqrt(variance)
 
                     self.logger.info(f"{pair_type} GMM -> mean: {mean_val:.3f}, std: {std_val:.3f}")
@@ -331,7 +331,7 @@ class GMMSigmaProvider:
         for pt in self.pair_types:
             gmm_info = self.gmm_params.get(pt) if self.gmm_params else None
 
-            if gmm_info and all(k in gmm_info for k in ['n_components', 'means', 'covariances', 'weights']):
+            if gmm_info and all(k in gmm_info for k in ['n_components', 'means', 'variances', 'weights']):
                 sigma[pt] = self._sample_from_gmm(pt, gmm_info, max_attempts)
             else:
                 # Fallback to the default sigma if no GMM is loaded
@@ -343,15 +343,15 @@ class GMMSigmaProvider:
         min_val, max_val = self.sigma_ranges[pair_type]
         n_components = int(gmm_info['n_components'])
         means = np.asarray(gmm_info['means']).flatten()
-        covariances = np.asarray(gmm_info['covariances']).flatten()
+        variances = np.asarray(gmm_info['variances']).flatten()
         weights = np.asarray(gmm_info['weights']) / np.sum(gmm_info['weights'])
 
         # Keep attempts limited
         for attempt in range(max_attempts):
             component = np.random.choice(n_components, p=weights)
             mean_value = means[component]
-            cov_value = np.maximum(covariances[component], 1e-12)
-            std_value = np.sqrt(cov_value)
+            var_value = np.maximum(variances[component], 1e-12)
+            std_value = np.sqrt(var_value)
 
             candidate = np.random.normal(loc=mean_value, scale=std_value)
             if min_val <= candidate <= max_val:
@@ -471,37 +471,37 @@ class GMMSigmaProvider:
             means = np.array(gmm['means']).flatten()
             weights = np.array(gmm['weights']) / np.sum(gmm['weights'])
             
-            # Handle covariances - try different possible key names
-            covariances = None
-            if 'covariances' in gmm:
-                covariances = np.array(gmm['covariances']).flatten()
-            elif 'covariances_' in gmm:
-                covariances = np.array(gmm['covariances_']).flatten()
+            # Handle variances - try different possible key names
+            variances = None
+            if 'variances' in gmm:
+                variances = np.array(gmm['variances']).flatten()
+            elif 'variances_' in gmm:
+                variances = np.array(gmm['variances_']).flatten()
             elif 'variances' in gmm:
-                covariances = np.array(gmm['variances']).flatten()
+                variances = np.array(gmm['variances']).flatten()
             elif 'std' in gmm:
                 std_devs = np.array(gmm['std']).flatten()
-                covariances = std_devs ** 2
+                variances = std_devs ** 2
             elif 'precisions' in gmm:
                 precisions = np.array(gmm['precisions']).flatten()
-                covariances = 1.0 / precisions
+                variances = 1.0 / precisions
             else:
                 # Fallback: assume unit variance for all components
-                self.logger.warning(f"No covariance information found for {pair_type}, assuming unit variance")
-                covariances = np.ones(n_components)
-            
+                self.logger.warning(f"No variance information found for {pair_type}, assuming unit variance")
+                variances = np.ones(n_components)
+
             # Ensure positive variance
-            covariances = np.maximum(covariances, 1e-12)
-            
+            variances = np.maximum(variances, 1e-12)
+
             # Validate array sizes
-            if len(means) != n_components or len(weights) != n_components or len(covariances) != n_components:
-                self.logger.error(f"Array size mismatch for {pair_type}: means={len(means)}, weights={len(weights)}, covariances={len(covariances)}, n_components={n_components}")
+            if len(means) != n_components or len(weights) != n_components or len(variances) != n_components:
+                self.logger.error(f"Array size mismatch for {pair_type}: means={len(means)}, weights={len(weights)}, variances={len(variances)}, n_components={n_components}")
                 return -np.inf
             
             # Calculate log probability for each component
             diff = val - means
-            exponents = -0.5 * (diff**2 / covariances)
-            norms = np.log(weights) - 0.5 * np.log(2 * np.pi * covariances)
+            exponents = -0.5 * (diff**2 / variances)
+            norms = np.log(weights) - 0.5 * np.log(2 * np.pi * variances)
             component_log_probs = norms + exponents
             
             # Sum in log space using log-sum-exp trick
