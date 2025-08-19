@@ -196,8 +196,8 @@ class PairSampler(BaseMCSampler):
         prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
 
         total_score = exclusion_score + pairwise_score + prior_penalty
-        
-        debug = True  # Disable debug logging after first run
+
+        debug = False  # Disable debug logging after first run
         if debug:
             # Create debug folder if it doesn't exist
             debug_folder = "debug_info"

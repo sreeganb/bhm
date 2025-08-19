@@ -105,11 +105,21 @@ class SamplerSequenceManager:
 # SigmaProvider
 ###############################################################################
 
+import os
+import json
+import random
+import logging
+import re
+import numpy as np
+from typing import Dict, List, Optional, Tuple
+from scipy.stats import gamma
+
+
 class GMMSigmaProvider:
     """
     Provides sigma values from GMM fits and calculates negative log priors.
     Works with sampler sequences: 
-      - For the first sampler, uses uniform/Jeffreys/ gamma priors.
+      - For the first sampler, uses uniform/Jeffreys/gamma priors.
       - For subsequent samplers, uses GMM parameters from a previous sampler's fit.
     """
 
@@ -125,16 +135,6 @@ class GMMSigmaProvider:
     ):
         """
         Initialize the SigmaProvider for a specific position in a sampler sequence.
-
-        Args:
-            sampler_sequence: List of sampler names in execution order.
-            sequence_idx: Current position in the sampler sequence.
-            base_output_dir: Base directory containing analysis results 
-                             (default: current_dir/output_analysis).
-            specific_chain: Use a specific chain number if available (random if None).
-            sigma_ranges: Custom dictionary of (min, max) ranges for each sigma type.
-            prior_type: Type of prior for the first sampler ("uniform" or "jeffreys").
-            debug_logger: An optional logger for debug messages.
         """
         # Setup logging
         self.logger = debug_logger or logging.getLogger(__name__)
@@ -146,22 +146,25 @@ class GMMSigmaProvider:
 
         self.sequence_manager = SamplerSequenceManager(sampler_sequence)
         self.sequence_idx = sequence_idx
-        self.pair_types = ["AA", "AB", "BC"]  # Example, adjust as needed
         self.prior_type = prior_type
         self.specific_chain = specific_chain
         self.params = SystemParameters()
-
+        
+        # Get all pair types from params
+        self.pair_types = list(self.params.pair_distances.keys())
+        
         # Get sampler info
         self.sampler_name, self.current_idx, self.total_count = self.sequence_manager.get_sampler_info(sequence_idx)
 
         # Set base output directory
-        if base_output_dir is None:
-            self.base_output_dir = os.path.join(os.getcwd(), "output_analysis")
-        else:
-            self.base_output_dir = base_output_dir
+        self.base_output_dir = base_output_dir or os.path.join(os.getcwd(), "output_analysis")
 
         # Is this the first sampler in the sequence?
         self.is_first_sampler = (sequence_idx == 0)
+
+        # Configure sigma ranges BEFORE loading GMM
+        self.sigma_ranges = self._setup_sigma_ranges(sigma_ranges)
+        self.default_sigma = self._get_default_sigmas()
 
         # If not first sampler, load GMM from previous sampler
         if self.is_first_sampler:
@@ -171,16 +174,10 @@ class GMMSigmaProvider:
         else:
             prev_dir = self.sequence_manager.get_previous_sampler_directory(sequence_idx)
             self.output_dir = os.path.join(self.base_output_dir, prev_dir) if prev_dir else None
-            if self.output_dir is not None:
+            if self.output_dir:
                 self.logger.info(f"Loading GMM from previous sampler directory: {prev_dir}")
             self.gmm_params = self._load_gmm_parameters()
-            self.print_gmm_stats()  # Moved from old _print_gmm_stats
-
-        # Configure sigma ranges
-        self.sigma_ranges = self._setup_sigma_ranges(sigma_ranges)
-        self.default_sigma = self._get_default_sigmas()
-
-        self._debug_printed =False
+            self.print_gmm_stats()
         
         # Print the assigned ranges
         self.logger.debug(f"Sigma ranges for {self.sampler_name}:")
@@ -195,11 +192,8 @@ class GMMSigmaProvider:
         self, user_ranges: Optional[Dict[str, Tuple[float, float]]]
     ) -> Dict[str, Tuple[float, float]]:
         """
-        Determine final sigma ranges. 
-        If user provided a dictionary, use it; otherwise compute defaults.
+        Determine final sigma ranges.
         """
-        # Precompute default min/max for each pair type.
-        # Adjust as needed for your system's expected distances.
         default_ranges = {}
         for pair_type in self.params.pair_distances.keys():
             sum_radii = self.params.radii[pair_type[0]] + self.params.radii[pair_type[1]]
@@ -207,63 +201,94 @@ class GMMSigmaProvider:
             upper_bound = 0.2 * sum_radii
             default_ranges[pair_type] = (lower_bound, upper_bound)
 
-        if user_ranges is not None:
-            # Merge user ranges if given
-            for key in user_ranges:
-                default_ranges[key] = user_ranges[key]
+        if user_ranges:
+            default_ranges.update(user_ranges)
         return default_ranges
 
     def _get_default_sigmas(self) -> Dict[str, float]:
         """
-        Choose a default sigma for each pair type (e.g. geometric midpoint 
-        of the min & max).
+        Choose a default sigma for each pair type (geometric midpoint).
         """
-        sig = {}
-        for pt in self.params.pair_distances.keys():
-            min_val, max_val = self.sigma_ranges[pt]
-            sigma_val = np.exp((np.log(min_val) + np.log(max_val)) / 2)
-            sig[pt] = sigma_val
-        return sig
+        return {
+            pt: np.sqrt(min_val * max_val)
+            for pt, (min_val, max_val) in self.sigma_ranges.items()
+        }
 
     ###########################################################################
     # GMM Loading and Diagnostics
     ###########################################################################
 
     def _load_gmm_parameters(self) -> Dict[str, Optional[dict]]:
-        """Load GMM parameters for each pair type (AA, AB, BC, etc.) from JSON files."""
+        """Load GMM parameters for each pair type from JSON files."""
         gmm_params = {sigma_type: None for sigma_type in self.pair_types}
+        
         if not self.output_dir or not os.path.exists(self.output_dir):
             self.logger.warning(f"Output directory not found: {self.output_dir}")
             return gmm_params
 
-        pattern = re.compile(r"gmm_fit_(AA|AB|BC|CC)_chain_(\d+)\.json")
-        matches = []
+        # Find all GMM files and extract chain numbers
+        pattern = re.compile(r"gmm_fit_([A-Z]+)_chain_(\d+)\.json")
+        available_files = {}
+        
         for filename in os.listdir(self.output_dir):
             match = pattern.match(filename)
             if match:
-                matches.append((match.group(1), int(match.group(2))))
+                pair_type, chain_num = match.group(1), int(match.group(2))
+                if pair_type not in available_files:
+                    available_files[pair_type] = []
+                available_files[pair_type].append(chain_num)
 
-        if not matches:
+        if not available_files:
             self.logger.warning(f"No GMM fit files found in {self.output_dir}")
             return gmm_params
 
-        # Choose the chain number
-        chain_numbers = list({chain_num for _, chain_num in matches})
-        selected_chain = (self.specific_chain if self.specific_chain is not None
-                          else random.choice(chain_numbers))
+        # Choose chain number
+        all_chains = set()
+        for chains in available_files.values():
+            all_chains.update(chains)
+        
+        if self.specific_chain and self.specific_chain in all_chains:
+            selected_chain = self.specific_chain
+        elif all_chains:
+            selected_chain = random.choice(list(all_chains))
+        else:
+            self.logger.warning("No valid chains found")
+            return gmm_params
+            
         self.logger.info(f"Using GMM parameters from chain {selected_chain}")
 
-        # Load each type of GMM
-        for stype in gmm_params.keys():
-            file_path = os.path.join(self.output_dir, f"gmm_fit_{stype}_chain_{selected_chain}.json")
+        # Load each GMM file
+        for pair_type in self.pair_types:
+            file_path = os.path.join(self.output_dir, f"gmm_fit_{pair_type}_chain_{selected_chain}.json")
             if os.path.exists(file_path):
                 try:
                     with open(file_path, 'r') as f:
-                        gmm_params[stype] = json.load(f)
-                    self.logger.debug(f"Loaded GMM parameters for {stype} from {file_path}")
+                        gmm_data = json.load(f)
+                        # Validate and normalize GMM data
+                        if self._validate_gmm_data(gmm_data):
+                            gmm_params[pair_type] = gmm_data
+                            self.logger.debug(f"Loaded GMM parameters for {pair_type} from {file_path}")
+                        else:
+                            self.logger.warning(f"Invalid GMM data for {pair_type}")
                 except Exception as e:
                     self.logger.error(f"Error loading {file_path}: {e}")
+            else:
+                self.logger.debug(f"GMM file not found: {file_path}")
+                
         return gmm_params
+
+    def _validate_gmm_data(self, gmm_data: dict) -> bool:
+        """Validate GMM data structure."""
+        required_keys = ['n_components', 'means', 'weights']
+        if not all(key in gmm_data for key in required_keys):
+            return False
+        
+        # Check for variance information
+        variance_keys = ['variances', 'variances_', 'std', 'precisions']
+        if not any(key in gmm_data for key in variance_keys):
+            self.logger.warning("No variance information in GMM data")
+        
+        return True
 
     def print_gmm_stats(self):
         """Print mean and std deviation of loaded GMMs for diagnostics."""
@@ -271,20 +296,47 @@ class GMMSigmaProvider:
             return
 
         for pair_type, gmm_info in self.gmm_params.items():
-            if gmm_info and all(k in gmm_info for k in ['means', 'variances', 'weights']):
-                try:
-                    means = np.array(gmm_info['means'])
-                    variances = np.array(gmm_info['variances'])
-                    weights = np.array(gmm_info['weights'])
-                    normalized_weights = weights / np.sum(weights)
+            if not gmm_info:
+                continue
+                
+            try:
+                means = np.array(gmm_info['means']).flatten()
+                weights = np.array(gmm_info['weights']).flatten()
+                weights = weights / np.sum(weights)
+                
+                # Get variances
+                variances = self._extract_variances(gmm_info)
+                
+                # Calculate mixture statistics
+                mixture_mean = np.sum(means * weights)
+                mixture_var = np.sum(weights * (variances + (means - mixture_mean)**2))
+                mixture_std = np.sqrt(mixture_var)
 
-                    mean_val = np.sum(means * normalized_weights)
-                    variance = np.sum(normalized_weights * (means - mean_val)**2) + np.sum(normalized_weights * variances)
-                    std_val = np.sqrt(variance)
+                self.logger.info(
+                    f"{pair_type} GMM -> mean: {mixture_mean:.3f}, std: {mixture_std:.3f}, "
+                    f"n_components: {gmm_info.get('n_components', len(means))}"
+                )
+            except Exception as e:
+                self.logger.warning(f"Error computing stats for {pair_type}: {e}")
 
-                    self.logger.info(f"{pair_type} GMM -> mean: {mean_val:.3f}, std: {std_val:.3f}")
-                except Exception as e:
-                    self.logger.warning(f"Error computing stats for {pair_type}: {e}")
+    def _extract_variances(self, gmm_info: dict) -> np.ndarray:
+        """Extract variances from GMM info, handling different formats."""
+        n_components = int(gmm_info.get('n_components', 1))
+        
+        if 'variances' in gmm_info:
+            return np.array(gmm_info['variances']).flatten()
+        elif 'variances_' in gmm_info:
+            return np.array(gmm_info['variances_']).flatten()
+        elif 'std' in gmm_info:
+            std_devs = np.array(gmm_info['std']).flatten()
+            return std_devs ** 2
+        elif 'precisions' in gmm_info:
+            precisions = np.array(gmm_info['precisions']).flatten()
+            return 1.0 / np.maximum(precisions, 1e-12)
+        else:
+            # Default variance
+            self.logger.debug(f"Using default variance for GMM")
+            return np.ones(n_components) * 0.1
 
     ###########################################################################
     # Sigma Sampling
@@ -292,230 +344,201 @@ class GMMSigmaProvider:
 
     def sample_sigma_values(self, max_attempts: int = 100) -> Dict[str, float]:
         """
-        Sample sigma values from GMMs (if not the first sampler).
-        For the first sampler, sample from a uniform or Jeffreys prior.
+        Sample sigma values from GMMs or priors.
         """
         if self.is_first_sampler:
-            sig = self._sample_sigma_first_sampler()
+            return self._sample_sigma_first_sampler()
         else:
-            sig = self._sample_sigma_gmm(max_attempts)
-
-        # Enforce bounds strictly
-        for pair_type, val in sig.items():
-            mn, mx = self.sigma_ranges[pair_type]
-            if not (mn <= val <= mx):
-                self.logger.debug(
-                    f"{pair_type}={val:.3f} outside [{mn:.3f}, {mx:.3f}]. Using default."
-                )
-                sig[pair_type] = self.default_sigma[pair_type]
-
-        return sig
+            return self._sample_sigma_gmm(max_attempts)
 
     def _sample_sigma_first_sampler(self) -> Dict[str, float]:
+        """Sample sigma for first sampler based on prior type."""
         sigma = {}
+        
         for pt in self.pair_types:
-            # Simply pick a random value between the hard bounds
-            # choose between 1.0 and 3.0 for now
-            min_val = 1.0
-            max_val = 3.0
-            sigma[pt] = np.random.uniform(min_val, max_val)
+            min_val, max_val = self.sigma_ranges[pt]
+            
+            if self.prior_type == "jeffreys":
+                # Sample from log-uniform distribution
+                log_min, log_max = np.log(max(min_val, 1e-6)), np.log(max_val)
+                sigma[pt] = np.exp(np.random.uniform(log_min, log_max))
+            elif self.prior_type == "inverse_gamma":
+                # Sample from inverse gamma
+                alpha, beta = 2.0, 0.5
+                variance = 1.0 / np.random.gamma(alpha, 1.0/beta)
+                sigma[pt] = np.sqrt(variance)
+            elif self.prior_type == "gamma":
+                # Sample from gamma distribution
+                shape, scale = 3.0, (min_val + max_val) / 6.0
+                sigma[pt] = np.random.gamma(shape, scale)
+            else:  # uniform
+                sigma[pt] = np.random.uniform(min_val, max_val)
+            
+            # Ensure within bounds
+            sigma[pt] = np.clip(sigma[pt], min_val, max_val)
 
-        self.logger.info(f"Sampled sigma values for first sampler: {sigma}")
+        self.logger.info(f"Sampled sigma values for first sampler ({self.prior_type}): {sigma}")
         return sigma
 
     def _sample_sigma_gmm(self, max_attempts: int) -> Dict[str, float]:
-        """
-        Sample sigma values from GMM fits for subsequent samplers.
-        """
+        """Sample sigma values from GMM fits."""
         sigma = {}
+        
         for pt in self.pair_types:
-            gmm_info = self.gmm_params.get(pt) if self.gmm_params else None
-
-            if gmm_info and all(k in gmm_info for k in ['n_components', 'means', 'variances', 'weights']):
-                sigma[pt] = self._sample_from_gmm(pt, gmm_info, max_attempts)
+            if self.gmm_params and pt in self.gmm_params and self.gmm_params[pt]:
+                sampled_value = self._sample_from_gmm(pt, self.gmm_params[pt], max_attempts)
+                if sampled_value is not None:
+                    sigma[pt] = sampled_value
+                else:
+                    # Fallback to default if sampling fails
+                    sigma[pt] = self.default_sigma[pt]
+                    self.logger.warning(f"Using default sigma for {pt}: {sigma[pt]:.3f}")
             else:
-                # Fallback to the default sigma if no GMM is loaded
+                # No GMM available, use default
                 sigma[pt] = self.default_sigma[pt]
+                self.logger.debug(f"No GMM for {pt}, using default: {sigma[pt]:.3f}")
+        
         return sigma
 
-    def _sample_from_gmm(self, pair_type: str, gmm_info: dict, max_attempts: int) -> float:
-        """Attempt to sample sigma from a GMM for a specific pair type."""
-        min_val, max_val = self.sigma_ranges[pair_type]
-        n_components = int(gmm_info['n_components'])
-        means = np.asarray(gmm_info['means']).flatten()
-        variances = np.asarray(gmm_info['variances']).flatten()
-        weights = np.asarray(gmm_info['weights']) / np.sum(gmm_info['weights'])
-
-        # Keep attempts limited
-        for attempt in range(max_attempts):
-            component = np.random.choice(n_components, p=weights)
-            mean_value = means[component]
-            var_value = np.maximum(variances[component], 1e-12)
-            std_value = np.sqrt(var_value)
-
-            candidate = np.random.normal(loc=mean_value, scale=std_value)
-            if min_val <= candidate <= max_val:
-                return candidate
-
-        # If all attempts fail, fallback
-        fallback = self.default_sigma[pair_type]
-        self.logger.warning(
-            f"{pair_type}: Could not sample within [{min_val:.3f}, {max_val:.3f}] "
-            f"after {max_attempts} attempts. Using fallback {fallback:.3f}"
-        )
-        return fallback
+    def _sample_from_gmm(self, pair_type: str, gmm_info: dict, max_attempts: int) -> Optional[float]:
+        """Sample from GMM with optional bounds checking."""
+        try:
+            n_components = int(gmm_info['n_components'])
+            means = np.array(gmm_info['means']).flatten()
+            weights = np.array(gmm_info['weights']).flatten()
+            weights = weights / np.sum(weights)
+            variances = self._extract_variances(gmm_info)
+            
+            min_val, max_val = self.sigma_ranges[pair_type]
+            
+            # Try to sample within bounds
+            for _ in range(max_attempts):
+                component = np.random.choice(n_components, p=weights)
+                mean = means[component]
+                std = np.sqrt(max(variances[component], 1e-12))
+                
+                sample = np.random.normal(mean, std)
+                
+                # Accept if within reasonable range (3x bounds for flexibility)
+                if min_val/3 <= sample <= max_val*3:
+                    return np.clip(sample, min_val, max_val)
+            
+            # If all attempts fail, sample from truncated distribution
+            # Use the component with highest weight
+            best_component = np.argmax(weights)
+            return np.clip(means[best_component], min_val, max_val)
+            
+        except Exception as e:
+            self.logger.error(f"Error sampling from GMM for {pair_type}: {e}")
+            return None
 
     ###########################################################################
     # Negative Log Priors
     ###########################################################################
 
-#    def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
-#        """
-#        Calculate negative log prior for the sampled sigma values.
-#        Uses:
-#          - uniform/Jeffreys prior for first sampler
-#          - GMM prior for subsequent samplers
-#        """
-#        # Check bounds
-#        for pt, val in sigma.items():
-#            mn, mx = self.sigma_ranges[pt]
-#            if val < mn or val > mx:
-#                self.logger.debug(f"{pt}={val:.3f} outside [{mn:.3f}, {mx:.3f}] -> prior=inf")
-#                return np.inf
-#
-#        # First sampler uses uniform or Jeffreys (with possible penalty)
-#        if self.is_first_sampler:
-#            return self._calc_first_sampler_log_prior(sigma)
-#
-#        # Subsequent samplers use GMM-based priors
-#        total_log_prob = 0.0
-#        for pt, val in sigma.items():
-#            lp = self._calculate_gmm_log_prob(val, pt)
-#            if not np.isfinite(lp):  # If any one is -inf, entire prior is 0
-#                self.logger.debug(f"Log prob for {pt} was -inf -> total prior=inf")
-#                return np.inf
-#            total_log_prob += lp
-#
-#        neg_log_prior = -total_log_prob
-#        return neg_log_prior
-    ###############################################################################    
     def calculate_negative_log_prior(self, sigma: Dict[str, float]) -> float:
         """Calculate negative log prior without hard boundaries."""
-        # First sampler uses inverse gamma prior
+        # First sampler uses specified prior
         if self.is_first_sampler:
             return self._calc_first_sampler_log_prior(sigma)
 
         # Subsequent samplers use GMM-based priors
         total_log_prob = 0.0
+        
         for pt, val in sigma.items():
-            if val <= 0:  # Only physical constraint: sigma must be positive
+            if val <= 0:  # Physical constraint
                 return np.inf
-                
+            
+            # Add soft penalty for values far outside expected range
+            min_val, max_val = self.sigma_ranges[pt]
+            penalty = 0.0
+            if val < min_val/3 or val > max_val*3:
+                # Quadratic penalty for extreme values
+                if val < min_val/3:
+                    penalty = ((min_val/3 - val) / min_val) ** 2
+                else:
+                    penalty = ((val - max_val*3) / max_val) ** 2
+                penalty *= 10  # Scale factor
+            
             lp = self._calculate_gmm_log_prob(val, pt)
             if not np.isfinite(lp):
-                self.logger.debug(f"Log prob for {pt} was -inf -> total prior=inf")
-                return np.inf
+                self.logger.debug(f"Log prob for {pt} was -inf -> using penalty")
+                lp = -20 - penalty  # Large but finite penalty
+            else:
+                lp -= penalty
+            
             total_log_prob += lp
 
-        neg_log_prior = -total_log_prob
-        return neg_log_prior
-    ###########################################################################
+        return -total_log_prob
+
     def _calc_first_sampler_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Compute the negative log prior for the first sampler (uniform/Jeffreys)."""
-        # Just an example structure — you can refine as needed.
-        # For a Jeffreys prior: log p(sigma) ~ -log(sigma).
+        """Compute the negative log prior for the first sampler."""
         log_prior = 0.0
+        
         for pt, val in sigma.items():
-            # simple example
+            if val <= 0:
+                return np.inf
+            
             if self.prior_type == "jeffreys":
-                log_prior += -np.log(val)
-            elif self.prior_type == "inverse_gamma":                
-                beta = 0.5  # scale parameter
-                alpha = 2.0 # shape parameter
-                variance = val**2
-                log_prior_variance = (alpha * np.log(beta) - np.log(np.math.gamma(alpha))
-                              - (alpha + 1) * np.log(variance) - beta / variance)
-                # Add the Jacobian adjustment for transformation from variance to sigma
-                log_prior += log_prior_variance + np.log(2 * val)  # Jacobian adjustment
+                log_prior -= np.log(val)
+            elif self.prior_type == "inverse_gamma":
+                alpha, beta = 2.0, 0.5
+                variance = val ** 2
+                # Inverse gamma on variance
+                log_prior += (alpha * np.log(beta) - np.log(np.math.gamma(alpha))
+                             - (alpha + 1) * np.log(variance) - beta / variance
+                             + np.log(2 * val))  # Jacobian
             elif self.prior_type == "gamma":
-                # load the scipy.stats gamma distribution with a small tail and away from zero
-                # This is a placeholder; adjust shape/scale as needed
-                # Example: gamma prior with shape=3, scale=1
-                from scipy.stats import gamma
-                shape = 3.0  # Example shape parameter
-                scale = 1.0  # Example scale parameter
+                shape, scale = 3.0, 1.0
                 log_prior += gamma.logpdf(val, a=shape, scale=scale)
-            else:
-                log_prior += 0.0  # uniform in log space
+            else:  # uniform
+                min_val, max_val = self.sigma_ranges[pt]
+                if min_val <= val <= max_val:
+                    log_prior -= np.log(max_val - min_val)
+                else:
+                    return np.inf
+        
         return -log_prior
 
     def _calculate_gmm_log_prob(self, val: float, pair_type: str) -> float:
-        """Calculate log probability for a sigma under the loaded GMM of a given pair type."""
+        """Calculate log probability for a sigma under the GMM."""
         if not self.gmm_params or pair_type not in self.gmm_params or not self.gmm_params[pair_type]:
             return -np.inf
 
         gmm = self.gmm_params[pair_type]
+        
         try:
-            # Debug: Print available keys to understand the structure
-            if hasattr(self, '_debug_printed') and not self._debug_printed:
-                self.logger.debug(f"Available GMM keys for {pair_type}: {list(gmm.keys())}")
-                self._debug_printed = True
-            
-            # Check for required keys
-            required_keys = ['n_components', 'means', 'weights']
-            if not all(key in gmm for key in required_keys):
-                self.logger.error(f"Missing required keys in GMM for {pair_type}. Available: {list(gmm.keys())}")
-                return -np.inf
-            
             n_components = int(gmm['n_components'])
             means = np.array(gmm['means']).flatten()
-            weights = np.array(gmm['weights']) / np.sum(gmm['weights'])
+            weights = np.array(gmm['weights']).flatten()
+            weights = weights / np.sum(weights)
+            variances = self._extract_variances(gmm)
             
-            # Handle variances - try different possible key names
-            variances = None
-            if 'variances' in gmm:
-                variances = np.array(gmm['variances']).flatten()
-            elif 'variances_' in gmm:
-                variances = np.array(gmm['variances_']).flatten()
-            elif 'variances' in gmm:
-                variances = np.array(gmm['variances']).flatten()
-            elif 'std' in gmm:
-                std_devs = np.array(gmm['std']).flatten()
-                variances = std_devs ** 2
-            elif 'precisions' in gmm:
-                precisions = np.array(gmm['precisions']).flatten()
-                variances = 1.0 / precisions
-            else:
-                # Fallback: assume unit variance for all components
-                self.logger.warning(f"No variance information found for {pair_type}, assuming unit variance")
-                variances = np.ones(n_components)
-
-            # Ensure positive variance
-            variances = np.maximum(variances, 1e-12)
-
-            # Validate array sizes
-            if len(means) != n_components or len(weights) != n_components or len(variances) != n_components:
-                self.logger.error(f"Array size mismatch for {pair_type}: means={len(means)}, weights={len(weights)}, variances={len(variances)}, n_components={n_components}")
+            # Ensure arrays have correct size
+            if len(means) != n_components or len(weights) != n_components:
+                self.logger.error(f"Size mismatch in GMM for {pair_type}")
                 return -np.inf
             
             # Calculate log probability for each component
-            diff = val - means
-            exponents = -0.5 * (diff**2 / variances)
-            norms = np.log(weights) - 0.5 * np.log(2 * np.pi * variances)
-            component_log_probs = norms + exponents
+            variances = np.maximum(variances, 1e-12)
+            diff_squared = (val - means) ** 2
             
-            # Sum in log space using log-sum-exp trick
-            max_lp = np.max(component_log_probs)
-            if not np.isfinite(max_lp):
+            # Log of Gaussian PDF for each component
+            log_probs = (np.log(weights) 
+                        - 0.5 * np.log(2 * np.pi * variances)
+                        - 0.5 * diff_squared / variances)
+            
+            # Use log-sum-exp trick for numerical stability
+            max_log_prob = np.max(log_probs)
+            if not np.isfinite(max_log_prob):
                 return -np.inf
             
-            log_sum_exp = max_lp + np.log(np.sum(np.exp(component_log_probs - max_lp)))
+            log_sum = max_log_prob + np.log(np.sum(np.exp(log_probs - max_log_prob)))
             
-            return log_sum_exp
+            return log_sum
             
         except Exception as e:
             self.logger.error(f"Error in GMM log prob for {pair_type}: {e}")
-            self.logger.debug(f"GMM structure: {gmm}")
             return -np.inf
 
     ###########################################################################
@@ -523,17 +546,19 @@ class GMMSigmaProvider:
     ###########################################################################
 
     def get_available_chains(self) -> List[int]:
-        """Get list of available chains with GMM fits in the output directory."""
+        """Get list of available chains with GMM fits."""
         if self.is_first_sampler or not self.output_dir or not os.path.exists(self.output_dir):
             return []
 
-        pattern = re.compile(r"gmm_fit_.*_chain_(\d+)\.json")
-        chain_numbers = []
+        pattern = re.compile(r"gmm_fit_[A-Z]+_chain_(\d+)\.json")
+        chains = set()
+        
         for filename in os.listdir(self.output_dir):
             match = pattern.match(filename)
             if match:
-                chain_numbers.append(int(match.group(1)))
-        return sorted(set(chain_numbers))
+                chains.add(int(match.group(1)))
+        
+        return sorted(chains)
 
 ###############################################################################
 # Convenience Function
