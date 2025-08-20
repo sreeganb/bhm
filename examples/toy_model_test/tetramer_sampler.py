@@ -310,9 +310,9 @@ class TetramerSampler(BaseMCSampler):
         size_factor = max(0.5, min(2.0, tetramer_radius))
         
         # Fixed step sizes
-        trans_step = 0.5 # changed from 0.25 to 0.5
-        rot_step = 0.25  # changed from 0.2 to 0.25
-
+        trans_step = 0.25
+        rot_step = 0.2
+        
         # Choose move type: 60% translation, 30% rotation, 10% mixed
         rand_val = np.random.random()
         
