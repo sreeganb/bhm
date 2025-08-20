@@ -254,7 +254,7 @@ class BaseMCSampler:
         current_value = sigma[pair_type]
         
         # Step size as percentage of current value
-        relative_step_size = 0.02 # changed from 0.005 to 0.02
+        relative_step_size = 0.005  # changed from 0.005 to 0.005
         step_size = relative_step_size * max(current_value, 1e-12)
         
         # Symmetric proposal: add zero-mean Gaussian noise directly to value
@@ -288,7 +288,7 @@ class BaseMCSampler:
         min_radius = min(self.params.radii.values())
 
         # Inverse scaling: smaller radius = larger moves
-        base_step = 3.5  # Adjust this value as needed for optimal acceptance rate
+        base_step = 4.0  # Adjust this value as needed for optimal acceptance rate
         step_size = base_step * (min_radius / self.params.radii[type_name])
 
         # Current position
