@@ -52,7 +52,7 @@ radius = {'A': 24.0, 'B': 14.0, 'C': 16.0}
 # Tunable Parameters
 # -----------------------------------------------------------------------------
 N_TARGET                 = 200          # Number of accepted perturbations
-JITTER_RANGE             = (1.0, 25.0)  # Std dev range for Gaussian per-particle noise (Å)
+JITTER_RANGE             = (0.1, 25.0)  # Std dev range for Gaussian per-particle noise (Å)
 INCREMENTAL_STEPS        = 5            # Split jitter into steps (keeps overlaps saner)
 OVERLAP_TOLERANCE        = 1.0          # Distance threshold factor for allowed contacts (1.0 = radii sum)
 SIGMA_EXVOL              = 2.0          # Softness for excluded volume penalty
