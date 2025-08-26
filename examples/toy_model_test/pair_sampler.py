@@ -100,7 +100,7 @@ class PairSampler(BaseMCSampler):
         self,
         pos: Dict[str, np.ndarray],  # input positions
         sig: Dict[str, float],       # input sigma values
-        sig_range: Dict[str, Tuple[float, float]],  # input sigma ranges
+        sig_range: Dict[str, Tuple[float, float]] = None,  # input sigma ranges
         excluded_pairs=None,
         debug=False,  # Whether to log detailed pair scoring info
         debug_file="pair_score_debug.csv"  # File to write debug info to

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple 2-panel visualization: 3D structure + RMSD vs Score plot with play controls.
+Compatible with new H5 format that includes reference structure and comprehensive scoring.
 """
 
 import matplotlib.pyplot as plt
@@ -32,12 +33,13 @@ class SimpleVisualization:
         self.animation = None
         
     def load_data(self):
-        """Load data from H5 file."""
+        """Load data from H5 file with new format."""
         print(f"Loading data from {self.h5_file}...")
         
         with h5py.File(self.h5_file, 'r') as f:
             num_frames = f.attrs.get('num_frames', 0)
-            print(f"Found {num_frames} frames")
+            has_reference = f.attrs.get('has_reference_frame', False)
+            print(f"Found {num_frames} frames (includes reference: {has_reference})")
             
             for frame_idx in range(num_frames):
                 frame_name = f'frame_{frame_idx:04d}'
@@ -50,23 +52,41 @@ class SimpleVisualization:
                 # Load metadata
                 frame_meta = f[f'metadata/{frame_name}']
                 
-                # Get scores
-                if 'total_score' in frame_meta.attrs:
-                    total_score = frame_meta.attrs['total_score']
-                else:
-                    total_score = frame_meta.attrs.get('score', 0.0)
+                # Get scores - handle both old and new formats
+                total_score = frame_meta.attrs.get('total_score', 0.0)
+                ccc_score = frame_meta.attrs.get('ccc_score', 0.0)
+                pair_score = frame_meta.attrs.get('pair_score', 0.0)
                 
-                rmsd = frame_meta.attrs['rmsd']
+                # Get RMSD
+                rmsd = frame_meta.attrs.get('rmsd', 0.0)
+                rmsd_aligned = frame_meta.attrs.get('rmsd_aligned', rmsd)
+                rmsd_raw = frame_meta.attrs.get('rmsd_raw', rmsd)
+                
+                # Check if this is the reference structure
+                is_reference = frame_meta.attrs.get('is_reference', False)
+                intensity = frame_meta.attrs.get('intensity_requested', 0.0)
                 
                 frame_data = {
                     'coordinates': {'A': coords_A, 'B': coords_B, 'C': coords_C},
                     'total_score': float(total_score),
-                    'rmsd': float(rmsd)
+                    'ccc_score': float(ccc_score),
+                    'pair_score': float(pair_score),
+                    'rmsd': float(rmsd_aligned),  # Use aligned RMSD for plotting
+                    'rmsd_aligned': float(rmsd_aligned),
+                    'rmsd_raw': float(rmsd_raw),
+                    'is_reference': bool(is_reference),
+                    'intensity': float(intensity)
                 }
                 
                 self.frames_data.append(frame_data)
         
         print(f"Loaded {len(self.frames_data)} frames")
+        
+        # Print reference structure info
+        if self.frames_data and self.frames_data[0]['is_reference']:
+            ref = self.frames_data[0]
+            print(f"Reference structure (frame 0): Total={ref['total_score']:.2f}, "
+                  f"CCC={ref['ccc_score']:.2f}, Pair={ref['pair_score']:.2f}")
     
     def setup_plots(self):
         """Set up the two-panel layout."""
@@ -108,23 +128,29 @@ class SimpleVisualization:
         self.ax_3d.view_init(elev=20, azim=45)
     
     def setup_rmsd_plot(self):
-        """Set up RMSD vs Score plot."""
-        # Extract all data for plotting
-        rmsds = [frame['rmsd'] for frame in self.frames_data]
-        scores = [frame['total_score'] for frame in self.frames_data]
+        """Set up RMSD vs Score plot with reference and perturbations."""
+        # Separate reference and perturbations
+        reference_frames = [f for f in self.frames_data if f['is_reference']]
+        perturbation_frames = [f for f in self.frames_data if not f['is_reference']]
         
-        # Plot all points
-        self.ax_plot.scatter(rmsds, scores, alpha=0.6, s=50, color='lightblue', 
-                           label='All Structures', zorder=1)
-
-        # Add ideal structure (RMSD=0, score=0.0 in this case with only the excluded volume and CCC and since there are no clashes)
-        ideal_score = 0
-        self.ax_plot.scatter([0], [ideal_score], color='red', s=200, marker='*', 
-                           label='Ideal Structure', edgecolor='black', linewidth=2, zorder=3)
+        # Plot perturbations
+        if perturbation_frames:
+            pert_rmsds = [f['rmsd'] for f in perturbation_frames]
+            pert_scores = [f['total_score'] for f in perturbation_frames]
+            self.ax_plot.scatter(pert_rmsds, pert_scores, alpha=0.6, s=50, color='lightblue', 
+                               label=f'Perturbations ({len(perturbation_frames)})', zorder=1)
+        
+        # Plot reference structure(s)
+        if reference_frames:
+            ref_rmsds = [f['rmsd'] for f in reference_frames]
+            ref_scores = [f['total_score'] for f in reference_frames]
+            self.ax_plot.scatter(ref_rmsds, ref_scores, color='red', s=200, marker='*', 
+                               label='Reference Structure', edgecolor='black', linewidth=2, zorder=3)
         
         # Current frame marker (will be updated)
         self.current_marker = self.ax_plot.scatter([0], [0], color='orange', s=150, 
-                                                  marker='o', label='Current Frame', edgecolor='black', linewidth=2, zorder=2)
+                                                  marker='o', label='Current Frame', 
+                                                  edgecolor='black', linewidth=2, zorder=2)
 
         self.ax_plot.set_xlabel('RMSD (Å)', fontsize=12)
         self.ax_plot.set_ylabel('Total Score', fontsize=12)
@@ -132,12 +158,22 @@ class SimpleVisualization:
         self.ax_plot.grid(True, alpha=0.3)
         self.ax_plot.legend(fontsize=10)
         
-        # Add correlation
-        if len(rmsds) > 1:
-            correlation = np.corrcoef(rmsds, scores)[0, 1]
+        # Add correlation (only for perturbations)
+        if len(perturbation_frames) > 1:
+            pert_rmsds = [f['rmsd'] for f in perturbation_frames]
+            pert_scores = [f['total_score'] for f in perturbation_frames]
+            correlation = np.corrcoef(pert_rmsds, pert_scores)[0, 1]
             self.ax_plot.text(0.05, 0.95, f'Correlation: {correlation:.3f}', 
                             transform=self.ax_plot.transAxes, fontsize=11,
                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Add score breakdown info
+        if self.frames_data:
+            total_range = [min(f['total_score'] for f in self.frames_data), 
+                          max(f['total_score'] for f in self.frames_data)]
+            self.ax_plot.text(0.05, 0.85, f'Score range: {total_range[0]:.1f} - {total_range[1]:.1f}', 
+                            transform=self.ax_plot.transAxes, fontsize=10,
+                            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
     
     def setup_controls(self):
         """Set up play controls."""
@@ -185,13 +221,20 @@ class SimpleVisualization:
                 )
                 self.scatter_objects[type_name] = scatter
         
-        # Update 3D title
-        self.ax_3d.set_title(
-            f'Frame {frame_idx}/{len(self.frames_data)-1} | '
-            f'RMSD: {frame_data["rmsd"]:.2f}Å | '
-            f'Score: {frame_data["total_score"]:.1f}',
-            fontsize=12, fontweight='bold'
-        )
+        # Create detailed title with score breakdown
+        frame_type = "REF" if frame_data['is_reference'] else "PERT"
+        title_parts = [
+            f'Frame {frame_idx}/{len(self.frames_data)-1} ({frame_type})',
+            f'RMSD: {frame_data["rmsd"]:.2f}Å',
+            f'Total: {frame_data["total_score"]:.1f}',
+            f'CCC: {frame_data["ccc_score"]:.1f}',
+            f'Pair: {frame_data["pair_score"]:.1f}'
+        ]
+        
+        if not frame_data['is_reference']:
+            title_parts.append(f'Int: {frame_data["intensity"]:.1f}')
+        
+        self.ax_3d.set_title(' | '.join(title_parts), fontsize=10, fontweight='bold')
         
         # Update current marker in RMSD plot
         self.current_marker.set_offsets([[frame_data['rmsd'], frame_data['total_score']]])
@@ -230,18 +273,20 @@ class SimpleVisualization:
         self.setup_plots()
         self.update_frame(0)
         
-        print(" CONTROLS:")
-        print("  Mouse: Rotate/Zoom 3D view")
-        print(" Slider: Scrub through frames")
-        print("  Play: Start animation")
-        print("  Pause: Stop animation")
-        print(" Orange dot: Current frame position")
+        print("🎮 CONTROLS:")
+        print("  🖱️  Mouse: Rotate/Zoom 3D view")
+        print("  📊 Slider: Scrub through frames")
+        print("  ▶️  Play: Start animation") 
+        print("  ⏸️  Pause: Stop animation")
+        print("  🔶 Orange dot: Current frame position")
+        print("  ⭐ Red star: Reference structure")
+        print("  🔵 Blue dots: Perturbations")
         
         plt.show()
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: python simple_visualization.py <perturbation_analysis.h5>")
+        print("Usage: python simplified_visualization.py <perturbation_analysis.h5>")
         sys.exit(1)
     
     h5_file = sys.argv[1]
@@ -250,8 +295,8 @@ def main():
         print(f"Error: File {h5_file} not found!")
         sys.exit(1)
     
-    print("Simple Structure Visualization")
-    print("================================")
+    print("🎬 Enhanced Structure Visualization")
+    print("===================================")
     
     visualizer = SimpleVisualization(h5_file)
     visualizer.show()

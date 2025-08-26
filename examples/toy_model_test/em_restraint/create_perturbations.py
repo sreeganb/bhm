@@ -17,10 +17,15 @@ import os
 import sys
 import h5py
 from scipy.spatial.distance import cdist
+from parameters import SystemParameters
+from base_sampler import BaseMCSampler
 
 # -----------------------------------------------------------------------------
 # Import external scoring helpers (expected in same directory)
 # -----------------------------------------------------------------------------
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from working_example import calculate_ccc_score, parse_density, create_dummy_map_from_model
 
@@ -51,7 +56,7 @@ radius = {'A': 24.0, 'B': 14.0, 'C': 16.0}
 # -----------------------------------------------------------------------------
 # Tunable Parameters
 # -----------------------------------------------------------------------------
-N_TARGET                 = 200          # Number of accepted perturbations
+N_TARGET                 = 400          # Number of accepted perturbations
 JITTER_RANGE             = (0.1, 25.0)  # Std dev range for Gaussian per-particle noise (Å)
 INCREMENTAL_STEPS        = 5            # Split jitter into steps (keeps overlaps saner)
 OVERLAP_TOLERANCE        = 1.0          # Distance threshold factor for allowed contacts (1.0 = radii sum)
@@ -132,7 +137,21 @@ def incremental_gaussian_jitter(coords, std_dev, steps=INCREMENTAL_STEPS):
     for _ in range(steps):
         out += np.random.normal(scale=step_sigma, size=out.shape)
     return out
+#------------------------------------------------------------------------------
+# Creating space for adding in pair, tetramer and octet scores here for complete 
+# scoring function analysis
+#------------------------------------------------------------------------------
+def make_dummy_sigmas():
+    sigma_AA=1.5
+    sigma_AB=1.2
+    sigma_BC=1.0
+    # Instantiate the base_sampler class
+    base_sampler = BaseMCSampler()
+    
+    return sigma_AA, sigma_AB, sigma_BC
 
+s1, s2, s3 = make_dummy_sigmas()
+print(f"Dummy sigmas: {s1}, {s2}, {s3}")
 # -----------------------------------------------------------------------------
 # Excluded Volume Scoring (consistent tolerance) 
 # -----------------------------------------------------------------------------
