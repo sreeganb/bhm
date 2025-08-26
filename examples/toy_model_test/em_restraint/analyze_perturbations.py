@@ -11,6 +11,7 @@ Key Features:
 - Comprehensive scoring (CCC+ExVol, Pair, Tetramer, Octet)
 - RMSD analysis (raw vs aligned)
 - Always includes unperturbed reference structure as first frame
+- Can read existing trajectory files or generate new perturbations
 """
 
 import numpy as np
@@ -38,7 +39,8 @@ class PerturbationAnalyzer:
     Generates and analyzes molecular perturbations with comprehensive scoring.
     """
     
-    def __init__(self, n_target=100, jitter_range=(0.1, 25.0), max_total_score=10000.0):
+    def __init__(self, n_target=100, jitter_range=(0.1, 25.0), max_total_score=10000.0, 
+                 trajectory_file=None):
         """Initialize analyzer with configuration parameters."""
         # Configuration
         self.n_target = n_target
@@ -48,6 +50,7 @@ class PerturbationAnalyzer:
         self.overlap_tolerance = 1.0
         self.max_relax_iters = 120
         self.pair_buffer = 0.25
+        self.trajectory_file = trajectory_file
         
         # System definition
         self._setup_molecular_system()
@@ -110,6 +113,78 @@ class PerturbationAnalyzer:
                 voxel_size, box_size, target_map_file
             )
         self.target_density = parse_density(target_map_file)
+        
+    def load_trajectory_structures(self):
+        """Load structures from an existing trajectory file, sorted by step number."""
+        if not self.trajectory_file or not os.path.exists(self.trajectory_file):
+            return []
+            
+        print(f"Loading structures from trajectory: {self.trajectory_file}")
+        structures = []
+        
+        with h5py.File(self.trajectory_file, 'r') as f:
+            if 'trajectory' not in f:
+                print("Warning: No 'trajectory' group found in file")
+                return []
+                
+            traj_grp = f['trajectory']
+            
+            # Get all state groups - don't rely on string sorting
+            state_groups = []
+            for state_name in traj_grp.keys():
+                if state_name.startswith('state_'):
+                    state_grp = traj_grp[state_name]
+                    step = int(state_grp.attrs.get('step', 0))
+                    state_groups.append((step, state_name, state_grp))
+            
+            # Sort by actual step number (not string name)
+            state_groups.sort(key=lambda x: x[0])  # Sort by step number
+            
+            print(f"Found {len(state_groups)} states in trajectory")
+            
+            for step, state_name, state_grp in state_groups:
+                # Extract scores
+                total_score = float(state_grp.attrs.get('total_score', 0.0))
+                prior_score = float(state_grp.attrs.get('prior_score', 0.0))
+                pair_score = float(state_grp.attrs.get('pair_score', 0.0))
+                exvol_score = float(state_grp.attrs.get('exvol_score', 0.0))
+                tet_score = float(state_grp.attrs.get('tet_score', 0.0))
+                oct_score = float(state_grp.attrs.get('oct_score', 0.0))
+                
+                # Load positions - handle missing or empty datasets safely
+                positions = {}
+                if 'positions' in state_grp:
+                    pos_grp = state_grp['positions']
+                    for comp in ['A', 'B', 'C']:
+                        if comp in pos_grp:
+                            dataset = pos_grp[comp]
+                            if dataset.size > 0:  # Check if dataset is not empty
+                                positions[comp] = np.array(dataset[:])
+                
+                # Only include if we have all required position data
+                if len(positions) == 3 and all(comp in positions for comp in ['A', 'B', 'C']):
+                    # Combine coordinates for scoring
+                    coords = np.vstack([positions['A'], positions['B'], positions['C']])
+                    
+                    structure_data = {
+                        'coordinates': coords,
+                        'positions': positions,
+                        'step': step,
+                        'trajectory_scores': {
+                            'total': total_score,
+                            'prior': prior_score,
+                            'pair': pair_score,
+                            'exvol': exvol_score,
+                            'tet': tet_score,
+                            'oct': oct_score
+                        }
+                    }
+                    structures.append(structure_data)
+                else:
+                    print(f"Warning: Skipping state {state_name} due to incomplete position data")
+                    
+        print(f"Successfully loaded {len(structures)} structures from trajectory")
+        return structures
         
     def generate_perturbation(self, intensity):
         """Generate a perturbed structure with given jitter intensity."""
@@ -206,8 +281,8 @@ class PerturbationAnalyzer:
         ccc_score = 500.0 * (1.0 - ccc_raw)
         
         # Get excluded volume from pair sampler
-#        _, ex_score, _, _ = self.pair_sampler.calculate_score(pos=positions, sig=self.sigmas)
-#        ccc_exvol_score = ccc_score + ex_score
+        # _, ex_score, _, _ = self.pair_sampler.calculate_score(pos=positions, sig=self.sigmas)
+        # ccc_exvol_score = ccc_score + ex_score
         
         # 2. Pair Score (includes excluded volume, pair, and prior components)
         pair_total_score, ex_score, _, _ = self.pair_sampler.calculate_score(pos=positions, sig=self.sigmas)
@@ -268,7 +343,8 @@ class PerturbationAnalyzer:
         ]
         return any(score <= self.max_total_score for score in acceptable_scores)
         
-    def create_result_record(self, coords, all_scores, rmsd_metrics, intensity, attempt_num, is_reference=False):
+    def create_result_record(self, coords, all_scores, rmsd_metrics, intensity, attempt_num, 
+                           is_reference=False, trajectory_step=None, trajectory_scores=None):
         """Create a standardized result record with ALL scores."""
         raw_rmsd, aligned_rmsd = rmsd_metrics
         
@@ -281,8 +357,16 @@ class PerturbationAnalyzer:
             'rmsd_raw': raw_rmsd,
             'intensity_requested': intensity if not is_reference else 0.0,
             'attempt_index': attempt_num,
-            'is_reference': is_reference
+            'is_reference': is_reference,
+            'from_trajectory': trajectory_step is not None
         }
+        
+        # Add trajectory-specific information if available
+        if trajectory_step is not None:
+            record['trajectory_step'] = trajectory_step
+        if trajectory_scores is not None:
+            for score_name, score_value in trajectory_scores.items():
+                record[f'traj_{score_name}'] = score_value
         
         # Add all score types
         for score_name, score_value in all_scores.items():
@@ -308,7 +392,57 @@ class PerturbationAnalyzer:
         
         self._print_reference_info(ref_scores)
         
-        # Generate perturbations
+        # Check if we should load from trajectory or generate perturbations
+        if self.trajectory_file:
+            self._analyze_trajectory()
+        else:
+            self._generate_perturbations()
+            
+        self._print_final_summary()
+        
+    def _analyze_trajectory(self):
+        """Analyze structures from trajectory file."""
+        print(f"MODE: Analyzing existing trajectory")
+        print(f"Trajectory file: {self.trajectory_file}")
+        
+        structures = self.load_trajectory_structures()
+        if not structures:
+            print("Warning: No structures loaded from trajectory file")
+            return
+            
+        # Limit to n_target structures if we have more
+        if len(structures) > self.n_target:
+            print(f"Limiting analysis to last {self.n_target} structures")
+            structures = structures[-self.n_target:]
+            
+        processed = 0
+        for i, structure_data in enumerate(structures):
+            coords = structure_data['coordinates']
+            step = structure_data['step']
+            traj_scores = structure_data['trajectory_scores']
+            
+            # Calculate our own scores for comparison
+            all_scores = self.calculate_scores(coords)
+            rmsd_metrics = self.calculate_rmsd_metrics(coords)
+            
+            record = self.create_result_record(
+                coords, all_scores, rmsd_metrics, 
+                intensity=0.0, attempt_num=i+1, is_reference=False,
+                trajectory_step=step, trajectory_scores=traj_scores
+            )
+            self.results.append(record)
+            processed += 1
+            
+            if (processed) % 50 == 0:  # Log every 50th structure
+                self._log_trajectory_acceptance(record, processed, step)
+                
+        print(f"Processed {processed} structures from trajectory")
+        
+    def _generate_perturbations(self):
+        """Generate new perturbations."""
+        print(f"MODE: Generating new perturbations")
+        print(f"Target: {self.n_target} structures")
+        
         attempts = 0
         max_attempts = self.n_target * 6
         
@@ -331,8 +465,6 @@ class PerturbationAnalyzer:
             
             if len(self.results) % 10 == 0:  # Log every 10th acceptance
                 self._log_acceptance(record, len(self.results)-1, attempts)  # -1 to exclude reference
-                
-        self._print_final_summary(attempts)
         
     def _print_reference_info(self, ref_scores):
         """Print information about the reference system."""
@@ -342,7 +474,9 @@ class PerturbationAnalyzer:
         print(f"  Tetramer:  {ref_scores['tetramer']:.2f}")
         print(f"  Octet:     {ref_scores['octet']:.2f}")
         print(f"Settings: overlap_tol={self.overlap_tolerance} max_total={self.max_total_score}")
-        print(f"Jitter std range: {self.jitter_range} (Å) incremental_steps={self.incremental_steps}\n")
+        if not self.trajectory_file:
+            print(f"Jitter std range: {self.jitter_range} (Å) incremental_steps={self.incremental_steps}")
+        print()
         
     def _log_acceptance(self, record, n_accepted, attempt_num):
         """Log details of an accepted perturbation."""
@@ -352,34 +486,41 @@ class PerturbationAnalyzer:
               f"CCC+Ex={record['score_ccc_exvol']:6.1f} | Pair={record['score_pair']:6.1f} | "
               f"Tet={record['score_tetramer']:6.1f} | Oct={record['score_octet']:6.1f}")
               
-    def _print_final_summary(self, total_attempts):
+    def _log_trajectory_acceptance(self, record, n_processed, step):
+        """Log details of a trajectory structure."""
+        print(f"Processed {n_processed:03d} | step {step:05d} | "
+              f"rawRMSD={record['rmsd_raw']:6.2f} | alignRMSD={record['rmsd_aligned']:6.2f} | "
+              f"CCC+Ex={record['score_ccc_exvol']:6.1f} | Pair={record['score_pair']:6.1f} | "
+              f"Tet={record['score_tetramer']:6.1f} | Oct={record['score_octet']:6.1f}")
+              
+    def _print_final_summary(self):
         """Print comprehensive analysis summary."""
         print("\nSummary")
         print("-" * 60)
         
-        n_perturbations = len(self.results) - 1  # Exclude reference
-        acceptance_rate = n_perturbations / max(1, total_attempts)
-        print(f"Reference + {n_perturbations} perturbations = {len(self.results)} total structures")
-        print(f"Attempts: {total_attempts}  Acceptance Rate: {acceptance_rate:.2%}")
+        n_structures = len(self.results) - 1  # Exclude reference
+        mode = "trajectory analysis" if self.trajectory_file else "perturbation generation"
+        print(f"Mode: {mode}")
+        print(f"Reference + {n_structures} structures = {len(self.results)} total structures")
         
         if len(self.results) <= 1:
             return
             
         # Extract metrics for analysis (excluding reference)
-        perturbations_only = self.results[1:]  # Skip reference
-        if not perturbations_only:
+        structures_only = self.results[1:]  # Skip reference
+        if not structures_only:
             return
             
         # Collect all score types
         score_types = ['ccc_exvol', 'pair', 'tetramer', 'octet']
         metrics = {
-            'aligned_rmsd': np.array([r['rmsd_aligned'] for r in perturbations_only]),
-            'raw_rmsd': np.array([r['rmsd_raw'] for r in perturbations_only])
+            'aligned_rmsd': np.array([r['rmsd_aligned'] for r in structures_only]),
+            'raw_rmsd': np.array([r['rmsd_raw'] for r in structures_only])
         }
         
         # Add all score metrics
         for score_type in score_types:
-            metrics[f'score_{score_type}'] = np.array([r[f'score_{score_type}'] for r in perturbations_only])
+            metrics[f'score_{score_type}'] = np.array([r[f'score_{score_type}'] for r in structures_only])
         
         # Print statistical summaries
         print("\nRMSD Statistics:")
@@ -395,14 +536,21 @@ class PerturbationAnalyzer:
                   f"(min {values.min():.2f}, max {values.max():.2f})")
                   
         # Print correlations
-        if len(perturbations_only) > 1:
+        if len(structures_only) > 1:
             print("\nCorrelations (Aligned RMSD vs Scores):")
             for score_type in score_types:
                 correlation = np.corrcoef(metrics['aligned_rmsd'], metrics[f'score_{score_type}'])[0,1]
                 print(f"  vs {score_type.upper():12}: {correlation:.3f}")
             
-    def save_results(self, output_file="output_data_revised/perturbation_analysis_all_scores.h5"):
+    def save_results(self, output_file=None):
         """Save results to HDF5 file with ALL scores."""
+        if output_file is None:
+            if self.trajectory_file:
+                base_name = os.path.splitext(os.path.basename(self.trajectory_file))[0]
+                output_file = f"output_data_revised/{base_name}_analysis_all_scores.h5"
+            else:
+                output_file = "output_data_revised/perturbation_analysis_all_scores.h5"
+                
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         
         with h5py.File(output_file, 'w') as f:
@@ -434,21 +582,36 @@ class PerturbationAnalyzer:
                             
             # Save global attributes
             f.attrs['num_frames'] = len(self.results)
-            f.attrs['description'] = "Reference + Perturbations with ALL scoring functions".encode('utf-8')
+            analysis_mode = "trajectory" if self.trajectory_file else "perturbation"
+            f.attrs['description'] = f"Reference + {analysis_mode} analysis with ALL scoring functions".encode('utf-8')
             f.attrs['overlap_tolerance'] = self.overlap_tolerance
             f.attrs['max_total_score'] = self.max_total_score
             f.attrs['has_reference_frame'] = True
             f.attrs['score_types'] = "ccc_exvol,pair,tetramer,octet,ccc_only,exvol_only".encode('utf-8')
+            f.attrs['analysis_mode'] = analysis_mode.encode('utf-8')
+            if self.trajectory_file:
+                f.attrs['source_trajectory'] = self.trajectory_file.encode('utf-8')
             
         print(f"\nSaved H5: {output_file}")
 
-
 def main():
     """Main execution function."""
+    # Parse command line arguments
+    trajectory_file = None
+    if len(sys.argv) > 1:
+        trajectory_file = sys.argv[1]
+        if not os.path.exists(trajectory_file):
+            print(f"Error: Trajectory file {trajectory_file} not found!")
+            sys.exit(1)
+        print(f"Will analyze trajectory from: {trajectory_file}")
+    else:
+        print("No trajectory file specified - will generate new perturbations")
+    
     analyzer = PerturbationAnalyzer(
-        n_target=400,
+        n_target=100,
         jitter_range=(0.1, 25.0),
-        max_total_score=10000.0
+        max_total_score=10000.0,
+        trajectory_file=trajectory_file
     )
     
     analyzer.run_analysis()
