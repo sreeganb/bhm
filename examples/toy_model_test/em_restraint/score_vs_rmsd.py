@@ -484,7 +484,7 @@ def save_to_h5(data_list, output_file):
 #--------------------------------------------------------------------------------
 # UPDATED: Main Analysis
 def main():
-    print("🧪 Advanced Perturbation Analysis with Overlap Resolution")
+    print("Advanced Perturbation Analysis with Overlap Resolution")
     print("=" * 60)
     
     # Parameters
@@ -514,19 +514,21 @@ def main():
     ref_total, ref_ccc, ref_exvol = calculate_total_score(ref_coords, radii_array, target_density, resolution)
     ref_overlaps, ref_overlap_pairs = check_overlaps(ref_coords, radii_array, overlap_tolerance=0.8)
     
-    print(f"📌 Reference Scores:")
+    print(f"  Reference Scores:")
     print(f"   Total: {ref_total:.2f}, CCC: {ref_ccc:.4f}, ExVol: {ref_exvol:.2f}")
     print(f"   Has overlaps: {ref_overlaps}, N_overlaps: {len(ref_overlap_pairs)}")
     print(f"   Score threshold: {score_threshold}")
     
     # Enhanced perturbation types including new advanced methods
-    perturbation_types = ['smart', 'radial_expansion', 'twist', 'breathing', 'rotate', 'shift', 'random']
+#    perturbation_types = ['smart', 'radial_expansion', 'twist', 'breathing', 'rotate', 'shift', 'random']
+    perturbation_types = ['smart', 'radial_expansion', 'twist', 'breathing', 'shift', 'random']
+
     intensity_ranges = {
         'smart': (1, 15),          # Smart perturbation with expansion
         'radial_expansion': (1, 10), # Ring expansion
         'twist': (1, 30),          # Ring twisting (degrees)
         'breathing': (1, 20),      # Z-axis motion
-        'rotate': (1, 45),         # Simple rotation
+#        'rotate': (1, 45),         # Simple rotation
         'shift': (1, 20),          # Simple translation
         'random': (1, 10)          # Random particle motion
     }
@@ -536,7 +538,7 @@ def main():
     total_attempts = 0
     perturbation_stats = {pt: {'count': 0, 'rejections': 0} for pt in perturbation_types}
     
-    print(f"\n🎯 Generating {n_perturbations} valid perturbations...")
+    print(f"\n Generating {n_perturbations} valid perturbations...")
     print(f"   Available perturbation types: {perturbation_types}")
     
     for i in range(n_perturbations):
@@ -559,7 +561,7 @@ def main():
         if coords_tuple is None:
             rejected_count += 1
             perturbation_stats[pert_type]['rejections'] += 1
-            print(f"  ❌ Frame {i+1}: No valid {pert_type} perturbation found after {attempts} attempts")
+            print(f"Frame {i+1}: No valid {pert_type} perturbation found after {attempts} attempts")
             continue
         
         # Calculate RMSD
@@ -585,29 +587,29 @@ def main():
         valid_data.append(data_entry)
         
         if (i + 1) % 20 == 0:
-            print(f"  ✅ Processed {i+1}/{n_perturbations} perturbations")
+            print(f"Processed {i+1}/{n_perturbations} perturbations")
     
-    print(f"\n📊 Results Summary:")
+    print(f"\n Results Summary:")
     print(f"   Valid perturbations: {len(valid_data)}")
     print(f"   Rejected perturbations: {rejected_count}")
     print(f"   Total attempts: {total_attempts}")
     print(f"   Average attempts per perturbation: {total_attempts/n_perturbations:.1f}")
     
     # Perturbation type statistics
-    print(f"\n🎲 Perturbation Type Statistics:")
+    print(f"\n Perturbation Type Statistics:")
     for pt in perturbation_types:
         stats = perturbation_stats[pt]
         success_rate = (stats['count'] - stats['rejections']) / max(stats['count'], 1) * 100
         print(f"   {pt}: {stats['count']} attempts, {stats['rejections']} rejections, {success_rate:.1f}% success")
     
     if len(valid_data) == 0:
-        print("❌ No valid perturbations generated. Consider increasing score threshold.")
+        print("No valid perturbations generated. Consider increasing score threshold.")
         return
     
     # Save to H5 file
     output_file = os.path.join(output_dir, "advanced_perturbation_analysis.h5")
     save_to_h5(valid_data, output_file)
-    print(f"💾 Data saved to: {output_file}")
+    print(f"Data saved to: {output_file}")
     
     # Quick analysis
     total_scores = [d['total_score'] for d in valid_data]
@@ -616,7 +618,7 @@ def main():
     rmsds = [d['rmsd'] for d in valid_data]
     overlaps = [d['n_overlaps'] for d in valid_data]
     
-    print(f"\n📈 Score Ranges:")
+    print(f"\n Score Ranges:")
     print(f"   Total: {min(total_scores):.2f} - {max(total_scores):.2f}")
     print(f"   CCC: {min(ccc_scores):.4f} - {max(ccc_scores):.4f}")
     print(f"   ExVol: {min(exvol_scores):.2f} - {max(exvol_scores):.2f}")
@@ -634,7 +636,7 @@ def main():
         'Pert_Type': [d['pert_type'] for d in valid_data]
     })
     
-    print(f"\n🔗 Correlations with RMSD:")
+    print(f"\n Correlations with RMSD:")
     print(f"   RMSD vs Total Score: {df['RMSD'].corr(df['Total_Score']):.3f}")
     print(f"   RMSD vs CCC Score: {df['RMSD'].corr(df['CCC_Score']):.3f}")
     print(f"   RMSD vs ExVol Score: {df['RMSD'].corr(df['ExVol_Score']):.3f}")
@@ -642,9 +644,9 @@ def main():
     
     # Count structures with overlaps
     structures_with_overlaps = sum(1 for d in valid_data if d['has_overlaps'])
-    print(f"\n⚠️  Structures with overlaps: {structures_with_overlaps}/{len(valid_data)}")
+    print(f"\n Structures with overlaps: {structures_with_overlaps}/{len(valid_data)}")
     
-    print(f"\n✅ Advanced analysis complete!")
+    print(f"\n Advanced analysis complete!")
 
 if __name__ == "__main__":
     main()

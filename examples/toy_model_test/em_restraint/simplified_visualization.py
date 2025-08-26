@@ -116,17 +116,16 @@ class SimpleVisualization:
         # Plot all points
         self.ax_plot.scatter(rmsds, scores, alpha=0.6, s=50, color='lightblue', 
                            label='All Structures', zorder=1)
-        
-        # Add ideal structure (RMSD=0, lowest score)
-        ideal_score = min(scores) if scores else 0
+
+        # Add ideal structure (RMSD=0, score=0.0 in this case with only the excluded volume and CCC and since there are no clashes)
+        ideal_score = 0
         self.ax_plot.scatter([0], [ideal_score], color='red', s=200, marker='*', 
                            label='Ideal Structure', edgecolor='black', linewidth=2, zorder=3)
         
         # Current frame marker (will be updated)
         self.current_marker = self.ax_plot.scatter([0], [0], color='orange', s=150, 
-                                                  marker='o', label='Current Frame', 
-                                                  edgecolor='black', linewidth=2, zorder=2)
-        
+                                                  marker='o', label='Current Frame', edgecolor='black', linewidth=2, zorder=2)
+
         self.ax_plot.set_xlabel('RMSD (Å)', fontsize=12)
         self.ax_plot.set_ylabel('Total Score', fontsize=12)
         self.ax_plot.set_title('RMSD vs Total Score', fontsize=14, fontweight='bold')
@@ -231,12 +230,12 @@ class SimpleVisualization:
         self.setup_plots()
         self.update_frame(0)
         
-        print("🎮 CONTROLS:")
-        print("  🖱️  Mouse: Rotate/Zoom 3D view")
-        print("  📊 Slider: Scrub through frames")
-        print("  ▶️  Play: Start animation")
-        print("  ⏸️  Pause: Stop animation")
-        print("  🔶 Orange dot: Current frame position")
+        print(" CONTROLS:")
+        print("  Mouse: Rotate/Zoom 3D view")
+        print(" Slider: Scrub through frames")
+        print("  Play: Start animation")
+        print("  Pause: Stop animation")
+        print(" Orange dot: Current frame position")
         
         plt.show()
 
@@ -251,7 +250,7 @@ def main():
         print(f"Error: File {h5_file} not found!")
         sys.exit(1)
     
-    print("🎬 Simple Structure Visualization")
+    print("Simple Structure Visualization")
     print("================================")
     
     visualizer = SimpleVisualization(h5_file)
