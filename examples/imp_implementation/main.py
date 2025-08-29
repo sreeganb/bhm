@@ -52,26 +52,11 @@ class scoring_function():
         evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(
             included_objects = self.parts,
             resolution = 1)
+        evr.add_to_model()
         self.output_objects.append(evr)
         print("added excluded volume restraint", evr)
         
         return evr, self.output_objects
-    
-#    def add_pair_distance_restraint(self, part1, part2):
-        
-        
-        #rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier = hierarchy, 
-        #                                     monte_carlo_sample_objects=dof.get_movers(), 
-        #                                     output_objects=self.output_objects, 
-        #                                     number_of_frames=100)
-        #rex.execute_macro()
-    
-    # For the particles in the system hierarchy, calculate the score
-#    def calculate_score_for_hierarchy(self, hierarchy):
-#        score = 0.0
-#        for restraint in self.restraints:
-#            score += restraint.get_score()
-#        return score
     
 if __name__ == "__main__":
     ntype = 3
@@ -91,9 +76,7 @@ if __name__ == "__main__":
     output= IMP.pmi.output.Output()
     output.init_rmf("initial_particles.rmf3", [hierarchy])  
     output.write_rmf("initial_particles.rmf3")  # Write the RMF file
-        
-    dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
-    print("degrees of freedom", dof_s1)
+    
     IMP.pmi.tools.shuffle_configuration(hierarchy, max_translation=20.0)
     #IMP.atom.show_with_representations(hierarchy)
 
@@ -106,7 +89,19 @@ if __name__ == "__main__":
 
     sf = scoring_function(system, output_objects, parts)
     sf.add_excluded_volume_restraint()
-
+    
+    dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
+    # create flexible beads DOF
+    print("what is inside parts:", parts)
+    for particle in parts:
+        dof_s1.create_flexible_beads(particle)
+    print("degrees of freedom", dof_s1.get_movers())
+    
+    rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier=hierarchy,
+                                            monte_carlo_sample_objects=dof_s1.get_movers(),
+                                            output_objects=output_objects,
+                                            number_of_frames=100)
+    rex.execute_macro()
 
 #for j in range(len(counts)):
 #    for i in range(counts[j]):
