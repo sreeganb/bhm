@@ -35,18 +35,20 @@ class System_builder:
             particle.add_representation(resolutions=[len(self.seq_type[i])], color=color)
             parts.append(particle)
             for j in range(self.copy_numbers[i]-1):
-                particle.create_clone(chain_id=self.chain_ids[j+1])
-                parts.append(particle)
-                
+                cloned_particle = particle.create_clone(chain_id=self.chain_ids[j+1])
+                parts.append(cloned_particle)
+
         return mdl, system, parts
 #--------------------------------------------------------------------------
 # Class for the scoring function, at this point just some excluded volume
 #--------------------------------------------------------------------------
 class scoring_function():
-    def __init__(self, system, output_objects, parts):
+    def __init__(self, system, output_objects, parts, ntype, copy_numbers):
         self.output_objects = output_objects
         self.system = system
         self.parts = parts
+        self.ntype = ntype
+        self.copy_numbers = copy_numbers
         
     def add_excluded_volume_restraint(self):
         evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(
@@ -58,6 +60,32 @@ class scoring_function():
         
         return evr, self.output_objects
     
+    def add_pair_distance_restraint(self):
+        """all vs all, so we have A-A, A-B and B-C restraints that we shall add.
+        create particle pairs accordingly"""
+        pairs = []
+        # A-A type interactions
+        for i in range(copy_numbers[0]):
+            for j in range(i + 1, copy_numbers[0]):
+                part1 = parts[i]
+                part2 = parts[j]
+                pairs.append((part1, part2))
+                print(f"pair added is : ", part1, part2)
+        # A-B type interactions
+        for i in range(copy_numbers[0]):
+            for j in range(copy_numbers[1]):
+                part1 = parts[i]
+                part2 = parts[j + copy_numbers[0]]
+                pairs.append((part1, part2))
+                print(f"pair added is : ", part1, part2)
+        # B-C type interactions
+        for i in range(copy_numbers[1]):
+            for j in range(copy_numbers[2]):
+                part1 = parts[i + copy_numbers[0]]
+                part2 = parts[j + copy_numbers[0] + copy_numbers[1]]
+                pairs.append((part1, part2))
+                print(f"pair added is : ", part1, part2)
+
 if __name__ == "__main__":
     ntype = 3
     copy_numbers = [8, 8, 16]
@@ -87,48 +115,19 @@ if __name__ == "__main__":
     
     output_objects = []
 
-    sf = scoring_function(system, output_objects, parts)
+    sf = scoring_function(system, output_objects, parts, ntype, copy_numbers)
     sf.add_excluded_volume_restraint()
+    sf.add_pair_distance_restraint()
     
     dof_s1 = IMP.pmi.dof.DegreesOfFreedom(mdl)
     # create flexible beads DOF
     print("what is inside parts:", parts)
     for particle in parts:
-        dof_s1.create_flexible_beads(particle)
+        dof_s1.create_rigid_body(particle)
     print("degrees of freedom", dof_s1.get_movers())
     
-    rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier=hierarchy,
-                                            monte_carlo_sample_objects=dof_s1.get_movers(),
-                                            output_objects=output_objects,
-                                            number_of_frames=100)
-    rex.execute_macro()
-
-#for j in range(len(counts)):
-#    for i in range(counts[j]):
-#        m1A.create_clone(chain_id=chain_ids[i+1])
-
-# Add spherical particles for each type
-#for p_type, radius, count in zip(ids, radii, counts):
-#    for i in range(count):
-#        # create copies after the first particle is created
-#        # clones and copies : clones are identical to the original particle, copies are not
-#        name = f"{p_type}_{i+1}"
-#        particle = state.create_molecule(name=name, sequence="X", chain_id=p_type)
-#        color = color_map.get(p_type, "gray")  # Default color if not found
-#        particle.add_representation(resolutions=[1], color=color)
-
-# Assign random positions/radii to each molecule
-#bbox = IMP.algebra.BoundingBox3D(
-#    IMP.algebra.Vector3D(-100, -100, -100),
-#    IMP.algebra.Vector3D(100, 100, 100)
-#)
-
-#for molecule in IMP.atom.get_by_type(hierarchy, IMP.atom.MOLECULE_TYPE):
-#    p_type = molecule.get_name().split('_')[0]
-#    radius = radii[ids.index(p_type)] 
-
-    # Get the child particle representation
-#    particle = molecule.get_child(0).get_particle()
-#    xyzr = IMP.core.XYZR.setup_particle(particle)
-#    xyzr.set_radius(radius)
-#    xyzr.set_coordinates(IMP.algebra.get_random_vector_in(bbox))
+#    rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier=hierarchy,
+#                                            monte_carlo_sample_objects=dof_s1.get_movers(),
+#                                            output_objects=output_objects,
+#                                            number_of_frames=100)
+#    rex.execute_macro()
