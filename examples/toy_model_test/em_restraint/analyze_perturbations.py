@@ -608,7 +608,7 @@ def main():
         print("No trajectory file specified - will generate new perturbations")
     
     analyzer = PerturbationAnalyzer(
-        n_target=100,
+        n_target=400,
         jitter_range=(0.1, 25.0),
         max_total_score=10000.0,
         trajectory_file=trajectory_file
