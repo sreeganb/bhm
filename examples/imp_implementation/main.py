@@ -11,6 +11,8 @@ import IMP.pmi.dof
 import IMP.pmi.macros
 import IMP.test
 import numpy as np
+import IMP.core
+import IMP.pmi.restraints.basic
                                   
 #--------------------------------------------------------------------------
 class System_builder:
@@ -43,13 +45,15 @@ class System_builder:
 # Class for the scoring function, at this point just some excluded volume
 #--------------------------------------------------------------------------
 class scoring_function():
-    def __init__(self, system, output_objects, parts, ntype, copy_numbers):
+    def __init__(self, system, model, hierarchy, output_objects, parts, ntype, copy_numbers):
         self.output_objects = output_objects
         self.system = system
         self.parts = parts
         self.ntype = ntype
         self.copy_numbers = copy_numbers
-        
+        self.m = model
+        self.hier = hierarchy
+
     def add_excluded_volume_restraint(self):
         evr = IMP.pmi.restraints.stereochemistry.ExcludedVolumeSphere(
             included_objects = self.parts,
@@ -64,27 +68,39 @@ class scoring_function():
         """all vs all, so we have A-A, A-B and B-C restraints that we shall add.
         create particle pairs accordingly"""
         pairs = []
+        
+        # First, get the actual particles from the molecules
+        particles = []
+        for part in self.parts:
+            # Get the particle index from the molecule
+            particle_hierarchy = part.get_hierarchy()
+            # Get the actual particle from the hierarchy
+            particle = IMP.atom.get_leaves(particle_hierarchy)[0]  # Get the first (and only) leaf
+            particles.append(particle)
+        
         # A-A type interactions
-        for i in range(copy_numbers[0]):
-            for j in range(i + 1, copy_numbers[0]):
-                part1 = parts[i]
-                part2 = parts[j]
-                pairs.append((part1, part2))
-                print(f"pair added is : ", part1, part2)
-        # A-B type interactions
-        for i in range(copy_numbers[0]):
-            for j in range(copy_numbers[1]):
-                part1 = parts[i]
-                part2 = parts[j + copy_numbers[0]]
-                pairs.append((part1, part2))
-                print(f"pair added is : ", part1, part2)
-        # B-C type interactions
-        for i in range(copy_numbers[1]):
-            for j in range(copy_numbers[2]):
-                part1 = parts[i + copy_numbers[0]]
-                part2 = parts[j + copy_numbers[0] + copy_numbers[1]]
-                pairs.append((part1, part2))
-                print(f"pair added is : ", part1, part2)
+        for i in range(self.copy_numbers[0]):
+            for j in range(i + 1, self.copy_numbers[0]):
+                part1 = particles[i]
+                part2 = particles[j]
+        # adding a distance restraint
+        tuple1 = (2, 2, "prot_1", 0)
+        tuple2 = (2, 2, "prot_1", 1)
+        dr = IMP.pmi.restraints.basic.DistanceRestraint(
+            self.hier, tuple1, tuple2, 48.0, 60.0, 2.0, 1.0, label="dist_prot_1_0_1"
+        )
+        dr.add_to_model()
+        self.output_objects.append(dr)
+        tuple1 = (2, 2, "prot_1", 2)
+        tuple2 = (2, 2, "prot_1", 3)
+        dr = IMP.pmi.restraints.basic.DistanceRestraint(
+            self.hier, tuple1, tuple2, 48.0, 60.0, 2.0, 1.0, label="dist_prot_1_2_3"
+        )
+        dr.add_to_model()
+        self.output_objects.append(dr)
+        print("added distance restraint", dr)
+
+        return pairs
 
 if __name__ == "__main__":
     ntype = 3
@@ -115,7 +131,7 @@ if __name__ == "__main__":
     
     output_objects = []
 
-    sf = scoring_function(system, output_objects, parts, ntype, copy_numbers)
+    sf = scoring_function(system, mdl, hierarchy, output_objects, parts, ntype, copy_numbers)
     sf.add_excluded_volume_restraint()
     sf.add_pair_distance_restraint()
     
@@ -126,8 +142,8 @@ if __name__ == "__main__":
         dof_s1.create_rigid_body(particle)
     print("degrees of freedom", dof_s1.get_movers())
     
-#    rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier=hierarchy,
-#                                            monte_carlo_sample_objects=dof_s1.get_movers(),
-#                                            output_objects=output_objects,
-#                                            number_of_frames=100)
-#    rex.execute_macro()
+    rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier=hierarchy,
+                                            monte_carlo_sample_objects=dof_s1.get_movers(),
+                                            output_objects=output_objects,
+                                            number_of_frames=100)
+    rex.execute_macro()
