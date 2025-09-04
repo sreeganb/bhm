@@ -64,42 +64,93 @@ class scoring_function():
         
         return evr, self.output_objects
     
-    def add_pair_distance_restraint(self):
-        """all vs all, so we have A-A, A-B and B-C restraints that we shall add.
-        create particle pairs accordingly"""
+    def add_pair_distance_restraint(self, aa_distance=40.0, ab_distance=30.0, bc_distance=25.0):
+        """Add distance restraints between different particle types with specified thresholds
+        
+        Args:
+            aa_distance: Maximum distance for A-A interactions (default 40.0 Å)
+            ab_distance: Maximum distance for A-B interactions (default 30.0 Å) 
+            bc_distance: Maximum distance for B-C interactions (default 25.0 Å)
+        """
         pairs = []
         
-        # First, get the actual particles from the molecules
-        particles = []
-        for part in self.parts:
-            # Get the particle index from the molecule
-            particle_hierarchy = part.get_hierarchy()
-            # Get the actual particle from the hierarchy
-            particle = IMP.atom.get_leaves(particle_hierarchy)[0]  # Get the first (and only) leaf
-            particles.append(particle)
-        
-        # A-A type interactions
+        # A-A type interactions (prot_1 with prot_1)
+        print("Adding A-A interactions...")
         for i in range(self.copy_numbers[0]):
             for j in range(i + 1, self.copy_numbers[0]):
-                part1 = particles[i]
-                part2 = particles[j]
-        # adding a distance restraint
-        tuple1 = (2, 2, "prot_1", 0)
-        tuple2 = (2, 2, "prot_1", 1)
-        dr = IMP.pmi.restraints.basic.DistanceRestraint(
-            self.hier, tuple1, tuple2, 48.0, 60.0, 2.0, 1.0, label="dist_prot_1_0_1"
-        )
-        dr.add_to_model()
-        self.output_objects.append(dr)
-        tuple1 = (2, 2, "prot_1", 2)
-        tuple2 = (2, 2, "prot_1", 3)
-        dr = IMP.pmi.restraints.basic.DistanceRestraint(
-            self.hier, tuple1, tuple2, 48.0, 60.0, 2.0, 1.0, label="dist_prot_1_2_3"
-        )
-        dr.add_to_model()
-        self.output_objects.append(dr)
-        print("added distance restraint", dr)
-
+                tuple1 = (1, 1, "prot_1", i)
+                tuple2 = (1, 1, "prot_1", j)
+                
+                dr = IMP.pmi.restraints.basic.DistanceRestraint(
+                    self.hier, 
+                    tuple1, 
+                    tuple2, 
+                    distancemin=0.0,
+                    distancemax=aa_distance,
+                    kappa=10.0,
+                    resolution=1.0,
+                    label=f"dist_AA_prot_1_{i}_{j}"
+                )
+                dr.add_to_model()
+                self.output_objects.append(dr)
+                pairs.append(("A-A", i, j))
+                print(f"Added A-A distance restraint: prot_1 copy {i} - copy {j}, max distance: {aa_distance} Å")
+        
+        # A-B type interactions (prot_1 with prot_2)
+        print("Adding A-B interactions...")
+        for i in range(self.copy_numbers[0]):  # A particles (prot_1)
+            for j in range(self.copy_numbers[1]):  # B particles (prot_2)
+                tuple1 = (1, 1, "prot_1", i)
+                tuple2 = (1, 1, "prot_2", j)
+                
+                dr = IMP.pmi.restraints.basic.DistanceRestraint(
+                    self.hier,
+                    tuple1,
+                    tuple2,
+                    distancemin=0.0,
+                    distancemax=ab_distance,
+                    kappa=10.0,
+                    resolution=1.0,
+                    label=f"dist_AB_prot_1_{i}_prot_2_{j}"
+                )
+                dr.add_to_model()
+                self.output_objects.append(dr)
+                pairs.append(("A-B", i, j))
+                print(f"Added A-B distance restraint: prot_1 copy {i} - prot_2 copy {j}, max distance: {ab_distance} Å")
+        
+        # B-C type interactions (prot_2 with prot_3)
+        print("Adding B-C interactions...")
+        for i in range(self.copy_numbers[1]):  # B particles (prot_2)
+            for j in range(self.copy_numbers[2]):  # C particles (prot_3)
+                tuple1 = (1, 1, "prot_2", i)
+                tuple2 = (1, 1, "prot_3", j)
+                
+                dr = IMP.pmi.restraints.basic.DistanceRestraint(
+                    self.hier,
+                    tuple1,
+                    tuple2,
+                    distancemin=0.0,
+                    distancemax=bc_distance,
+                    kappa=10.0,
+                    resolution=1.0,
+                    label=f"dist_BC_prot_2_{i}_prot_3_{j}"
+                )
+                dr.add_to_model()
+                self.output_objects.append(dr)
+                pairs.append(("B-C", i, j))
+                print(f"Added B-C distance restraint: prot_2 copy {i} - prot_3 copy {j}, max distance: {bc_distance} Å")
+        
+        # Summary
+        aa_count = len([p for p in pairs if p[0] == "A-A"])
+        ab_count = len([p for p in pairs if p[0] == "A-B"])
+        bc_count = len([p for p in pairs if p[0] == "B-C"])
+        
+        print(f"\nSummary of distance restraints added:")
+        print(f"A-A restraints: {aa_count} (max distance: {aa_distance} Å)")
+        print(f"A-B restraints: {ab_count} (max distance: {ab_distance} Å)")
+        print(f"B-C restraints: {bc_count} (max distance: {bc_distance} Å)")
+        print(f"Total restraints: {len(pairs)}")
+        
         return pairs
 
 if __name__ == "__main__":
@@ -145,5 +196,5 @@ if __name__ == "__main__":
     rex = IMP.pmi.macros.ReplicaExchange(mdl, root_hier=hierarchy,
                                             monte_carlo_sample_objects=dof_s1.get_movers(),
                                             output_objects=output_objects,
-                                            number_of_frames=100)
+                                            number_of_frames=1000)
     rex.execute_macro()
