@@ -1,0 +1,874 @@
+% filepath: /Users/sreeganeshbalasubramani/git/bhm/examples/toy_model/BHM_toy_explanation.tex
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  language=Python,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{orange}
+}
+
+\title{Detailed Explanation of \texttt{BHM\_toy.py}}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document provides a detailed explanation of the Python script \texttt{BHM\_toy.py}. The script sets up a toy model framework for Bayesian Hierarchical Modeling (BHM), defines sets of coordinates in 3D space, calculates negative log-likelihoods for pairs of points, and proposes random moves for a Markov chain approach. Each function and significant code block is explained in detail.
+\end{abstract}
+
+\tableofcontents
+
+\section{Introduction}
+\texttt{BHM\_toy.py} is a Python script designed to illustrate or test hierarchical modeling concepts in a toy setting. The script:
+
+\begin{itemize}
+    \item Imports important libraries (NumPy, Matplotlib, SciPy, etc.).
+    \item Defines arrays of points in 3D space for an idealized symmetrical system.
+    \item Implements functions for calculating negative log-likelihood based on distances.
+    \item Proposes moves in parameter space for potential sampling or optimization (e.g., in a Markov chain).
+\end{itemize}
+
+This document explains each part of the code in detail and describes how these parts fit together.
+
+\section*{Detailed Mathematical Explanation of the PairSampler Code}
+
+This document explains the core mathematical ideas behind the \texttt{PairSampler} class. The class seeks to place particles of various types in a three-dimensional box in such a way that (1) certain minimum distances are respected (exclusion), and (2) observed or desired inter-particle distances are matched by minimizing the negative log-likelihood of a Gaussian-based distance model.
+
+\subsection*{1. Initialization of Positions}
+
+The code generates initial positions for each type of particle:
+\[
+\text{positions}[t] \sim \mathcal{U}(0,\text{box\_size})^{N \times 3},
+\]
+where $t$ is the particle type (\emph{e.g.,} "A", "B", "C"), and $N$ is the number of particles of type $t$. This creates a random arrangement in a cubic volume of size $\texttt{box\_size}$. 
+
+\subsection*{2. Gaussian Negative Log-Likelihood for Pairwise Distances}
+
+To measure how well any two particles match a desired \emph{target distance}, the code computes a \textit{negative log-likelihood}. If we have two sets of coordinates,
+\[
+\mathbf{r}_1, \mathbf{r}_2 \in \mathbb{R}^{3},
+\]
+the Euclidean distance $d(\mathbf{r}_1, \mathbf{r}_2)$ is
+\[
+d(\mathbf{r}_1, \mathbf{r}_2) = \sqrt{(\mathbf{r}_1 - \mathbf{r}_2)^\top(\mathbf{r}_1 - \mathbf{r}_2)}.
+\]
+The code uses a Gaussian model for the likelihood that the distance is near a \emph{target} distance $\mu$ with a tolerance $\sigma$:
+\[
+\text{likelihood}(d) = \exp\!\Bigl(-\frac{(d - \mu)^2}{2 \sigma^2}\Bigr).
+\]
+To prevent numerical underflow, the code clips the likelihood at a minimum value $\epsilon$ (here, $10^{-10}$). Then, the negative log-likelihood for a single pair is
+\[
+-\log \max\Bigl(\exp\!\bigl(-\frac{(d - \mu)^2}{2 \sigma^2}\bigr), \, \epsilon\Bigr).
+\]
+For multiple particles in sets $\{\mathbf{r}_{1,i}\}_{i=1}^m$ and $\{\mathbf{r}_{2,j}\}_{j=1}^n$, the code constructs a matrix of negative log-likelihoods:
+\[
+\bigl[M(i,j)\bigr]_{m \times n} 
+= -\log \max\Bigl(\exp\!\bigl(-\frac{(d(\mathbf{r}_{1,i}, \mathbf{r}_{2,j}) - \mu)^2}{2 \sigma^2}\bigr), \, \epsilon\Bigr).
+\]
+It then performs a procedure to select minimal entries (representing the best pairs) and sums them up.
+
+% filepath: /home/sree/git/bhm/examples/toy_model/doc/explanation.tex
+\subsection*{Best Pair Selection Procedure}
+
+After constructing the negative log-likelihood matrix 
+\[
+M(i,j), 
+\]
+the code proceeds to identify ``best pairs'' by selecting the minimum entry in each row and each column. In more formal mathematical terms, suppose \(M\) is an \(m \times n\) matrix where \(M(i,j)\) is the negative log-likelihood for pairing particle \(i\) (among the \(m\) particles of a certain type) with particle \(j\) (among the \(n\) particles of another type). We perform the following steps:
+
+\begin{enumerate}
+    \item \textbf{Row-minima selection:} For each row \(i \in \{1,2,\ldots,m\}\), find 
+    \[
+    r_i = \arg\min_{j \in \{1,\ldots,n\}} \; M(i,j).
+    \]
+    We then select the pair \((i, r_i)\).
+
+    \item \textbf{Column-minima selection:} For each column \(j \in \{1,2,\ldots,n\}\), find 
+    \[
+    c_j = \arg\min_{i \in \{1,\ldots,m\}} \; M(i,j).
+    \]
+    We then select the pair \((c_j, j)\).
+
+    \item \textbf{Combine unique pairs:} Let 
+    \[
+    U = \left\{(i, r_i)\,\big\vert\, i = 1,\ldots,m\right\} \;\cup\; 
+         \left\{(c_j, j)\,\big\vert\, j = 1,\ldots,n\right\}.
+    \]
+    In other words, \(U\) is the union of all row-wise minima and column-wise minima.
+
+    \item \textbf{Sum the matrix entries:} The code sums up \(M(i,j)\) over all unique pairs in \(U\):
+    \[
+    \text{Sum} = \sum_{(i,j) \in U} M(i,j).
+    \]
+\end{enumerate}
+
+This procedure ensures that for every row, at least one minimal element is included, and for every column, at least one minimal element is included. In practical terms, it captures pairs that best satisfy the distance-based likelihood constraints from both the row (\(\arg\min\)) and the column (\(\arg\min\)) perspectives, ensuring that no row or column's minimal pairing is overlooked.
+
+Note that this method is not a full \emph{global} matching (like the Hungarian algorithm would be). Instead, it is a simpler heuristic that collects the best row-wise and column-wise partners, then sums their negative log-likelihood values. As a result, it effectively retains those interactions that contribute the smallest penalty (or highest likelihood) for each row and each column:
+
+\[
+\text{NLL total contribution} \;=\;
+\sum_{(i, j) \in U} M(i,j).
+\]
+
+Collecting these minimal pairs in the set \(U\) and summing their negative log-likelihood matrix entries provides a focused measure of how close each particle can come to its ``best'' partner, either from the row or column perspective.
+
+\subsection*{3. Exclusion Energy (Excluded Volume Term)}
+
+To avoid overlapping of particles, each pair of particles has a minimum distance:
+\[
+d_{\mathrm{min}} = R_1 + R_2,
+\]
+where $R_1$ and $R_2$ are the radii of the corresponding particle types. If a particle pair is closer than $d_{\mathrm{min}}$, the code exacts a penalty proportional to
+\[
+\bigl(d_{\mathrm{min}} - d(\mathbf{r}_1,\mathbf{r}_2)\bigr)^2,
+\]
+scaled by a large constant $k_{\mathrm{exclude}}$. Summing this penalty for each violating pair yields:
+\[
+\mathrm{NLL}_{\mathrm{excl}} = k_{\mathrm{exclude}} \sum_{\substack{i,j\,:\,\\ d(\mathbf{r}_{i}, \mathbf{r}_{j}) < d_{\mathrm{min}}}} 
+\Bigl[d_{\mathrm{min}} - d(\mathbf{r}_{i}, \mathbf{r}_{j})\Bigr]^2.
+\]
+
+\subsection*{4. Total Negative Log-Likelihood}
+
+The code combines both terms: the sum of negative log-likelihood for \emph{matching} desired inter-particle distances, plus the exclusion penalty. We can write it as:
+\[
+\mathrm{NLL}_{\mathrm{total}}(\{\mathbf{r}\}) 
+= \mathrm{NLL}_{\mathrm{excl}}(\{\mathbf{r}\}) 
++ \sum_{\substack{\text{types }(t_1, t_2)}} 
+\sum_{\substack{i,j}}\! M_{t_1,t_2}(i,j),
+\]
+where $M_{t_1,t_2}(i,j)$ denotes the negative log-likelihood matrix entry for the distance between particle $i$ of type $t_1$ and particle $j$ of type $t_2$, considering the minimal combination over each row and column to avoid double counting.
+
+\subsection*{5. Summary}
+
+In essence, the code:
+
+\begin{enumerate}
+\item Randomly initializes particle positions in a 3D box. 
+\item Uses a Gaussian-based negative log-likelihood term to encourage particle distances to match certain target distances within a given tolerance.
+\item Penalizes particles that overlap (excluded volume term).
+\item Sums these contributions to get a total negative log-likelihood, \(\mathrm{NLL}_{\mathrm{total}}\), which the code can then attempt to minimize.
+\end{enumerate}
+
+This approach enables stochastic sampling or energy minimization to place particles according to the desired distances between pairs and to prevent them from occupying the same space.
+%-----------------------------------------------------------------------------------------
+\section*{Mathematical Explanation of the \texttt{TetramerSampler} Code}
+
+\textbf{Context:} This class extends a \texttt{PairSampler} to include special ``tetramer moves'' in a Monte Carlo (MC) framework. A tetramer here is defined as a set of four particles of types A, B, C, C (i.e., one A, one B, and two Cs). The code seeks to place them close to certain target distances through a Markov Chain Monte Carlo (MCMC) procedure.
+
+\subsection*{1. Monte Carlo Loop in \texttt{run\_mc}}
+
+\begin{enumerate}
+    \item \textbf{Initialization:} 
+    \[
+      \text{positions} \gets \text{initialize\_positions()}
+    \]
+    with an initial score 
+    \[
+      E_{\text{current}} = \text{calculate\_score}(\text{positions}).
+    \]
+    Also, we keep track of:
+    \[
+      E_{\text{best}} = E_{\text{current}}, \quad \text{positions}_{\text{best}} = \text{positions}.
+    \]
+    \item \textbf{Temperature Schedule:} A cooling schedule modifies the temperature \(T\) at each iteration \(\text{step}\). Given an initial temperature \(T_{\text{init}}\) and a final temperature \(T_{\text{final}}\), the temperature at step \(\text{step}\) (out of \(n_{\text{steps}}\) total) is set to
+    \[
+      T(\text{step}) = T_{\text{init}} \left(\frac{T_{\text{final}}}{T_{\text{init}}}\right)^{\frac{\text{step}}{n_{\text{steps}}}}.
+    \]
+    \item \textbf{Move Types:} With probabilities 0.4, 0.1, and 0.5 respectively, the code chooses one of:
+    \[
+      \begin{cases}
+      \text{``position'' move},\\
+      \text{``sigma'' move},\\
+      \text{``tetramer'' move}.
+      \end{cases}
+    \]
+    Depending on the choice, a proposed state \((\text{proposed\_positions}, \text{proposed\_sigma})\) is generated.
+
+    \item \textbf{Energy Calculation and Metropolis Acceptance:} 
+    The proposed state's score \(E_{\text{proposed}} = \text{calculate\_score}(\text{proposed\_positions})\). The energy difference is
+    \[
+      \Delta E = E_{\text{proposed}} - E_{\text{current}}.
+    \]
+    We accept the move if 
+    \[
+      \Delta E < 0 \quad \text{or} \quad \exp\!\bigl(-\Delta E / T\bigr) > \mathcal{U}(0,1),
+    \]
+    where \(\mathcal{U}(0,1)\) is a uniform random draw between 0 and 1. If accepted, we set
+    \[
+      \text{positions} \gets \text{proposed\_positions}, \quad E_{\text{current}} \gets E_{\text{proposed}}.
+    \]
+    If the new score is better than the best score so far, we record it as 
+    \[
+      E_{\text{best}} \gets E_{\text{proposed}}, \quad \text{positions}_{\text{best}} \gets \text{proposed\_positions}.
+    \]
+
+    \item \textbf{Trajectory Storage:} Every \(\text{save\_freq}\) steps, the code stores current state information (positions, energy, etc.) and prints a log message.
+
+\end{enumerate}
+
+\subsection*{2. Identifying Tetramers: \texttt{get\_tetramers}}
+
+A \textit{tetramer} in this code is an (A, B, C, C) tuple identified by minimum distances:
+\[
+\text{For each } i \text{ in positions['A']}, \quad 
+   \text{choose } b = \arg\min_j \bigl\|\mathbf{r}_{A,i} - \mathbf{r}_{B,j}\bigr\|.
+\]
+Then find two \texttt{C} indices \(c_1\) and \(c_2\) such that 
+\[
+(c_1,c_2) = \arg\min_{k,l} \Bigl(\bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,k}\bigr\| + \bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,l}\bigr\|\Bigr),
+\]
+or equivalently, it sorts all \(\bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,k}\bigr\|\) in ascending order and picks the first two elements. Each tetramer is thus stored as \((i,b,c_1,c_2)\).
+
+\subsection*{3. Scoring a Tetramer: \texttt{calculate\_tetramer\_score}}
+
+For a given tetramer, composed of indices \((i,b,c_1,c_2)\), the code calculates the sum of pairwise negative log-likelihood scores:
+\[
+\text{score}_{AB} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{A,i}, \mathbf{r}_{B,b},\, \mu_{AB},\, \sigma_{AB}\bigr),
+\]
+\[
+\text{score}_{BC1} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{B,b}, \mathbf{r}_{C,c_1},\, \mu_{BC},\, \sigma_{BC}\bigr),
+\quad
+\text{score}_{BC2} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{B,b}, \mathbf{r}_{C,c_2},\, \mu_{BC},\, \sigma_{BC}\bigr),
+\]
+\[
+\text{score}_{C1C2} = \text{calculate\_pair\_score}\bigl(\mathbf{r}_{C,c_1}, \mathbf{r}_{C,c_2},\, \mu_{CC},\, \sigma_{CC}\bigr).
+\]
+The total tetramer score is 
+\[
+\text{score}_{\text{tetramer}} = \text{score}_{AB} + \text{score}_{BC1} + \text{score}_{BC2} + \text{score}_{C1C2}.
+\]
+
+\subsection*{4. Overall System Score: \texttt{calculate\_score}}
+
+This function adds:
+\[
+\text{score}_{\text{pairs}}(\mathbf{r}) + \sum_{\substack{\text{tetramer } T}} \text{score}_{\text{tetramer}}(T),
+\]
+where \(\mathbf{r}\) is the current set of positions, and \(\text{score}_{\text{pairs}}(\mathbf{r})\) is inherited from \texttt{PairSampler} (covering all pairwise distance constraints among A, B, C). Then each identified tetramer $T$ contributes additional constraints through \(\text{calculate\_tetramer\_score}\).
+
+\subsection*{5. Proposing a Tetramer Move: \texttt{propose\_tetramer\_move}}
+
+\begin{enumerate}
+    \item \textbf{Identify a Random Tetramer:}
+    \[
+      i = \text{random index in A}, \quad
+      b = \arg\min_j \bigl\|\mathbf{r}_{A,i} - \mathbf{r}_{B,j}\bigr\|,
+    \]
+    \[
+      c_1, c_2 = \arg\!\min_{k,l}\bigl\|\mathbf{r}_{B,b} - \mathbf{r}_{C,k}\bigr\|, \quad \text{picking the two closest C's}.
+    \]
+    \item \textbf{Random Displacement:} A Gaussian displacement \(\Delta \mathbf{r}\) is sampled from \(\mathcal{N}(\mathbf{0}, \sigma^2 I)\), here $\sigma=5$ in each dimension. This displacement is then added to all four particles $(A_i, B_b, C_{c_1}, C_{c_2})$:
+    \[
+      \mathbf{r}'_{A,i} \gets \mathbf{r}_{A,i} + \Delta \mathbf{r}, \quad
+      \mathbf{r}'_{B,b} \gets \mathbf{r}_{B,b} + \Delta \mathbf{r}, \quad
+      \mathbf{r}'_{C,c_1} \gets \mathbf{r}_{C,c_1} + \Delta \mathbf{r}, \quad
+      \mathbf{r}'_{C,c_2} \gets \mathbf{r}_{C,c_2} + \Delta \mathbf{r}.
+    \]
+    Thus, the entire tetramer is effectively translated by a random vector.
+    \item \textbf{Return Proposed State:} The updated positions are a copy of the old state with only the chosen tetramer's coordinates changed.
+\end{enumerate}
+
+\section*{Summary}
+
+By combining a \textbf{tetramer-aware} scoring mechanism and a 
+specialized \textbf{tetramer proposal move}, this approach fosters 
+closer adherence to the intended distances among groups of four 
+particles (A-B-C-C). The MCMC loop, with an annealing-style 
+temperature schedule, guides the system toward configurations 
+that minimize the overall energy (negative log-likelihood) while 
+exploring potential global minima.
+
+\section{Mathematical Explanation}
+
+\subsection{Coordinated Octet Move}
+The \texttt{propose\_octet\_move} method creates a higher-level (or larger-scale) displacement of components:
+\begin{enumerate}
+    \item Randomly select one \(\mathrm{A}\) copy (via \(\texttt{a\_idx}\)).
+    \item Find the nearest other \(\mathrm{A}\) by computing distance via \(\mathrm{cdist}\).
+    \item For each \( \mathrm{A} \) in this pair, find the nearest \(\mathrm{B}\), then find the two closest \(\mathrm{C}\) copies.
+    \item A random displacement vector \(\vec{\delta} \in \mathbb{R}^3\) is sampled from a normal distribution \(\mathcal{N}(0,3^2)\), and added to all these coordinates, i.e.\ 
+    \[
+        \mathbf{x}_{A} \leftarrow \mathbf{x}_{A} + \vec{\delta},\quad
+        \mathbf{x}_{B} \leftarrow \mathbf{x}_{B} + \vec{\delta},\quad
+        \mathbf{x}_{C_i} \leftarrow \mathbf{x}_{C_i} + \vec{\delta}, 
+    \]
+    for the two \(\mathrm{C}\) copies that belong to this tetramer structure. 
+\end{enumerate}
+Hence, the method enforces a coordinated motion of an ``octet'' arrangement (two \(\mathrm{A}\)'s and their attached \(\mathrm{B}\) and \(\mathrm{C}\) partners).
+
+\subsection{Temperature Schedule}
+Both \texttt{OctetSampler} and \texttt{FullSystemSampler} use an exponential cooling schedule:
+\[
+    T_{\mathrm{step}} \;=\; T_{\mathrm{init}} \,\Bigl(
+        \frac{T_{\mathrm{final}}}{T_{\mathrm{init}}}
+    \Bigr)^{\frac{\mathrm{step}}{n_{\mathrm{steps}}}},
+\]
+starting from \(\mathrm{initial\_temp}\) and ending at \(\mathrm{final\_temp}\). This schedule gradually lowers the temperature to allow the sampler to escape shallow minima in early stages but settle into deeper minima near the end.
+
+\subsection{Move Selection}
+In each Monte Carlo (MC) iteration, the sampler randomly chooses from different move types:
+
+\[
+    \text{Probability of move type} =
+    \begin{cases}
+        0.3,& \text{for `position'} \\
+        0.1,& \text{for `sigma'} \\
+        0.3,& \text{for `tetramer'} \\
+        0.3,& \text{for `octet'} 
+    \end{cases}
+\]
+in the \texttt{OctetSampler}, and slightly adjusted weights in the \texttt{FullSystemSampler} (with heavier emphasis on larger moves, e.g.\ 0.4 for `octet').
+
+\subsection{Scoring and Metropolis Acceptance}
+Each proposed move modifies coordinates or parameters (\(\sigma\)). After the move,
+\[
+    \Delta E \;=\;
+        \text{Score}_{\text{proposed}} \;-\;
+        \text{Score}_{\text{current}}.
+\]
+This difference \(\Delta E\) acts like an energy change. The acceptance probability is given by the Metropolis criterion:
+\[
+    p_\mathrm{accept} \;=\; \min \Bigl(1,\ e^{-\Delta E / T}\Bigr).
+\]
+If \(\Delta E < 0\), the move is automatically accepted (since it improves the score). Otherwise, the move is accepted with probability \(\exp(-\Delta E / T)\), allowing occasional uphill steps to avoid local minima.
+
+\subsection{FullSystemSampler with Slower Cooling}
+The \texttt{FullSystemSampler} class inherits from \texttt{OctetSampler} but uses:
+\[
+    T_{\mathrm{initial}} = 20.0,\quad
+    T_{\mathrm{final}} = 0.01,
+\]
+giving a larger range in temperature. This more slowly anneals the system, encouraging more thorough exploration of high-energy regions before converging.
+
+\subsection{Efficiency, Best Score, and Trajectory}
+Throughout the run:
+\begin{itemize}
+    \item \(\mathrm{accepted}\) counts the fraction of moves accepted, an indicator of how well the sampler is exploring the parameter space.
+    \item \(\mathrm{best\_score}\) tracks the lowest score observed so far, and \(\mathrm{best\_positions}\) the corresponding positions.
+    \item Every \(\mathrm{save\_freq}\) steps, the sampler saves a state snapshot in \(\mathrm{trajectory}\) and prints progress. 
+\end{itemize}
+
+\section{Conclusion}
+This code snippet extends the base Monte Carlo approach to 
+include larger-scale, coordinated ``tetramer'' and ``octet'' moves. 
+By randomly shifting clusters of components, the sampler can more 
+efficiently navigate the high-dimensional configuration space. 
+The exponential cooling schedule and Metropolis acceptance criterion 
+ensure that early steps allow broad exploration, while later steps 
+refine the configuration to find lower-energy (or lower-score) states.
+
+\section{Imports and Setup}
+Below is a partial listing of the first lines of code:
+
+\begin{lstlisting}
+import numpy as np
+import pickle
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.patches import Circle
+import mpl_toolkits.mplot3d.art3d as art3d
+from scipy.spatial.distance import cdist
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
+import random
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{numpy} is used for numerical operations (e.g., array manipulations).
+  \item \texttt{pickle} may be used for saving and loading Python objects.
+  \item \texttt{matplotlib.pyplot} is for plotting in both 2D and 3D.
+  \item \texttt{mpl\_toolkits.mplot3d.Axes3D} and \texttt{art3d} help with 3D rendering.
+  \item \texttt{Circle} is a 2D patch that can be added to 3D plots for visual aids.
+  \item \texttt{scipy.spatial.distance.cdist} computes pairwise distances between two sets of points.
+  \item \texttt{dataclass} and \texttt{typing} assist in structuring data with type hints.
+  \item \texttt{random} is used for generating random moves or seeds.
+\end{itemize}
+
+\section{Coordinate Arrays}
+The script defines several NumPy arrays with 3D coordinates. For example:
+
+\begin{lstlisting}
+array_A = np.array([[0, 100, 0],
+                   [-70.71, 70.71, 0],
+                   ...
+                   [70.71, 70.71, 0]])
+\end{lstlisting}
+
+\begin{itemize}
+  \item These arrays (\texttt{array\_A}, \texttt{array\_B}, \texttt{array\_C}, etc.) specify a set of points in a 3D space at different \texttt{z}-heights or arranged in a geometric pattern.
+  \item They appear to be arranged in a circular or symmetrical fashion (e.g., an 8-fold symmetry).
+  \item Code references to these arrays are used later for distance calculations and for evaluating how well a configuration matches an “ideal” symmetrical arrangement.
+\end{itemize}
+
+\section{Core Class or Functions}
+
+Although not all details might be shown in a single excerpt, the code typically defines a class or set of functions to handle:
+
+\begin{itemize}
+  \item \textbf{Positions:} A dictionary containing the current coordinates of all components or points.
+  \item \textbf{Counts:} How many copies of each component type exist.
+  \item \textbf{Distance Tolerances / Target Distances:} A dictionary specifying expected distances and tolerances between points.
+  \item \textbf{Likelihood Computation:} Methods to calculate negative log-likelihoods based on how far each pair of points is from its expected distance.
+  \item \textbf{Move Proposal:} A method to randomly perturb the positions to explore the parameter space, often used in MCMC.
+\end{itemize}
+
+\subsection{\texttt{calculate\_pair\_neg\_log\_likelihood\_matrix}}
+In some part of the script (not fully shown in the excerpt), a function calculates a matrix of negative log-likelihoods for each pair of points:
+
+\begin{lstlisting}
+neg_log_likelihood_matrix = self.calculate_pair_neg_log_likelihood_matrix(
+    positions[type1], 
+    positions[type2],
+    target_dist,
+    tolerance
+)
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{positions[type1]} and \texttt{positions[type2]} are arrays storing the current 3D coordinates for each copy of a given component type.
+  \item \texttt{target\_dist} is the expected distance between these two types of points.
+  \item \texttt{tolerance} is how much deviation from \texttt{target\_dist} is allowed before penalizing the likelihood.
+  \item This function likely computes pairwise distances (using \texttt{cdist}) and then transforms them into negative log-likelihood penalties.
+\end{itemize}
+
+\subsection{\texttt{Masking Symmetrical Off-Diagonal Terms}}
+When \texttt{type1 == type2}, the code applies an upper-triangular mask to avoid double-counting pairs:
+
+\begin{lstlisting}
+if type1 == type2:
+    mask = np.triu(np.ones_like(neg_log_likelihood_matrix), k=1)
+    neg_log_likelihood_matrix *= mask
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{np.triu(...)} creates a matrix with ones on/above the main diagonal (and zeros below).
+    \item Multiplying by this mask ensures that only unique pairs are considered.
+\end{itemize}
+
+\subsection{\texttt{Unique Pairs and Summation}}
+Next, the code finds the row minima and column minima of the negative log-likelihood matrix to identify the best pairing or alignment. It gathers these pairs in a set and sums the penalty:
+
+\begin{lstlisting}
+unique_pairs = set()
+for i, j in enumerate(np.argmin(..., axis=1)):
+    unique_pairs.add((i, j))
+for i in np.argmin(..., axis=0):
+    unique_pairs.add((i, j))
+
+for i, j in unique_pairs:
+    neg_log_likelihood += neg_log_likelihood_matrix[i, j]
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{np.argmin(..., axis=1)} returns the index of the lowest value in each row.
+    \item \texttt{np.argmin(..., axis=0)} does the same for each column.
+    \item The set \texttt{unique\_pairs} ensures pairs aren’t duplicated when summing the negative log-likelihood.
+\end{itemize}
+
+\section{Proposed Moves}
+The function \texttt{propose\_move} randomly perturbs positions:
+
+\begin{lstlisting}
+def propose_move(self, positions):
+    new_positions = {k: v.copy() for k, v in positions.items()}
+
+    # Select random component type and index
+    type_name = np.random.choice(list(self.counts.keys()))
+    idx = np.random.randint(self.counts[type_name])
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{new\_positions} is a copy of the original positions dictionary to avoid modifying it in place.
+  \item A random \texttt{type\_name} is chosen from the dictionary of component types.
+  \item A random index \texttt{idx} is chosen, representing one specific copy of that component type.
+  \item The chosen point's coordinates are then shifted by a random small amount (not shown in the excerpt), creating a candidate move for an MCMC or optimization algorithm.
+\end{itemize}
+
+\section{Negative Log-Likelihood}
+Finally, the method computing the overall negative log-likelihood accumulates the penalty from every relevant pair. If the assembled structure is close to the target distances, the negative log-likelihood remains low. Otherwise, mismatches in the expected distances increase the penalty.
+
+\section{Summary}
+\begin{itemize}
+  \item \textbf{Purpose:} \texttt{BHM\_toy.py} sets up a platform to explore hierarchical Bayesian modeling within a simplified or “toy” system of 3D points. 
+  \item \textbf{Distance-Based Likelihood:} The code penalizes deviations from certain target distances through negative log-likelihood calculations. 
+  \item \textbf{Random Moves:} A function proposes random moves of individual points, likely to be used in iterative or sampling-based algorithms (e.g., MCMC).
+\end{itemize}
+
+\noindent This toy setup is particularly useful for debugging and conceptual testing before moving on to more complex, real-world analysis.
+
+% APPENDIX: Additional Explanation of BHM_toy.py (Lines 284-496)
+% -------------------------------------------------------------------
+% This LaTeX content can be added as a continuation to your existing
+% "BHM_toy_explanation.tex" document.
+
+\section{Detailed Explanation of the Code (Lines 284--496)}
+
+\subsection{SystemParameters Dataclass}
+\begin{lstlisting}[language=Python]
+@dataclass
+class SystemParameters:
+    """Parameters for the molecular system"""
+    box_size: float = 300.0
+    radii: Dict[str, float] = None
+    pair_distances: Dict[str, float] = None
+    component_counts: Dict[str, int] = None
+    
+    def __post_init__(self):
+        if self.radii is None:
+            self.radii = {'A': 40.0, 'B': 10.0, 'C': 16.0}
+        if self.pair_distances is None:
+            self.pair_distances = {
+                'AA': 80.5,
+                'AB': 50.5,
+                'CC': 31.5,
+                'BC': 36.5
+            }
+        if self.component_counts is None:
+            self.component_counts = {'A': 8, 'B': 8, 'C': 16}
+\end{lstlisting}
+
+\noindent
+This \texttt{SystemParameters} dataclass holds parameters for the molecular system:
+\begin{itemize}
+    \item \textbf{\texttt{box\_size}:} The size of the simulation box in which components are placed (default: 300.0).
+    \item \textbf{\texttt{radii}:} Radii (in \AA) of each component type (A, B, C). Default values are set if none are provided.
+    \item \textbf{\texttt{pair\_distances}:} Target inter-component distances for pairs like AA, AB, CC, BC.
+    \item \textbf{\texttt{component\_counts}:} How many copies of each component type exist in the system.
+\end{itemize}
+If the user does not pass these dictionaries, the \texttt{\_\_post\_init\_\_} method sets sensible defaults.
+
+\subsection{BaseMCSampler Class}
+\begin{lstlisting}[language=Python]
+class BaseMCSampler:
+    def __init__(self, params: SystemParameters):
+        self.params = params
+        self.positions = {}
+        self.trajectory = []
+        
+        # Initialize sigma parameters with Jeffreys prior
+        self.sigma = {}
+        for pair_type in self.params.pair_distances.keys():
+            # Sample from log-uniform distribution between 0.5 and 20 Å
+            log_min, log_max = np.log(0.5), np.log(20.0)
+            self.sigma[pair_type] = np.exp(
+                np.random.uniform(log_min, log_max)
+            )
+            
+        # Minimum likelihood value to avoid numerical issues
+        self.min_likelihood = 1e-10
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{\texttt{params}:} An instance of \texttt{SystemParameters}, storing system sizes, radii, etc.
+    \item \textbf{\texttt{positions}:} A dictionary that will hold component positions (3D coordinates).
+    \item \textbf{\texttt{trajectory}:} A list to store snapshots (states) for each Monte Carlo step.
+    \item \textbf{\texttt{sigma}:} A dictionary of uncertainty (noise) parameters for each pair type (e.g., “AA”, “AB”). These are sampled initially from a log-uniform distribution between 0.5\AA{} and 20\AA{}, providing a broad prior.
+    \item \textbf{\texttt{min\_likelihood}:} A small positive number (1e-10) to avoid taking the log of zero in likelihood calculations.
+\end{itemize}
+
+\subsubsection{\texttt{initialize\_positions}}
+\begin{lstlisting}[language=Python]
+def initialize_positions(self) -> Dict[str, np.ndarray]:
+    """Initialize random positions for all components"""
+    positions = {}
+    for type_name, count in self.params.component_counts.items():
+        positions[type_name] = np.random.uniform(
+            0, self.params.box_size, (count, 3))
+    return positions
+\end{lstlisting}
+Each component type is assigned an array of random coordinates, uniformly distributed in a 3D cube of size \texttt{box\_size}. This random initialization kickstarts the Monte Carlo procedure.
+
+\subsubsection{\texttt{calculate\_exclusion\_score}}
+\begin{lstlisting}[language=Python]
+def calculate_exclusion_score(self, positions: Dict[str, np.ndarray]) -> float:
+    """Calculate score term for excluded volume"""
+    score = 0.0
+    k_exclude = 100.0   # Strong exclusion penalty
+    
+    for type1 in positions:
+        for type2 in positions:
+            if type1 <= type2:
+                pos1, pos2 = positions[type1], positions[type2]
+                min_dist = self.params.radii[type1] + self.params.radii[type2]
+                distances = cdist(pos1, pos2)
+                ...
+                if violations[0].size > 0:
+                    score += k_exclude * \
+                             np.sum((min_dist - distances[violations])**2)
+    return score
+\end{lstlisting}
+
+\begin{itemize}
+    \item The code computes a penalty if two particles overlap (i.e., the distance $< \texttt{min\_dist}$, which is the sum of their radii).
+    \item \texttt{cdist(pos1, pos2)} calculates the pairwise distances between all copies of \texttt{type1} and all copies of \texttt{type2}.
+    \item If \texttt{type1 == type2}, only the upper triangle of the distance matrix is considered to avoid double-counting.
+    \item The penalty accumulates quadratically as $(\texttt{min\_dist} - \texttt{distance})^2$ under violations.
+\end{itemize}
+
+\subsubsection{\texttt{calculate\_pair\_score} and \texttt{calculate\_pair\_scores\_matrix}}
+\begin{lstlisting}[language=Python]
+def calculate_pair_score(self, pos1: np.ndarray, pos2: np.ndarray, 
+                         target_dist: float, sigma: float) -> float:
+    distance = np.sqrt(np.sum((pos1 - pos2)**2))
+    score = ((distance - target_dist)**2) / (2 * sigma**2)
+    return score
+
+def calculate_pair_scores_matrix(self, pos1: np.ndarray, pos2: np.ndarray, 
+                                 target_dist: float, sigma: float) 
+                                 -> np.ndarray:
+    distances = cdist(pos1, pos2)
+    scores = ((distances - target_dist)**2) / (2 * sigma**2)
+    return scores
+\end{lstlisting}
+
+\begin{itemize}
+    \item The pair score (or “distance penalty”) is calculated as a Gaussian penalty around the \texttt{target\_dist}, scaled by $\sigma$.
+    \item \texttt{calculate\_pair\_scores\_matrix} does the same for all pairs in two arrays of positions via \texttt{cdist}.
+\end{itemize}
+
+\subsubsection{\texttt{propose\_sigma\_move}}
+\begin{lstlisting}[language=Python]
+def propose_sigma_move(self) -> Dict[str, float]:
+    """Propose new sigma values"""
+    new_sigma = self.sigma.copy()
+    # Pick random pair type
+    pair_type = np.random.choice(list(self.sigma.keys()))
+    
+    # Propose new value in log space
+    log_sigma = np.log(new_sigma[pair_type])
+    step_size = 0.1
+    new_log_sigma = log_sigma + np.random.normal(0, step_size)
+    
+    # Ensure within bounds [0.5, 20]
+    new_log_sigma = np.clip(new_log_sigma, np.log(0.5), np.log(20.0))
+    new_sigma[pair_type] = np.exp(new_log_sigma)
+    
+    return new_sigma
+\end{lstlisting}
+
+\begin{itemize}
+    \item This method randomly adjusts one of the $\sigma$ values by sampling in log space.
+    \item After shifting by a normal random variable of standard deviation \texttt{0.1}, the new $\sigma$ is clipped to [0.5, 20].
+\end{itemize}
+
+\subsubsection{\texttt{propose\_position\_move}}
+\begin{lstlisting}[language=Python]
+def propose_position_move(self, positions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """Propose new positions with adaptive step size"""
+    new_positions = {k: v.copy() for k, v in positions.items()}
+    
+    # Select random component type and index
+    type_name = np.random.choice(list(self.params.component_counts.keys()))
+    idx = np.random.randint(self.params.component_counts[type_name])
+    
+    # Adaptive step size
+    step_size = self.params.radii[type_name] * 0.1
+    
+    # Apply random displacement
+    new_positions[type_name][idx] += np.random.normal(0, step_size, 3)
+    
+    # Ensure within box
+    new_positions[type_name][idx] = np.clip(
+        new_positions[type_name][idx], 0, self.params.box_size
+    )
+    
+    return new_positions
+\end{lstlisting}
+
+\begin{itemize}
+    \item A random component type and a random copy (index) of that type are chosen.
+    \item The position is perturbed with a step size proportional to the component's radius.
+    \item The new position is clipped so it remains within the simulation box (\texttt{[0, box\_size]}).
+\end{itemize}
+
+\subsubsection{\texttt{save\_state} and \texttt{save\_trajectory}}
+\begin{lstlisting}[language=Python]
+def save_state(self, step: int, positions: Dict[str, np.ndarray], 
+               score: float) -> Dict:
+    """Save current state information"""
+    state = {
+        'step': step,
+        'positions': positions,
+        'sigma': self.sigma.copy(),
+        'score': score,
+        'types': {},
+        'bead_numbers': {}
+    }
+    # record type, bead index
+    current_idx = 0
+    for type_name, count in self.params.component_counts.items():
+        for i in range(count):
+            state['types'][current_idx] = type_name
+            state['bead_numbers'][current_idx] = current_idx + 1
+            current_idx += 1
+    return state
+
+def save_trajectory(self, filename: str = None):
+    """Save trajectory to file"""
+    if filename is None:
+        filename = f"trajectory.pkl"
+    with open(filename, 'wb') as f:
+        pickle.dump(self.trajectory, f)
+    return filename
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{save\_state} collects information about the current Monte Carlo step: positions, $\sigma$ values, the step index, total score, etc.
+    \item \texttt{save\_trajectory} writes the entire \texttt{trajectory} list to a pickle file for later analysis or visualization.
+\end{itemize}
+
+\subsubsection{\texttt{load\_trajectory}}
+\begin{lstlisting}[language=Python]
+@staticmethod
+def load_trajectory(filename: str) -> List[Dict]:
+    """Load trajectory from file"""
+    with open(filename, 'rb') as f:
+        return pickle.load(f)
+\end{lstlisting}
+\noindent
+Loads the pickle file containing a trajectory list of states, returning it as a Python object.
+
+\subsubsection{\texttt{run\_mc}}
+\begin{lstlisting}[language=Python]
+def run_mc(self, n_steps: int = 50000, save_freq: int = 100) -> Tuple:
+    """Base Monte Carlo sampling with position and sigma moves"""
+    positions = self.initialize_positions()
+    current_score = self.calculate_score(positions)
+    
+    best_positions = {k: v.copy() for k, v in positions.items()}
+    best_score = current_score
+    
+    self.trajectory = []
+    accepted = 0
+    
+    # Temperature schedule
+    initial_temp = 10.0
+    final_temp = 0.1
+    
+    for step in range(n_steps):
+        temp = initial_temp * \
+               (final_temp / initial_temp)**(step / n_steps)
+        
+        # 90% chance position move, 10% sigma move
+        if np.random.random() < 0.9:
+            proposed_positions = self.propose_position_move(positions)
+            proposed_sigma = self.sigma.copy()
+        else:
+            proposed_positions = positions.copy()
+            proposed_sigma = self.propose_sigma_move()
+        
+        # Store old sigma, set new sigma
+        old_sigma = self.sigma.copy()
+        self.sigma = proposed_sigma
+        
+        # Calculate new score
+        proposed_score = self.calculate_score(proposed_positions)
+        delta_e = proposed_score - current_score
+        
+        # Metropolis criterion
+        if delta_e < 0 or np.random.random() < np.exp(-delta_e/temp):
+            positions = proposed_positions
+            current_score = proposed_score
+            accepted += 1
+            
+            if current_score < best_score:
+                best_score = current_score
+                best_positions = {k: v.copy() for k, v in positions.items()}
+        else:
+            self.sigma = old_sigma
+        
+        # Save trajectory info periodically
+        if step % save_freq == 0:
+            self.trajectory.append(self.save_state(step, positions, current_score))
+            print(f"Step {step}, Score: {current_score:.2f}, "
+                  f"T: {temp:.4f}, Accept: {accepted/(step+1):.2f}")
+    
+    return best_positions, self.trajectory, self.save_trajectory()
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Initialization:} Positions are set randomly, and a score is calculated.
+    \item \textbf{Temperature Schedule:} A linear, geometric, or exponential cooling schedule can be used. Here, the code transitions from \texttt{initial\_temp}=10.0 to \texttt{final\_temp}=0.1 over \texttt{n\_steps}.
+    \item \textbf{Move Selection:}
+        \begin{itemize}
+            \item With 90\% probability, perturb the \texttt{positions}.
+            \item Otherwise, propose a new $\sigma$ for one pair type.
+        \end{itemize}
+    \item \textbf{Metropolis Criterion:} 
+    \[
+        \Delta E = \texttt{proposed\_score} - \texttt{current\_score}
+        \quad \text{and} \quad
+        p_{\text{accept}} = \exp \left(-\frac{\Delta E}{T}\right).
+    \]
+    If $\Delta E < 0$ (improvement) or if a random number $< p_{\text{accept}}$, the move is accepted.
+    \item \textbf{Saving Trajectory:} Every \texttt{save\_freq} steps, the state is stored and a progress message is printed.
+    \item \textbf{Return Value:} The function returns the best positions found, the full trajectory, and a call to \texttt{save\_trajectory()} that writes the trajectory to a file.
+\end{itemize}
+
+\subsection{Overall Workflow Summary}
+\begin{enumerate}
+    \item \textbf{Initialize} random coordinates for each component type within a cubic box.
+    \item \textbf{Compute} an initial score (\texttt{calculate\_score} typically sums distance-based penalties and excluded-volume penalties).
+    \item \textbf{Set Up} a Monte Carlo loop for a specified number of steps (\texttt{n\_steps}).
+    \item \textbf{Propose Moves}:
+    \begin{itemize}
+        \item Position moves: Randomly pick a single component, perturb its coordinates, then evaluate the new score.
+        \item Sigma moves: Randomly pick a single pair type and adjust its $\sigma$ parameter in log space.
+    \end{itemize}
+    \item \textbf{Accept or Reject Moves} using the Metropolis criterion, updating positions and $\sigma$.
+    \item \textbf{Periodically Save} the current state (\texttt{positions}, \texttt{sigma}, \texttt{score}), log progress, and reduce temperature by a factor determined by the step fraction.
+    \item \textbf{Return} the best positions discovered, the entire trajectory, and a saved file (pickle) of the trajectory for later analysis.
+\end{enumerate}
+
+\noindent
+This concludes the detailed explanation of lines 284--496 in \texttt{BHM\_toy.py}. The code establishes a flexible Monte Carlo framework, allowing both positional shifts and parameter adjustments to seek configurations with minimal penalty (or maximal likelihood) under the model’s distance constraints and radii exclusions.
+
+\begin{equation}
+    P_{\text{pair}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{pair}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    This formulation induces partial pooling across pairwise distances, shrinking extreme values based on shared uncertainty in $\sigma$.
+    
+    \begin{equation}
+    P_{\text{tetramer}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{tetramer}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    By linking multiple particles, tetramer constraints propagate uncertainty through hierarchical couplings, further refining $\sigma$.
+    
+    \begin{equation}
+    P_{\text{octet}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{octet}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    Octet-level interactions reinforce partial pooling by coupling subgroups of parameters, promoting coherent shrinkage of outliers.
+    
+    \begin{equation}
+    P_{\text{full}}(\{\mathbf{r}\},\sigma \mid \text{data})
+    \;\propto\;
+    \mathrm{like}_{\text{full}}(\{\mathbf{r}\},\sigma)\,\times\,\mathrm{prior}(\sigma).
+    \end{equation}
+    The full model merges all hierarchical layers, ensuring uncertainties flow across pairwise, tetramer, and octet levels for robust posterior inference.
+
+% End of Appendix
+
+\end{document}

@@ -1,0 +1,461 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{natbib}
+\usepackage{bm}
+
+\geometry{a4paper, margin=1in}
+
+\title{Hierarchical Bayesian Modeling of Monomer and Dimer states}
+\author{Sree Ganesh}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper presents a hierarchical Bayesian model designed to analyze monomer and dimer data in protein studies. By incorporating hyperparameters, the model effectively captures the underlying structure and dependencies between monomer and dimer states. The joint probability distribution is meticulously derived, and the advantages of hierarchical modeling in this context are thoroughly discussed. The model's performance is validated through posterior analysis, demonstrating its efficacy in addressing convergence issues and providing reliable parameter estimates.
+\end{abstract}
+
+\section{Introduction}
+Proteins often function as monomers or form complex structures known as dimers. Understanding the stoichiometry and interaction dynamics between monomers and dimers is crucial for elucidating protein functionality. Traditional statistical models may fall short in capturing the hierarchical dependencies inherent in such biological systems. Hierarchical Bayesian modeling offers a robust framework to model these complexities by introducing hyperparameters that govern the distribution of lower-level parameters.
+
+\section{Model Specification}
+
+\subsection{Data Structure}
+The dataset comprises observations of monomer and dimer states. Each monomer state is associated with specific parameters, while dimers constitute a mixture of these monomer states. Specifically:
+
+\begin{itemize}
+    \item \textbf{Monomer Observations}: \( \{d_i^{\text{mono}}\}_{i=1}^{N_{\text{monomer}}} \)
+    \item \textbf{Dimer Observations}: \( \{d_j^{\text{dimer}}\}_{j=1}^{N_{\text{dimer}}} \)
+\end{itemize}
+
+\subsection{Parameters and Hyperparameters}
+The model introduces both parameters and hyperparameters to capture the hierarchical nature of the data:
+
+\begin{itemize}
+    \item \(\pi\): Probability of a monomer being in the helical state.
+    \item \(\mu_{\text{helix}}\), \(\mu_{\text{glob}}\): Means of the helical and globular states of monomers.
+    \item \(\sigma_{\text{helix}}\), \(\sigma_{\text{glob}}\): Standard deviations of the helical and globular states of monomers.
+    \item \(\pi_{\text{dimer}}\): Dirichlet-distributed probabilities for the four possible dimer states.
+    \item \(\delta_k\): Interaction terms for each dimer state.
+    \item \(\mu_{\mu}\), \(\sigma_{\mu}\): Hyperparameters for the monomer means.
+    \item \(\mu_{\sigma}\), \(\sigma_{\sigma}\): Hyperparameters for the monomer standard deviations.
+\end{itemize}
+
+\section{Joint Probability Distribution}
+
+The hierarchical Bayesian model defines a joint probability distribution over all parameters, hyperparameters, and observed data. This distribution encapsulates the dependencies between different levels of the hierarchy.
+
+\subsection{Hyperpriors}
+The hyperparameters themselves are assigned prior distributions to encapsulate prior beliefs about their values.
+
+\begin{align}
+    \mu_{\mu} &\sim \mathcal{N}(10, 5^2), \\
+    \sigma_{\mu} &\sim \text{Half-Normal}(2), \\
+    \mu_{\sigma} &\sim \text{Half-Normal}(2), \\
+    \sigma_{\sigma} &\sim \text{Half-Normal}(2).
+\end{align}
+
+\subsection{Monomer Level Parameters}
+The monomer state probability and parameters are modeled conditional on the hyperparameters.
+
+\begin{align}
+    \pi &\sim \text{Beta}(2.0, 2.0), \\
+    \mu_{\text{helix}} &\sim \mathcal{N}(\mu_{\mu}, \sigma_{\mu}^2), \\
+    \sigma_{\text{helix}} &\sim \text{Half-Normal}(\mu_{\sigma}), \\
+    \mu_{\text{glob}} &\sim \mathcal{N}(\mu_{\mu}, \sigma_{\mu}^2), \\
+    \sigma_{\text{glob}} &\sim \text{Half-Normal}(\mu_{\sigma}).
+\end{align}
+
+\subsection{Monomer Mixture Model}
+Each monomer observation is assumed to arise from a mixture of helical and globular states.
+
+\begin{align}
+    d_i^{\text{mono}} &\sim \pi \cdot \mathcal{N}(\mu_{\text{helix}}, \sigma_{\text{helix}}^2) + (1 - \pi) \cdot \mathcal{N}(\mu_{\text{glob}}, \sigma_{\text{glob}}^2).
+\end{align}
+
+\subsection{Dimer Level Parameters}
+Dimers are modeled as mixtures of four possible states, each representing combinations of monomer states.
+
+\begin{align}
+    \pi_{\text{dimer}} &\sim \text{Dirichlet}(\bm{\alpha}_{\text{dirichlet}}), \\
+    \delta_k &\sim \mathcal{N}(1.0, 0.5^2), \quad k = 1, 2, 3, 4.
+\end{align}
+
+\subsection{Dimer State Means and Standard Deviations}
+The means and standard deviations for dimer states are 
+deterministic functions of monomer parameters and interaction terms.
+
+\begin{align}
+    \mu_{\text{dimer}, k} &= 
+    \begin{cases}
+        2\mu_{\text{glob}} + \delta_1 & \text{for globular-globular}, \\
+        \mu_{\text{glob}} + \mu_{\text{helix}} + \delta_2 & \text{for globular-helical}, \\
+        \mu_{\text{helix}} + \mu_{\text{glob}} + \delta_3 & \text{for helical-globular}, \\
+        2\mu_{\text{helix}} + \delta_4 & \text{for helical-helical}.
+    \end{cases} \\
+    \sigma_{\text{dimer}, k} &= 
+    \begin{cases}
+        \sqrt{2\sigma_{\text{glob}}^2}, \\
+        \sqrt{\sigma_{\text{glob}}^2 + \sigma_{\text{helix}}^2}, \\
+        \sqrt{\sigma_{\text{helix}}^2 + \sigma_{\text{glob}}^2}, \\
+        \sqrt{2\sigma_{\text{helix}}^2}.
+    \end{cases}
+\end{align}
+
+\subsection{Dimer Mixture Model}
+Each dimer observation is assumed to arise from a mixture of these four dimer states.
+
+\begin{align}
+    d_j^{\text{dimer}} &\sim \sum_{k=1}^4 \pi_{\text{dimer}, k} 
+    \cdot \mathcal{N}(\mu_{\text{dimer}, k}, \sigma_{\text{dimer}, k}^2).
+\end{align}
+
+\subsection{Joint Probability Distribution}
+
+The hierarchical Bayesian model defines a joint probability distribution over all parameters, hyperparameters, and observed data. This distribution encapsulates the dependencies between different levels of the hierarchy.
+
+\begin{align}
+    &p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}, \pi, \mu_{\text{helix}}, 
+    \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, 
+    \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma}) \nonumber \\
+    &= p(\mu_{\mu})\, p(\sigma_{\mu})\, p(\mu_{\sigma})\, p(\sigma_{\sigma}) \\
+    &\quad \times p(\pi)\, p(\mu_{\text{helix}} \mid \mu_{\mu}, \sigma_{\mu})\, p(\mu_{\text{glob}} \mid \mu_{\mu}, \sigma_{\mu})\, p(\sigma_{\text{helix}} \mid \mu_{\sigma})\, p(\sigma_{\text{glob}} \mid \mu_{\sigma}) \\
+    &\quad \times p(\bm{d}^{\text{mono}} \mid \pi, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}) \\
+    &\quad \times p(\pi_{\text{dimer}})\, p(\bm{\delta})\, p(\bm{d}^{\text{dimer}} \mid \pi_{\text{dimer}}, \bm{\delta}, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}).
+\end{align}
+
+\subsection{Posterior Distribution}
+
+Given the observed data, the posterior distribution over the model parameters is defined as the conditional probability of the parameters given the data. This is the core of Bayesian inference, where we update our beliefs about the parameters after observing the data.
+
+\begin{align}
+    &p(\pi, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, 
+    \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma} \mid \bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}) \\
+    &= \frac{p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}, \pi, \mu_{\text{helix}}, 
+    \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, 
+    \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma})}{p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}})}.
+\end{align}
+
+\noindent Here, \( p(\bm{d}^{\text{mono}}, \bm{d}^{\text{dimer}}) \) is the marginal likelihood, which serves as a normalization constant ensuring that the posterior distribution sums to one.
+
+\subsection{Conditional Dependencies}
+
+The posterior distribution captures the conditional dependencies between the model parameters 
+and the observed data. Each parameter's distribution is updated based on the data, reflecting 
+the hierarchical structure of the model.
+
+\begin{align}
+    p(\text{Parameters} \mid \text{Data}) &= \frac{p(\text{Data} \mid \text{Parameters})\, p(\text{Parameters})}{p(\text{Data})}
+\end{align}
+
+\noindent In the context of this model:
+
+\begin{itemize}
+    \item \( \text{Parameters} \) include \( \pi, \mu_{\text{helix}}, \mu_{\text{glob}}, \sigma_{\text{helix}}, \sigma_{\text{glob}}, \pi_{\text{dimer}}, \bm{\delta}, \mu_{\mu}, \sigma_{\mu}, \mu_{\sigma}, \sigma_{\sigma} \).
+    \item \( \text{Data} \) comprises \( \bm{d}^{\text{mono}} \) and \( \bm{d}^{\text{dimer}} \).
+\end{itemize}
+
+This conditional probability formulation is essential for performing Bayesian inference, 
+allowing the estimation of parameter distributions that best explain the observed data 
+within the hierarchical framework.
+
+\section{Hierarchical Modeling Benefits}
+
+Hierarchical Bayesian models provide several advantages in complex data scenarios:
+
+\subsection{Parameter Sharing and Partial Pooling}
+Hierarchical models allow parameters to share statistical strength through hyperparameters. This pooling reduces variance estimates, especially beneficial when dealing with limited or noisy data.
+
+\subsection{Flexibility in Modeling Complex Dependencies}
+The hierarchical structure enables modeling of dependencies between multiple levels, such as monomer and dimer states, capturing intricate relationships that flat models might miss.
+
+\subsection{Improved Estimation and Inference}
+By leveraging hyperpriors, hierarchical models can produce more robust and stable estimates, mitigating overfitting and enhancing generalization.
+
+\subsection{Facilitating Multi-Level Analysis}
+Hierarchical models naturally accommodate multi-level data, allowing simultaneous inference on different levels (e.g., individual proteins and their interactions within dimers).
+
+\section{Model Implementation}
+
+The model is implemented using \texttt{PyMC3}, a probabilistic programming framework that facilitates Bayesian inference through Markov Chain Monte Carlo (MCMC) methods.
+
+\subsection{Model Construction}
+Below is a step-by-step construction of the hierarchical model in \texttt{PyMC3}.
+
+\begin{verbatim}
+with pm.Model() as hierarchical_model:
+    # Hyperpriors for the monomer means
+    mu_mu = pm.Normal('mu_mu', mu=10, sigma=5)
+    
+    # Hyperpriors for the monomer standard deviations
+    mu_sigma = pm.HalfNormal('mu_sigma', sigma=2)
+    
+    # Prior for monomer state probability pi
+    pi = pm.Beta('pi', alpha=2.0, beta=2.0)
+    
+    # Monomer helical state parameters
+    mu_helix = pm.Normal('mu_helix', mu=mu_mu, sigma=2)
+    sigma_helix = pm.HalfNormal('sigma_helix', sigma=2)
+    
+    # Monomer globular state parameters
+    mu_glob = pm.Normal('mu_glob', mu=mu_mu, sigma=2)
+    sigma_glob = pm.HalfNormal('sigma_glob', sigma=2)
+    
+    # Monomer mixture components
+    monomer_components = [
+        pm.Normal.dist(mu=mu_glob, sigma=sigma_glob),
+        pm.Normal.dist(mu=mu_helix, sigma=sigma_helix)
+    ]
+    
+    # Monomer mixture model
+    monomer_obs_ = pm.Mixture(
+        'monomer_obs',
+        w=[1 - pi, pi],
+        comp_dists=monomer_components,
+        observed=monomer_obs
+    )
+    
+    # Prior for dimer state probabilities pi_k
+    alpha_dirichlet = np.ones(4)
+    pi_dimer = pm.Dirichlet('pi_dimer', a=alpha_dirichlet)
+    
+    # Priors for interaction terms delta_k
+    delta = pm.Normal('delta', mu=1.0, sigma=0.5, shape=4)
+    
+    # Dimer state means and standard deviations
+    mu_dimer = pm.Deterministic('mu_dimer', pm.math.stack([
+        2 * mu_glob + delta[0],
+        mu_glob + mu_helix + delta[1],
+        mu_helix + mu_glob + delta[2],
+        2 * mu_helix + delta[3]
+    ]))
+    
+    sigma_dimer = pm.Deterministic('sigma_dimer', pm.math.stack([
+        pm.math.sqrt(2 * sigma_glob**2),
+        pm.math.sqrt(sigma_glob**2 + sigma_helix**2),
+        pm.math.sqrt(sigma_helix**2 + sigma_glob**2),
+        pm.math.sqrt(2 * sigma_helix**2)
+    ]))
+    
+    # Dimer mixture components
+    dimer_components = [
+        pm.Normal.dist(mu=mu_dimer[i], sigma=sigma_dimer[i]) for i in range(4)
+    ]
+    
+    # Dimer mixture model
+    dimer_obs_ = pm.Mixture(
+        'dimer_obs',
+        w=pi_dimer,
+        comp_dists=dimer_components,
+        observed=dimer_obs
+    )
+    
+    # Sampling from the posterior
+    trace = pm.sample(
+        4000,
+        tune=2000,
+        cores=4,
+        random_seed=42,
+        target_accept=0.9,
+        return_inferencedata=True
+    )
+\end{verbatim}
+
+\subsection{Detailed Step-by-Step Explanation}
+
+\subsubsection{Hyperpriors}
+\begin{itemize}
+    \item \textbf{Monomer Means Hyperparameters:}
+    \begin{align}
+        \mu_{\mu} &\sim \mathcal{N}(10, 5^2), \\
+        \mu_{\sigma} &\sim \text{Half-Normal}(2).
+    \end{align}
+    These hyperpriors capture the beliefs about the central tendency and variability of monomer means and standard deviations across different states.
+    
+    \item \textbf{Dimer State Probabilities:}
+    \begin{align}
+        \pi_{\text{dimer}} &\sim \text{Dirichlet}(\bm{1}_4),
+    \end{align}
+    where \(\bm{1}_4\) is a vector of ones, representing a uniform prior over the four dimer states.
+    
+    \item \textbf{Interaction Terms:}
+    \begin{align}
+        \delta_k &\sim \mathcal{N}(1.0, 0.5^2), \quad k = 1, 2, 3, 4.
+    \end{align}
+    These terms capture the interaction effects specific to each dimer state.
+\end{itemize}
+
+\subsubsection{Monomer Parameters and Mixture Model}
+\begin{itemize}
+    \item \textbf{Monomer State Probability:}
+    \begin{align}
+        \pi &\sim \text{Beta}(2.0, 2.0),
+    \end{align}
+    representing the probability of a monomer being in the helical state.
+    
+    \item \textbf{Monomer State Parameters:}
+    \begin{align}
+        \mu_{\text{helix}} &\sim \mathcal{N}(\mu_{\mu}, 2^2), \\
+        \mu_{\text{glob}} &\sim \mathcal{N}(\mu_{\mu}, 2^2), \\
+        \sigma_{\text{helix}} &\sim \text{Half-Normal}(2), \\
+        \sigma_{\text{glob}} &\sim \text{Half-Normal}(2).
+    \end{align}
+    These parameters define the distributions of the helical and globular states.
+    
+    \item \textbf{Mixture Components:}
+    The monomer observations are modeled as a mixture of two normal distributions:
+    \begin{align}
+        d_i^{\text{mono}} &\sim \pi \cdot \mathcal{N}(\mu_{\text{helix}}, \sigma_{\text{helix}}^2) + (1 - \pi) \cdot \mathcal{N}(\mu_{\text{glob}}, \sigma_{\text{glob}}^2).
+    \end{align}
+\end{itemize}
+
+\subsubsection{Dimer Parameters and Mixture Model}
+\begin{itemize}
+    \item \textbf{Dimer State Means and Standard Deviations:}
+    \begin{align}
+        \mu_{\text{dimer}, k} &= 
+        \begin{cases}
+            2\mu_{\text{glob}} + \delta_1 & \text{gl-gl}, \\
+            \mu_{\text{glob}} + \mu_{\text{helix}} + \delta_2 & \text{gl-he}, \\
+            \mu_{\text{helix}} + \mu_{\text{glob}} + \delta_3 & \text{he-gl}, \\
+            2\mu_{\text{helix}} + \delta_4 & \text{he-he}.
+        \end{cases} \\
+        \sigma_{\text{dimer}, k} &= 
+        \begin{cases}
+            \sqrt{2\sigma_{\text{glob}}^2}, \\
+            \sqrt{\sigma_{\text{glob}}^2 + \sigma_{\text{helix}}^2}, \\
+            \sqrt{\sigma_{\text{helix}}^2 + \sigma_{\text{glob}}^2}, \\
+            \sqrt{2\sigma_{\text{helix}}^2}.
+        \end{cases}
+    \end{align}
+    
+    \item \textbf{Dimer Mixture Components:}
+    \begin{align}
+        d_j^{\text{dimer}} &\sim \sum_{k=1}^4 \pi_{\text{dimer}, k} \cdot \mathcal{N}(\mu_{\text{dimer}, k}, \sigma_{\text{dimer}, k}^2).
+    \end{align}
+    Each dimer observation is a mixture of four possible dimer states, each corresponding to a different combination of monomer states.
+\end{itemize}
+
+\subsection{Sampling from the Posterior Distribution}
+The posterior distribution is sampled using the No-U-Turn Sampler (NUTS), an adaptive variant of Hamiltonian Monte Carlo (HMC).
+
+\begin{align}
+    \text{Trace} &= \text{pm.sample}(4000, \text{tune}=2000, \text{cores}=4, \text{random\_seed}=42, \text{target\_accept}=0.9, \text{return\_inferencedata}=True).
+\end{align}
+
+\section{Inference and Diagnostics}
+
+After sampling, it's crucial to assess the quality of the posterior estimates through diagnostics.
+
+\subsection{Posterior Summary}
+The summary provides statistical measures such as mean, standard deviation, and credible intervals for each parameter.
+
+\begin{verbatim}
+import arviz as az
+
+# Summary of the posterior
+summary = az.summary(trace, var_names=['pi', 'mu_helix', 'sigma_helix', 
+                                      'mu_glob', 'sigma_glob', 
+                                      'pi_dimer', 'delta'])
+print(summary)
+\end{verbatim}
+
+\subsection{Trace Plots}
+Trace plots help visualize the sampling process for each parameter, indicating convergence and mixing.
+
+\begin{verbatim}
+# Plot trace plots for key parameters
+az.plot_trace(
+    trace,
+    var_names=['pi', 'mu_helix', 'sigma_helix', 'mu_glob', 'sigma_glob', 'delta'],
+    compact=True
+)
+plt.show()
+\end{verbatim}
+
+\subsection{Posterior Distributions}
+Posterior distributions illustrate the uncertainty and correlations between parameters.
+
+\begin{verbatim}
+# Plot posterior distributions
+az.plot_posterior(trace, var_names=['pi', 'mu_helix', 'sigma_helix', 'mu_glob', 'sigma_glob'], hdi_prob=0.95)
+plt.show()
+
+# Plot posterior distributions of interaction terms
+az.plot_posterior(trace, var_names=['delta'], hdi_prob=0.95)
+plt.show()
+\end{verbatim}
+
+\subsection{Diagnostic Metrics}
+Key metrics such as the Rhat statistic and Effective Sample Size (ESS) are assessed to ensure reliable inference.
+
+\begin{itemize}
+    \item \textbf{Rhat Statistic:} Values close to 1 indicate convergence.
+    \item \textbf{Effective Sample Size (ESS):} Higher values imply better sampling efficiency.
+\end{itemize}
+
+\section{Addressing Convergence Issues}
+
+The presence of \( \hat{R} > 1.01 \) and low ESS indicates issues with sampler convergence. Strategies to mitigate these include:
+
+\subsection{Increasing Sampling Iterations}
+\begin{verbatim}
+trace = pm.sample(
+    6000,          # Increased number of samples
+    tune=3000,     # Increased tuning steps
+    cores=4,
+    random_seed=42,
+    target_accept=0.95,
+    return_inferencedata=True
+)
+\end{verbatim}
+
+\subsection{Reparameterization}
+Non-centered parameterizations can improve sampler performance in hierarchical models.
+
+\begin{align}
+    \sigma_{\text{helix}} &= \mu_{\sigma} + \epsilon \cdot \delta_{\sigma}, \quad \delta_{\sigma} \sim \mathcal{N}(0, 1).
+\end{align}
+
+\subsection{Adjusting Priors}
+Informative priors can help guide the sampler towards regions of high posterior density.
+
+\begin{align}
+    \delta_k &\sim \mathcal{N}(1.0, 0.5^2).
+\end{align}
+
+\subsection{Alternative Sampling Methods}
+Exploring different samplers like the Slice sampler may resolve convergence issues in complex models.
+
+\begin{verbatim}
+with hierarchical_model:
+    step = pm.Slice(vars=[mu_helix, mu_glob, sigma_helix, sigma_glob])
+    trace = pm.sample(
+        4000,
+        tune=2000,
+        cores=4,
+        random_seed=42,
+        step=step,
+        return_inferencedata=True
+    )
+\end{verbatim}
+
+\section{Conclusion}
+The hierarchical Bayesian model effectively captures the dependencies between monomer and dimer states through the introduction of hyperparameters. By defining a joint probability distribution encompassing both parameters and hyperparameters, the model provides a nuanced understanding of the underlying biological processes. Despite initial convergence challenges, strategic adjustments and diagnostic evaluations ensure robust and reliable inference, underscoring the utility of hierarchical modeling in complex biological data analysis.
+
+\section{References}
+\begin{thebibliography}{9}
+\bibitem{gelman1992inference}
+Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., \& Rubin, D. B. (2013). \textit{Bayesian Data Analysis} (3rd ed.). CRC Press.
+
+\bibitem{arviZ}
+ArviZ Development Team. (2019). \textit{ArviZ: Exploratory Analysis of Bayesian Models}. \url{https://arxiv.org/abs/1903.08008}
+
+\end{thebibliography}
+
+\end{document}

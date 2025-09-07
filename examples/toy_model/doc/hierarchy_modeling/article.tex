@@ -1,0 +1,107 @@
+\documentclass{article}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{bm} % For bold math symbols
+
+\title{Bayesian Hierarchical Modeling for Inferring Dynamic and Structurally Heterogeneous Protein Complex Structures}
+\author{Assistant}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document presents a Bayesian hierarchical modeling framework for inferring the structures of dynamic and structurally heterogeneous protein complexes. We model the assembly hierarchically: dimers form the basic units, pairs of dimers assemble into tetramers, and multiple units combine into a non-symmetrical super structure. Experimental data (e.g., FRET, SAXS, cryo-EM) is available at each level, varying in type, resolution, and sparsity. We formulate a rigorous probabilistic model that integrates all data, propagates uncertainties across levels, and infers the full structure starting from any level. This version includes detailed mathematical derivations, likelihood formulations, and inference challenges.
+\end{abstract}
+
+\section{Introduction}
+Protein complexes often exhibit dynamic behavior and structural heterogeneity, complicating their structural elucidation. Experimental data, such as Förster Resonance Energy Transfer (FRET) distances, Small-Angle X-ray Scattering (SAXS) profiles, and cryo-Electron Microscopy (cryo-EM) density maps, provide partial insights at different scales. We propose a Bayesian hierarchical model to integrate these diverse data sources, capturing the hierarchical assembly from dimers to tetramers to the full complex. Our approach accounts for data uncertainties, sparsity, and dependencies between structural levels, aiming to infer the complete structure with quantified uncertainties.
+
+\section{Hierarchical Structure and Parameters}
+The protein complex is assembled in a three-level hierarchy:
+\begin{enumerate}
+    \item \textbf{Dimer Level}: Two proteins form a dimer, the fundamental structural unit.
+    \item \textbf{Tetramer Level}: Two dimers combine into a tetramer.
+    \item \textbf{Super Structure Level}: Multiple units (e.g., tetramers) form a large, non-symmetrical complex.
+\end{enumerate}
+
+\subsection{Parameter Definitions}
+We define parameters at each level:
+\begin{itemize}
+    \item \textbf{Dimer Parameters}, \(\theta_d = \{\mathbf{r}_{d,i}, \mathbf{\Omega}_{d,i}\}_{i=1}^{N_d}\):
+    \begin{itemize}
+        \item \(\mathbf{r}_{d,i} \in \mathbb{R}^3\): Atomic coordinates of protein \(i\) in the dimer.
+        \item \(\mathbf{\Omega}_{d,i} \in SO(3)\): Orientation of protein \(i\) (represented as a rotation matrix).
+        \item \(N_d\): Number of dimers (e.g., if modeling multiple dimer instances).
+    \end{itemize}
+    \item \textbf{Tetramer Parameters}, \(\theta_t = \{\mathbf{r}_{t,j}, \mathbf{\Omega}_{t,j}, \phi_{t,j}\}_{j=1}^{N_t}\):
+    \begin{itemize}
+        \item \(\mathbf{r}_{t,j} \in \mathbb{R}^3\): Center-of-mass position of tetramer \(j\).
+        \item \(\mathbf{\Omega}_{t,j} \in SO(3)\): Orientation of tetramer \(j\).
+        \item \(\phi_{t,j} \in \mathbb{R}^k\): Internal degrees of freedom (e.g., angles between dimers).
+        \item \(N_t\): Number of tetramers.
+    \end{itemize}
+    \item \textbf{Super Structure Parameters}, \(\theta_s = \{\mathbf{r}_{s,k}, \mathbf{\Omega}_{s,k}, \psi_{s,k}\}_{k=1}^{N_s}\):
+    \begin{itemize}
+        \item \(\mathbf{r}_{s,k} \in \mathbb{R}^3\): Position of unit \(k\) (e.g., tetramer or other subunit).
+        \item \(\mathbf{\Omega}_{s,k} \in SO(3)\): Orientation of unit \(k\).
+        \item \(\psi_{s,k} \in \mathbb{R}^m\): Parameters for higher-order interactions or deformations.
+        \item \(N_s\): Number of units in the super structure.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Hierarchical Dependencies}
+Parameters are linked via conditional priors:
+\begin{itemize}
+    \item \(p(\theta_t \mid \theta_d)\): Tetramer structure depends on dimer structures. For example, \(\mathbf{r}_{t,j}\) and \(\mathbf{\Omega}_{t,j}\) are functions of the positions and orientations of the constituent dimers.
+    \item \(p(\theta_s \mid \theta_t, \theta_d)\): Super structure depends on tetramers and, indirectly, dimers. This reflects the physical assembly process.
+\end{itemize}
+
+These dependencies propagate uncertainties: errors in \(\theta_d\) affect \(\theta_t\), which in turn affect \(\theta_s\).
+
+\section{Incorporating Experimental Data}
+Experimental data informs each level:
+\begin{itemize}
+    \item \(D_d\): Dimer-specific data (e.g., FRET distances between residues).
+    \item \(D_t\): Tetramer-specific data (e.g., SAXS scattering profiles).
+    \item \(D_s\): Super structure data (e.g., cryo-EM density maps).
+\end{itemize}
+
+\subsection{Likelihood Functions}
+Likelihoods connect data to parameters:
+\begin{itemize}
+    \item \(p(D_d \mid \theta_d)\): Probability of dimer data given dimer parameters.
+    \item \(p(D_t \mid \theta_t, \theta_d)\): Tetramer data likelihood, potentially depending on dimer details.
+    \item \(p(D_s \mid \theta_s, \theta_t, \theta_d)\): Super structure likelihood, integrating all levels.
+\end{itemize}
+
+\subsubsection{Detailed Likelihood Examples}
+\paragraph{FRET Data (\(D_d\))}:
+\begin{itemize}
+    \item Data: Distance \(d_{ij}\) between residues \(i\) and \(j\) with uncertainty \(\sigma_{ij}\).
+    \item Model: Distance computed from \(\theta_d\) as \(\text{dist}(\theta_d, i, j) = \|\mathbf{r}_{d,i} - \mathbf{r}_{d,j}\|\).
+    \item Likelihood:
+    \[
+    p(d_{ij} \mid \theta_d) = \frac{1}{\sqrt{2\pi \sigma_{ij}^2}} \exp\left( -\frac{1}{2\sigma_{ij}^2} \left[ d_{ij} - \text{dist}(\theta_d, i, j) \right]^2 \right).
+    \]
+\end{itemize}
+
+\paragraph{SAXS Data (\(D_t\) or \(D_s\))}:
+\begin{itemize}
+    \item Data: Scattering intensity \(I(q)\) at momentum transfer \(q\), with noise covariance \(\Sigma\).
+    \item Model: Forward model \(I(q; \theta)\) computes intensity from structure (e.g., Debye formula for \(\theta_t\)).
+    \item Likelihood:
+    \[
+    p(I(q) \mid \theta) = (2\pi)^{-M/2} |\Sigma|^{-1/2} \exp\left( -\frac{1}{2} [I(q) - I(q; \theta)]^\top \Sigma^{-1} [I(q) - I(q; \theta)] \right),
+    \]
+    where \(M\) is the number of \(q\)-points.
+\end{itemize}
+
+\section{Conclusion}
+This model integrates multi-level data, propagates uncertainties, and provides a flexible framework for protein complex inference. Its complexity demands advanced computational methods, but it offers a robust solution for structural biology challenges.
+
+\end{document}
