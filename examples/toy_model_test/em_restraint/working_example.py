@@ -29,7 +29,7 @@ except ImportError:
 
 
 # =====================================================================
-# MODIFIED SCORING FUNCTION FOR YOUR MCMC SIMULATION
+# MODIFIED SCORING FUNCTION FOR MCMC SIMULATION
 # =====================================================================
 def calculate_ccc_score(sphere_coords, sphere_radii, target_density_map, resolution, backend='cpu'):
     """
@@ -197,8 +197,8 @@ if __name__ == "__main__":
     print(f"Model has {len(ideal_coords)} total particles.")
 
     # 2. CREATE A DUMMY "EXPERIMENTAL" MAP FROM THE IDEAL MODEL
-    RESOLUTION = 15.0  # Resolution of the map in Angstroms
-    VOXEL_SIZE = 4.0   # Voxel size of the map in Angstroms/pixel
+    RESOLUTION = 50.0  # Resolution of the map in Angstroms
+    VOXEL_SIZE = 5.0   # Voxel size of the map in Angstroms/pixel
     BOX_SIZE = 800.0   # Box size of the map in Angstroms
     TARGET_MAP_FILE = "target_map.mrc"
     

@@ -53,6 +53,18 @@ class SimpleDistanceRestraint(IMP.pmi.restraints.RestraintBase):
               (particle1_name, particle2_name))
 
 #--------------------------------------------------------------------------
+# Simple EM restraint, read in an experimental map, for the model create a
+# simulated density map at the same resolution, voxel size and box size as the 
+# experimental map, and calculate the cross-correlation coefficient between
+# the two maps using IMP em module C++ code in file CoarseCC.cpp
+#--------------------------------------------------------------------------
+class SimpleEMRestraint(IMP.pmi.restraints.RestraintBase):
+    """A simple EM restraint that compares experimental and simulated density maps"""
+    def __init__(self, model, root_hier):
+        self.model = model
+        self.root_hier = root_hier
+
+#--------------------------------------------------------------------------
 # Modified System Builder using simple spheres
 #--------------------------------------------------------------------------
 class SimpleParticleSystemBuilder:
@@ -266,7 +278,7 @@ if __name__ == "__main__":
         monte_carlo_sample_objects=dof.get_movers(),
         output_objects=sf.output_objects,
         monte_carlo_steps=10,
-        number_of_frames=100,
+        number_of_frames=500,
         global_output_directory="output/"
     )
 
