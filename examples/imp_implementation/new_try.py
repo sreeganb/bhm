@@ -146,12 +146,30 @@ class ScoringFunction:
         # particle and a type 1 particle
         dr = SimpleDistanceRestraint(
             self.model, self.particles[0], self.particles[1],
-            distancemin=0.0, distancemax=49.0, kappa=1.0,
+            distancemin=0.0, distancemax=49.0, kappa=5.0,
             label="dist_type0_0_type1_0"
         )
         dr.add_to_model()
         self.output_objects.append(dr)
+
+        dr1 = SimpleDistanceRestraint(self.model, self.particles[1], self.particles[9],
+                                       distancemin=0.0, distancemax=39.0, kappa=5.0,
+                                       label="dist_type1_0_type2_0")
+        dr1.add_to_model()
+        self.output_objects.append(dr1)
         
+        dr2 = SimpleDistanceRestraint(self.model, self.particles[9], self.particles[16],
+                                       distancemin=0.0, distancemax=31.0, kappa=5.0,
+                                       label="dist_type2_0_type3_0")
+        dr2.add_to_model()
+        self.output_objects.append(dr2)
+        
+        dr3 = SimpleDistanceRestraint(self.model, self.particles[9], self.particles[17],
+                                       distancemin=0.0, distancemax=31.0, kappa=5.0,
+                                       label="dist_type2_0_type3_1")
+        dr3.add_to_model()
+        self.output_objects.append(dr3)
+
 #        # Get particles by type
 #        def get_particles_by_type(ptype):
 #            return [p for i, p in enumerate(self.particles) 
@@ -266,7 +284,7 @@ if __name__ == "__main__":
         monte_carlo_sample_objects=dof.get_movers(),
         output_objects=sf.output_objects,
         monte_carlo_steps=10,
-        number_of_frames=100,
+        number_of_frames=500,
         global_output_directory="output/"
     )
 
