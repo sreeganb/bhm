@@ -1,3 +1,4 @@
+from pyexpat import model
 import IMP
 import IMP.pmi
 import IMP.pmi.topology
@@ -7,6 +8,7 @@ import IMP.core
 import IMP.pmi.tools
 import IMP.pmi.output
 import IMP.pmi.restraints.stereochemistry
+import IMP.pmi.restraints.basic
 import IMP.pmi.restraints
 import IMP.pmi.dof
 import IMP.pmi.macros
@@ -128,8 +130,9 @@ class SimpleParticleSystemBuilder:
 # Scoring function class using PMI infrastructure
 #--------------------------------------------------------------------------
 class ScoringFunction:
-    def __init__(self, model, particles, particle_types, ntype, copy_numbers):
+    def __init__(self, model, hierarchy, particles, particle_types, ntype, copy_numbers):
         self.model = model
+        self.hierarchy = hierarchy
         self.particles = particles
         self.particle_types = particle_types
         self.ntype = ntype
@@ -216,6 +219,22 @@ class ScoringFunction:
 #        
 #        print(f"Added {len(restraints_added)} distance restraints")
         return dr
+    
+    def add_em_restraint(self, em_map_file="experimental_density.mrc"):
+        """Add EM restraint comparing to experimental density map"""
+        em_restraint = IMP.pmi.restraints.basic.em_arthur_restraint(
+            m=self.model,
+            hierarchy=self.hierarchy,
+            em_map_file=em_map_file,  # Path to experimental map
+            voxel_size=None,  # Will use the experimental map's voxel size
+            resolution=50.0,
+            weight=1.0,
+            label="cryo_em_fit"
+            )
+
+        # Add to restraint set
+        em_restraint.add_to_model()
+        self.output_objects.append(em_restraint)
 
 #--------------------------------------------------------------------------
 # Main execution
@@ -231,10 +250,10 @@ if __name__ == "__main__":
     builder = SimpleParticleSystemBuilder(ntype, copy_numbers, radii, colors)
     mdl, hierarchy, particles, particle_types, movers = builder.build_system(box_size=400.0)
 
-    print("leaves of the hierarchy:", hierarchy.get_children())
-
-    print(f"Created {len(particles)} particles")
-    
+    particles = hierarchy.get_children()
+    print(f"particles extracted: {len(particles)}")
+    print("coordinates of the particles: ", [IMP.core.XYZ(p).get_coordinates() for p in particles])
+    print("radii of the particles: ", [IMP.core.XYZR(p).get_radius() for p in particles])
     # Shuffle configuration
     IMP.pmi.tools.shuffle_configuration(hierarchy, max_translation=20.0)
     
@@ -244,11 +263,12 @@ if __name__ == "__main__":
     output.write_rmf("initial_particles.rmf3")
     
     # Set up scoring function
-    sf = ScoringFunction(mdl, particles, particle_types, ntype, copy_numbers)
-    
+    sf = ScoringFunction(mdl, hierarchy, particles, particle_types, ntype, copy_numbers)
+
     # Add excluded volume using PMI's implementation
-    sf.add_excluded_volume_restraint()
-    sf.add_pair_distance_restraints()
+#    sf.add_excluded_volume_restraint()
+#    sf.add_pair_distance_restraints()
+    sf.add_em_restraint(em_map_file="target_map.mrc")
 #    
 #    # Define interaction parameters: (type1, type2): (min_dist, max_dist, kappa)
 #    # Type 0 = A (8 copies), Type 1 = B (8 copies), Type 2 = C (16 copies)
