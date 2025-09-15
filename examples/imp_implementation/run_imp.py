@@ -230,7 +230,9 @@ if __name__ == "__main__":
     # Build system with simple particles
     builder = SimpleParticleSystemBuilder(ntype, copy_numbers, radii, colors)
     mdl, hierarchy, particles, particle_types, movers = builder.build_system(box_size=400.0)
-    
+
+    print("leaves of the hierarchy:", hierarchy.get_children())
+
     print(f"Created {len(particles)} particles")
     
     # Shuffle configuration
@@ -296,7 +298,7 @@ if __name__ == "__main__":
         monte_carlo_sample_objects=dof.get_movers(),
         output_objects=sf.output_objects,
         monte_carlo_steps=10,
-        number_of_frames=500,
+        number_of_frames=10,
         global_output_directory="output/"
     )
 

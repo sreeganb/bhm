@@ -311,7 +311,7 @@ def main():
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "pair", "tetramer", "octet", "full","pair", "tetramer", "octet", "full",]
     #mcmc_steps = [50000, 10000, 10000, 2000, 50000, 20000, 20000, 5000, 50000, 50000, 50000, 5000]
     sampler_sequence = ["pair", "tetramer", "octet", "full", "tetramer", "octet", "full","tetramer", "octet", "full",]
-    mcmc_steps = [50000, 50000, 50000, 3000, 40000, 40000, 5000, 50000, 50000, 5000]
+    mcmc_steps = [60000, 60000, 60000, 3000, 60000, 60000, 4000, 60000, 60000, 5000]
     
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
@@ -421,6 +421,23 @@ def main():
             if os.path.isdir(os.path.join(output_folder, item)) and "sampler_results" in item:
                 print(f"  - {item}/")
     print(f"{'='*80}")
+    
+    # New addition: convert the h5 trajectories to rmf3 using the script
+    # h5_to_rmf3.py for each sampler directory and each trajectory file
+    print("\nConverting .h5 trajectories to .rmf3 format...")
+    for item in sorted(os.listdir(output_folder)):
+        if os.path.isdir(os.path.join(output_folder, item)) and "sampler_results" in item:
+            sampler_dir = os.path.join(output_folder, item)
+            for file in os.listdir(sampler_dir):
+                if file.endswith(".h5") and "trajectory_chain_" in file:
+                    h5_file = os.path.join(sampler_dir, file)
+                    rmf3_file = h5_file.replace(".h5", ".rmf3")
+                    print(f"Converting {h5_file} to {rmf3_file}...")
+                    try:
+                        subprocess.run(["python", "h5_to_rmf3.py", h5_file, rmf3_file], check=True)
+                        print(f"Successfully converted to {rmf3_file}")
+                    except subprocess.CalledProcessError as e:
+                        print(f"Error converting {h5_file}: {e}")
 
 if __name__ == "__main__":
     main()

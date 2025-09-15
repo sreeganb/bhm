@@ -515,11 +515,11 @@ class FullSampler(BaseMCSampler):
         com = np.mean(combined_coords, axis=0)
         
         # Random translation
-        full_trans_step = 0.9 # Translation step size
+        full_trans_step = 0.25 # Translation step size
         displacement = np.random.normal(0, full_trans_step, 3)
 
         # Create a random vector passing through the COM
-        full_rot_step = 0.25
+        full_rot_step = 0.1
         rand_vec = np.random.normal(size=3)
         rand_vec /= np.linalg.norm(rand_vec) + 1e-10  # Normalize and avoid division by zero
         angle = np.random.normal(0, full_rot_step)
