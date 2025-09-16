@@ -2,10 +2,14 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{amsfonts}
+\usepackage{amsthm}  % Added for theorem environments
 \usepackage{bm}
 \usepackage{graphicx}
 \usepackage{geometry}
 \geometry{margin=1in}
+\usepackage{tikz}
+\usepackage{algorithm}
+\usepackage{algorithmic}
 \usepackage{tikz}
 \usetikzlibrary{3d,calc}
 \usetikzlibrary{arrows.meta,decorations.pathreplacing}
@@ -17,6 +21,11 @@
 \usetikzlibrary{shadows}
 \usetikzlibrary{angles,quotes}
 \usetikzlibrary{babel}
+
+% Define theorem environments
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}{Lemma}[section]
 
 \title{Cross-Correlation Coefficient for Electron Density Map Fitting:
 Mathematical Framework and Implementation}
@@ -398,5 +407,235 @@ framework presented here enables efficient computation of
 both the correlation score and its derivatives, facilitating 
 optimization of molecular structures against cryo-EM data through 
 energy minimization or molecular dynamics simulations.
+
+\section{Mathematical Foundations of Electron Microscopy Density Map Scoring in IMP: Introduction}
+This document provides a comprehensive mathematical analysis of electron microscopy (EM) 
+density map creation, comparison, and scoring as implemented in the Integrative Modeling Platform (IMP).
+
+\section{Fundamental Concepts}
+
+\subsection{Voxels and 3D Grids}
+A \textbf{voxel} (volumetric pixel) is the 3D equivalent of a pixel, representing a value in a regular 3D grid.
+
+\begin{definition}[Voxel]
+A voxel at grid position $(i, j, k)$ represents a cubic volume element with:
+\begin{itemize}
+    \item Grid indices: $(i, j, k) \in \mathbb{Z}^3$ where $0 \leq i < n_x$, $0 \leq j < n_y$, $0 \leq k < n_z$
+    \item World coordinates: $(x, y, z) \in \mathbb{R}^3$ 
+    \item Density value: $\rho(i, j, k) \in \mathbb{R}$
+\end{itemize}
+\end{definition}
+
+The transformation between grid indices and world coordinates:
+\begin{equation}
+\begin{pmatrix} x \\ y \\ z \end{pmatrix} = \begin{pmatrix} x_{\text{origin}} \\ y_{\text{origin}} \\ z_{\text{origin}} \end{pmatrix} + \begin{pmatrix} i \cdot v_s \\ j \cdot v_s \\ k \cdot v_s \end{pmatrix}
+\end{equation}
+where $v_s$ is the voxel size (spacing) in Angstroms.
+
+\subsection{Density Maps}
+A density map $D$ is a 3D scalar field:
+\begin{equation}
+D: \Omega \subset \mathbb{R}^3 \rightarrow \mathbb{R}
+\end{equation}
+where $\Omega$ is the spatial domain (bounding box).
+
+\section{Model Density Map Creation}
+
+\subsection{Coarse-Grained Model Representation}
+A coarse-grained model consists of $N$ particles, each with:
+\begin{itemize}
+    \item Position: $\mathbf{r}_i = (x_i, y_i, z_i)$
+    \item Radius: $R_i$
+    \item Mass/Weight: $w_i = R_i^3$ (proportional to volume)
+\end{itemize}
+
+\subsection{Two-Step Density Generation Process}
+
+\subsubsection{Step 1: Histogram Binning}
+The initial density is created by binning particles into voxels:
+
+\begin{equation}
+\rho_0(\mathbf{v}) = \sum_{i=1}^{N} w_i \cdot \delta_{\text{voxel}}(\mathbf{r}_i, \mathbf{v})
+\end{equation}
+
+where $\delta_{\text{voxel}}(\mathbf{r}_i, \mathbf{v})$ is 1 if particle $i$ falls in voxel $\mathbf{v}$, and 0 otherwise.
+
+In discrete form:
+\begin{equation}
+\rho_0(j, k, l) = \sum_{i=1}^{N} w_i \cdot \mathbb{1}_{[j,k,l]}(\mathbf{r}_i)
+\end{equation}
+
+where $\mathbb{1}_{[j,k,l]}$ is the indicator function for voxel $(j,k,l)$.
+
+\subsubsection{Step 2: Gaussian Blurring}
+The histogram is convolved with a Gaussian kernel to simulate resolution effects:
+
+\begin{equation}
+\rho_{\text{model}}(\mathbf{r}) = (\rho_0 * G_\sigma)(\mathbf{r})
+\end{equation}
+
+where the 3D Gaussian kernel is:
+\begin{equation}
+G_\sigma(\mathbf{r}) = \frac{1}{(2\pi\sigma^2)^{3/2}} \exp\left(-\frac{|\mathbf{r}|^2}{2\sigma^2}\right)
+\end{equation}
+
+\subsection{Resolution to Sigma Conversion}
+The relationship between experimental resolution and Gaussian sigma:
+\begin{equation}
+\sigma = \frac{\text{resolution}}{2\sqrt{2\ln(2)}} \approx \frac{\text{resolution}}{2.355}
+\end{equation}
+
+This comes from the Full Width at Half Maximum (FWHM) relationship:
+\begin{equation}
+\text{FWHM} = 2\sqrt{2\ln(2)} \cdot \sigma
+\end{equation}
+
+\section{Experimental Density Map}
+The experimental map $\rho_{\text{exp}}$ is obtained from cryo-EM reconstruction with:
+\begin{itemize}
+    \item Header information: dimensions $(n_x, n_y, n_z)$, origin, voxel size
+    \item Density values at each voxel
+    \item Resolution estimate
+\end{itemize}
+
+\section{Cross-Correlation Coefficient (CCC) Scoring}
+
+\subsection{Standard Cross-Correlation}
+The cross-correlation coefficient between experimental map $\rho_{\text{exp}}$ and model map $\rho_{\text{model}}$:
+
+\begin{equation}
+\text{CCC} = \frac{\sum_{\mathbf{v} \in \Omega} (\rho_{\text{exp}}(\mathbf{v}) - \bar{\rho}_{\text{exp}})(\rho_{\text{model}}(\mathbf{v}) - \bar{\rho}_{\text{model}})}{\sqrt{\sum_{\mathbf{v}} (\rho_{\text{exp}}(\mathbf{v}) - \bar{\rho}_{\text{exp}})^2} \sqrt{\sum_{\mathbf{v}} (\rho_{\text{model}}(\mathbf{v}) - \bar{\rho}_{\text{model}})^2}}
+\end{equation}
+
+where $\bar{\rho}$ denotes the mean density.
+
+\subsection{Thresholded Cross-Correlation}
+IMP uses a threshold to focus on significant density:
+
+\begin{equation}
+\text{CCC}_{\text{thresh}} = \frac{\sum_{\mathbf{v} \in \Omega_t} \rho_{\text{exp}}(\mathbf{v}) \cdot \rho_{\text{model}}(\mathbf{v}) - N_t \bar{\rho}_{\text{exp}} \bar{\rho}_{\text{model}}}{N_t \cdot \text{RMS}_{\text{exp}} \cdot \text{RMS}_{\text{model}}}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\Omega_t = \{\mathbf{v} : \rho_{\text{model}}(\mathbf{v}) > \theta\}$ (thresholded region)
+    \item $N_t = |\Omega_t|$ (number of voxels above threshold)
+    \item $\theta$ is typically set to $\text{dmin}_{\text{model}} - \epsilon$
+\end{itemize}
+
+\subsection{Scoring Function}
+The final score used for optimization:
+\begin{equation}
+S = \lambda \cdot (1 - \text{CCC})
+\end{equation}
+where $\lambda$ is a scale factor (typically positive), making the score minimize when CCC is maximized.
+
+\section{Padding and Map Alignment}
+
+\subsection{The Padding Problem}
+When two maps have different dimensions or origins, direct comparison is not possible. Consider:
+\begin{itemize}
+    \item Map 1: dimensions $(n_{x1}, n_{y1}, n_{z1})$, origin $\mathbf{o}_1$
+    \item Map 2: dimensions $(n_{x2}, n_{y2}, n_{z2})$, origin $\mathbf{o}_2$
+\end{itemize}
+
+\subsection{Padding Solution}
+Padding creates expanded maps with unified dimensions:
+
+\begin{algorithm}
+\caption{Map Padding Algorithm}
+\begin{algorithmic}
+\STATE \textbf{Input:} Maps $D_1$, $D_2$ with different dimensions
+\STATE \textbf{Output:} Padded maps $D_1'$, $D_2'$ with same dimensions
+\STATE
+\STATE 1. Compute merged bounding box:
+\STATE \quad $\text{BB}_{\text{merged}} = \text{BB}(D_1) \cup \text{BB}(D_2)$
+\STATE
+\STATE 2. Create new dimensions:
+\STATE \quad $n_x' = \max(n_{x1}, n_{x2})$
+\STATE \quad $n_y' = \max(n_{y1}, n_{y2})$
+\STATE \quad $n_z' = \max(n_{z1}, n_{z2})$
+\STATE
+\STATE 3. Create padded maps:
+\STATE \quad $D_1'[i,j,k] = \begin{cases} D_1[i,j,k] & \text{if } (i,j,k) \in D_1 \\ 0 & \text{otherwise} \end{cases}$
+\STATE \quad $D_2'[i,j,k] = \begin{cases} D_2[i,j,k] & \text{if } (i,j,k) \in D_2 \\ 0 & \text{otherwise} \end{cases}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Mathematical Representation of Padding}
+Padding can be represented as an embedding operation:
+\begin{equation}
+\iota: D \rightarrow D'
+\end{equation}
+where $D'$ is the padded space with:
+\begin{equation}
+D'(\mathbf{r}) = \begin{cases}
+D(\mathbf{r}) & \text{if } \mathbf{r} \in \text{domain}(D) \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+\section{Box Dimensions and Bounding Boxes}
+
+\subsection{Bounding Box Definition}
+A bounding box $\text{BB}$ for a density map is defined by:
+\begin{equation}
+\text{BB} = [\mathbf{r}_{\min}, \mathbf{r}_{\max}] = [x_{\min}, x_{\max}] \times [y_{\min}, y_{\max}] \times [z_{\min}, z_{\max}]
+\end{equation}
+
+For a particle-based model:
+\begin{align}
+x_{\min} &= \min_i(x_i - R_i) - \text{padding} \\
+x_{\max} &= \max_i(x_i + R_i) + \text{padding}
+\end{align}
+where padding is typically $3 \times \max_i(R_i)$.
+
+\subsection{Grid Dimensions from Bounding Box}
+Given a bounding box and voxel size $v_s$:
+\begin{align}
+n_x &= \left\lceil \frac{x_{\max} - x_{\min}}{v_s} \right\rceil \\
+n_y &= \left\lceil \frac{y_{\max} - y_{\min}}{v_s} \right\rceil \\
+n_z &= \left\lceil \frac{z_{\max} - z_{\min}}{v_s} \right\rceil
+\end{align}
+
+\section{Local Cross-Correlation}
+For local CCC, statistics are computed only over the model region:
+\begin{align}
+\mu_{\text{local}} &= \frac{1}{N_t} \sum_{\mathbf{v} \in \Omega_t} \rho(\mathbf{v}) \\
+\sigma_{\text{local}}^2 &= \frac{1}{N_t} \sum_{\mathbf{v} \in \Omega_t} (\rho(\mathbf{v}) - \mu_{\text{local}})^2
+\end{align}
+
+\section{Derivatives for Optimization}
+The gradient of the CCC with respect to particle positions:
+\begin{equation}
+\frac{\partial \text{CCC}}{\partial \mathbf{r}_i} = \frac{2w_i}{\sigma^2} \cdot \frac{\lambda}{\text{norm}} \sum_{\mathbf{v}} \rho_{\text{exp}}(\mathbf{v}) \cdot (\mathbf{r}_i - \mathbf{v}) \cdot G_\sigma(|\mathbf{r}_i - \mathbf{v}|)
+\end{equation}
+where norm = $N_{\text{vox}} \cdot \text{RMS}_{\text{exp}} \cdot \text{RMS}_{\text{model}}$.
+
+\section{Implementation Considerations}
+
+\subsection{Memory Efficiency}
+For sparse maps, use dictionary-based storage:
+\begin{equation}
+\text{Memory} = O(N_{\text{non-zero}}) \text{ instead of } O(n_x \cdot n_y \cdot n_z)
+\end{equation}
+
+\subsection{Computational Complexity}
+\begin{itemize}
+    \item Histogram: $O(N)$ where $N$ is number of particles
+    \item Gaussian blur: $O(n_x \cdot n_y \cdot n_z \cdot k^3)$ where $k$ is kernel size
+    \item CCC calculation: $O(n_x \cdot n_y \cdot n_z)$
+\end{itemize}
+
+\section{Summary}
+The EM density map scoring in IMP involves:
+\begin{enumerate}
+    \item Creating model density maps from particle positions using histogram binning and Gaussian blurring
+    \item Handling different map sizes through padding operations
+    \item Computing cross-correlation coefficients with optional thresholding
+    \item Optimizing particle positions using gradient-based methods
+\end{enumerate}
+
+The mathematical framework ensures robust comparison between experimental and model densities despite differences in sampling, resolution, and spatial extent.
 
 \end{document}

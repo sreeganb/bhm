@@ -204,6 +204,9 @@ if __name__ == "__main__":
     
     create_dummy_map_from_model(ideal_coords, ideal_radii, RESOLUTION, VOXEL_SIZE, BOX_SIZE, filename=TARGET_MAP_FILE)
 
+    mrcfile.validate(TARGET_MAP_FILE)
+    print(f"Dummy target map '{TARGET_MAP_FILE}' created and validated.")
+    
     # 3. LOAD THE TARGET MAP (this would be done once before an MCMC loop)
     target_map = parse_density(TARGET_MAP_FILE)
 

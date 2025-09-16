@@ -226,7 +226,6 @@ class ScoringFunction:
             m=self.model,
             hierarchy=self.hierarchy,
             em_map_file=em_map_file,  # Path to experimental map
-            voxel_size=None,  # Will use the experimental map's voxel size
             resolution=50.0,
             weight=1.0,
             label="cryo_em_fit"
