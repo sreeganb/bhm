@@ -174,8 +174,61 @@ def create_dummy_map_from_model(coords, radii, resolution, voxel_size, box_size,
     
     # Save as an MRC file
     with mrcfile.new(filename, overwrite=True) as mrc:
+        # Set the data first
         mrc.set_data(simulated_density.astype(np.float32))
+       
+        # Set voxel size (this is the key metadata!)
         mrc.voxel_size = voxel_size
+       
+        # Set unit cell dimensions (should match the actual map size)
+        # The unit cell size = grid_dimensions * voxel_size
+        cell_size = grid_dim * voxel_size
+        mrc.header.cella.x = cell_size
+        mrc.header.cella.y = cell_size
+        mrc.header.cella.z = cell_size
+       
+        # Set unit cell angles (90 degrees for orthogonal)
+        mrc.header.cellb.alpha = 90.0
+        mrc.header.cellb.beta = 90.0
+        mrc.header.cellb.gamma = 90.0
+       
+        # Set space group (1 = P1, most common for EM maps)
+        mrc.header.ispg = 1
+       
+        # Set the map origin (center the map)
+        mrc.header.nxstart = -grid_dim // 2
+        mrc.header.nystart = -grid_dim // 2
+        mrc.header.nzstart = -grid_dim // 2
+       
+        # Set labels to store resolution information
+        # MRC format allows up to 10 labels of 80 characters each
+        label1 = f"Resolution: {resolution:.2f} Angstrom"
+        label2 = f"Voxel size: {voxel_size:.3f} Angstrom/pixel"
+        label3 = f"Box size: {box_size:.1f} Angstrom"
+        label4 = f"Grid: {grid_dim}x{grid_dim}x{grid_dim}"
+        label5 = f"Generated from {len(coords)} spheres"
+       
+        # Convert to byte strings and pad to 80 characters
+        mrc.header.label[0] = label1.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[1] = label2.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[2] = label3.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[3] = label4.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[4] = label5.ljust(80).encode('utf-8')[:80]
+       
+        # Set the number of labels used
+        mrc.header.nlabl = 5
+       
+        # Ensure header statistics are up to date
+        mrc.update_header_stats()
+       
+        # Print confirmation of metadata
+        print(f"MRC metadata set:")
+        print(f"  Voxel size: {mrc.voxel_size}")
+        print(f"  Grid dimensions: {mrc.header.nx} x {mrc.header.ny} x {mrc.header.nz}")
+        print(f"  Cell dimensions: {mrc.header.cella}")
+        print(f"  Map origin: ({mrc.header.nxstart}, {mrc.header.nystart}, {mrc.header.nzstart})")
+        print(f"  Space group: {mrc.header.ispg}")
+        print(f"  Labels: {mrc.header.nlabl} set")
     
     print("Dummy map created successfully.")
     return simulated_density
