@@ -73,7 +73,8 @@ class SimpleParticleSystemBuilder:
     def __init__(self, ntype, copy_numbers, radii, colors):
         self.ntype = ntype
         self.copy_numbers = copy_numbers
-        self.radii = radii  # radius for each particle type
+        self.radii = radii   # radius for each particle type
+        self.density = 0.001 # dummy density to designate a mass value 
         self.colors = colors
 
     def build_system(self, box_size=400.0):
@@ -112,7 +113,7 @@ class SimpleParticleSystemBuilder:
                 h = IMP.atom.Hierarchy.setup_particle(mdl, p)
                 
                 # Add mass (optional, for dynamics)
-                mass = 4.0/3.0 * np.pi * (self.radii[ptype]**3)
+                mass = 4.0/3.0 * np.pi * (self.radii[ptype]**3) * self.density
                 IMP.atom.Mass.setup_particle(mdl, p, mass)
                 
                 particles.append(p)
@@ -222,13 +223,12 @@ class ScoringFunction:
     
     def add_em_restraint(self, em_map_file="experimental_density.mrc"):
         """Add EM restraint comparing to experimental density map"""
-        em_restraint = IMP.pmi.restraints.basic.em_arthur_restraint(
+        em_restraint = IMP.pmi.restraints.basic.EMArthurRestraint(
             m=self.model,
             hierarchy=self.hierarchy,
             em_map_file=em_map_file,  # Path to experimental map
             resolution=50.0,
-            weight=1.0,
-            label="cryo_em_fit"
+            weight=1.0
             )
 
         # Add to restraint set
@@ -265,8 +265,8 @@ if __name__ == "__main__":
     sf = ScoringFunction(mdl, hierarchy, particles, particle_types, ntype, copy_numbers)
 
     # Add excluded volume using PMI's implementation
-#    sf.add_excluded_volume_restraint()
-#    sf.add_pair_distance_restraints()
+    sf.add_excluded_volume_restraint()
+    sf.add_pair_distance_restraints()
     sf.add_em_restraint(em_map_file="target_map.mrc")
 #    
 #    # Define interaction parameters: (type1, type2): (min_dist, max_dist, kappa)
@@ -277,7 +277,7 @@ if __name__ == "__main__":
 #        (1, 2): (6.0, 12.0, 2.0),   # B-C interactions
 #        # Add more as needed
 #    }
-#    
+#
 #    sf.add_pair_distance_restraints(interactions)
 #    
 #    # Set up degrees of freedom using PMI
@@ -316,7 +316,7 @@ if __name__ == "__main__":
         root_hier=hierarchy,
         monte_carlo_sample_objects=dof.get_movers(),
         output_objects=sf.output_objects,
-        monte_carlo_steps=10,
+        monte_carlo_steps=2,
         number_of_frames=10,
         global_output_directory="output/"
     )

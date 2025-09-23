@@ -12,6 +12,8 @@ import math
 import numpy as np
 import scipy
 import mrcfile
+import IMP 
+import IMP.em
 
 # This script does not require ProDy for the coarse-grained example,
 # but the original functions keep it as a dependency.
@@ -133,6 +135,61 @@ def pairwise_correlation_gpu(A, B):
     bm = B - cp.mean(B)
     return cp.sum(am * bm) / (cp.sqrt(cp.sum(am**2)) * cp.sqrt(cp.sum(bm**2)))
 
+def save_as_imp_mrc(coords, weights, bins, resolution, voxel_size, filename="simulated_map.mrc"):
+    """Create a projected density based on weighted histograms and save as IMP density map"""
+    
+    # Create the histogram and blur it
+    img_, _ = np.histogramdd(coords, weights=weights, bins=bins)
+    img_ = np.swapaxes(img_, 0, 2)  # Match MRC format
+    sigma = resolution / (4 * math.sqrt(2 * math.log(2))) / voxel_size
+    blurred_density = scipy.ndimage.gaussian_filter(img_, sigma, truncate=4).astype(np.float32)
+    
+    print(f"Blurred density shape: {blurred_density.shape}")
+    print(f"Blurred density range: [{blurred_density.min():.6f}, {blurred_density.max():.6f}]")
+    
+    # Create IMP density map with proper initialization
+    nx, ny, nz = blurred_density.shape
+    
+    # Calculate the physical dimensions from bins
+    x_extent = bins[0][-1] - bins[0][0]
+    y_extent = bins[1][-1] - bins[1][0] 
+    z_extent = bins[2][-1] - bins[2][0]
+    
+    # Set origin (center of the map)
+    origin_x = bins[0][0]
+    origin_y = bins[1][0]
+    origin_z = bins[2][0]
+    
+    print(f"Map dimensions: {nx}x{ny}x{nz}")
+    print(f"Physical extents: {x_extent:.1f} x {y_extent:.1f} x {z_extent:.1f}")
+    print(f"Origin: ({origin_x:.1f}, {origin_y:.1f}, {origin_z:.1f})")
+    
+    # Create IMP density map using create_density_map
+    bbox = IMP.algebra.BoundingBox3D(
+        IMP.algebra.Vector3D(origin_x, origin_y, origin_z),
+        IMP.algebra.Vector3D(bins[0][-1], bins[1][-1], bins[2][-1])
+    )
+    
+    model_map = IMP.em.create_density_map(bbox, voxel_size)
+    
+    # Fill the IMP density map with numpy data
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                model_map.set_value(i, j, k, float(blurred_density[i, j, k]))
+    
+    # Set resolution metadata
+    model_map.get_header_writable().set_resolution(resolution)
+    
+    # Calculate RMS for the map
+    model_map.calcRMS()
+    
+    # Save the map
+    IMP.em.write_map(model_map, filename)
+    print(f"IMP density map saved as '{filename}'")
+    
+    return model_map
+       
 # =====================================================================
 # EXAMPLE RUNNER
 # =====================================================================
@@ -159,6 +216,8 @@ def create_dummy_map_from_model(coords, radii, resolution, voxel_size, box_size,
     print(f"Using resolution: {resolution} Å, voxel size: {voxel_size} Å")
     
     simulated_density = calc_projection_cpu(coords, weights, bins, resolution)
+    
+    save_as_imp_mrc(coords, weights, bins, resolution, voxel_size)
     
     # Debug: Check density statistics
     print(f"Raw density stats:")

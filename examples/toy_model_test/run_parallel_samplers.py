@@ -310,9 +310,11 @@ def main():
     #mcmc_steps = [5000, 5000, 5000, 5000]
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "pair", "tetramer", "octet", "full","pair", "tetramer", "octet", "full",]
     #mcmc_steps = [50000, 10000, 10000, 2000, 50000, 20000, 20000, 5000, 50000, 50000, 50000, 5000]
-    sampler_sequence = ["pair", "tetramer", "octet", "full", "tetramer", "octet", "full","tetramer", "octet", "full",]
-    mcmc_steps = [60000, 60000, 60000, 3000, 60000, 60000, 4000, 60000, 60000, 5000]
+#    sampler_sequence = ["pair", "tetramer", "octet", "full", "tetramer", "octet", "full","tetramer", "octet", "full",]
+#    mcmc_steps = [60000, 60000, 60000, 3000, 60000, 60000, 4000, 60000, 60000, 5000]
     
+    sampler_sequence = ["pair", "tetramer", "octet", "full", "octet", "full", "tetramer", "full",]
+    mcmc_steps = [80000, 80000, 80000, 5000, 60000, 5500, 60000, 7500]
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
     # mcmc_steps = [500000, 500000, 300000, 200000, 200000]

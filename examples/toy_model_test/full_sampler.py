@@ -515,11 +515,11 @@ class FullSampler(BaseMCSampler):
         com = np.mean(combined_coords, axis=0)
         
         # Random translation
-        full_trans_step = 0.25 # Translation step size
+        full_trans_step = 0.1 # Translation step size
         displacement = np.random.normal(0, full_trans_step, 3)
 
         # Create a random vector passing through the COM
-        full_rot_step = 0.1
+        full_rot_step = 0.05
         rand_vec = np.random.normal(size=3)
         rand_vec /= np.linalg.norm(rand_vec) + 1e-10  # Normalize and avoid division by zero
         angle = np.random.normal(0, full_rot_step)
@@ -573,28 +573,31 @@ class FullSampler(BaseMCSampler):
         sphere_coords = np.vstack(all_coords)
         sphere_radii = np.concatenate(all_radii)
         
-        out_penalty = 0.0
-        for coords in [positions.get('A', np.array([])), positions.get('B', np.array([])), positions.get('C', np.array([]))]:
-            if len(coords) > 0:
-                out = np.any((coords < self.box_min) | (coords > self.box_max), axis=1)
-                out_penalty += np.sum(out) * 1000.0  # Large penalty per out-of-bounds particle
-        if out_penalty > 0:
-            return 100.0 + out_penalty, {"correlation": 0.0}  # Worse than CCC=0
+        # **NEW: Center particles relative to map before bounds checking**
+        particle_com = np.mean(sphere_coords, axis=0)
+        map_center = np.array([0.0, 0.0, 0.0])  # Your map is centered at origin
+        translation = map_center - particle_com
+        centered_coords = sphere_coords + translation
         
-        # Calculate cross-correlation coefficient
+        # Check bounds on centered coordinates
+        out_penalty = 0.0
+        out_of_bounds = np.any((centered_coords < self.box_min) | (centered_coords > self.box_max), axis=1)
+        out_penalty = np.sum(out_of_bounds) * 1000.0
+        
+        if out_penalty > 0:
+            return 100.0 + out_penalty, {"correlation": 0.0}
+        
+        # Calculate cross-correlation coefficient using centered coordinates
         ccc = self.calculate_ccc_score(
-            sphere_coords, sphere_radii, 
+            centered_coords, sphere_radii, 
             self.target_density_map, self.resolution, 'cpu'
         )
+
+        # Convert to minimization problem
+        score = 500 * (1 - ccc)
         
-        # Instead of normalization, change to 1-ccc so that the ideal score is 0 and 
-        # any deviation increase the score to be > 0.
-        score = 100*(1 - ccc)
-        
-        # Include the excluded volume negative log likelihood
+        # Add excluded volume using ORIGINAL positions (not centered ones)
         ex_score = self.excluded_volume_nll(positions)
-        
-        # sum up excluded volume and CCC scores
         score += ex_score
         
         info = {"correlation": ccc}
@@ -648,7 +651,8 @@ class FullSampler(BaseMCSampler):
 
         # MCMC parameters
         move_types = ['tetramer', 'octet', 'full']
-        move_probs = [0.12, 0.18, 0.7]
+#        move_probs = [0.12, 0.18, 0.7]
+        move_probs = [0.4, 0.4, 0.2]
         temp_start, temp_end = 10.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
