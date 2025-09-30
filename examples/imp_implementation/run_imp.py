@@ -1,7 +1,5 @@
-from pyexpat import model
 import IMP
 import IMP.pmi
-import IMP.pmi.topology
 import IMP.atom
 import IMP.algebra
 import IMP.core
@@ -14,6 +12,20 @@ import IMP.pmi.dof
 import IMP.pmi.macros
 import numpy as np
 from simple_rex import SimpleReplicaExchange
+#import IMP.pmi.restraints.em_arthur
+
+
+#--------------------------------------------------------------------------
+# Distance restraint for ambiguous pairs of particles based on a nearest few
+# particle approach
+#--------------------------------------------------------------------------
+#class AmbiguousPairDistanceRestraint(IMP.pmi.restraints.RestraintBase):
+#    """Distance restraint where we compute the matrix of distances between all particles
+#    and then look for the ones that are smallest in the row and column corresponding 
+#    to the particles in question. First create a 
+#    """
+    
+
 
 #--------------------------------------------------------------------------
 # Simple Distance Restraint Class that works with PMI infrastructure
@@ -76,7 +88,7 @@ class SimpleParticleSystemBuilder:
         self.radii = radii  # radius for each particle type
         self.colors = colors
 
-    def build_system(self, box_size=400.0):
+    def build_system(self, box_size=200.0):
         """Build system with simple spherical particles"""
         mdl = IMP.Model()
         
@@ -222,17 +234,19 @@ class ScoringFunction:
     
     def add_em_restraint(self, em_map_file="experimental_density.mrc"):
         """Add EM restraint comparing to experimental density map"""
-        em_restraint = IMP.pmi.restraints.basic.em_arthur_restraint(
-            m=self.model,
-            hierarchy=self.hierarchy,
-            em_map_file=em_map_file,  # Path to experimental map
+        # Create the restraint
+        # Create restraint directly
+        em_restraint = IMP.pmi.restraints.basic.EMArthurRestraint(
+            model=self.model,
+            hierarchy=self.hierarchy, 
+            exp_map=em_map_file,
             resolution=50.0,
-            weight=1.0,
-            label="cryo_em_fit"
-            )
+            weight=100.0,
+            label="EM1"
+        )
 
-        # Add to restraint set
-        em_restraint.add_to_model()
+        # Add to model
+        em_restraint.add_to_model()        
         self.output_objects.append(em_restraint)
 
 #--------------------------------------------------------------------------
@@ -247,14 +261,17 @@ if __name__ == "__main__":
     
     # Build system with simple particles
     builder = SimpleParticleSystemBuilder(ntype, copy_numbers, radii, colors)
-    mdl, hierarchy, particles, particle_types, movers = builder.build_system(box_size=400.0)
+    mdl, hierarchy, particles, particle_types, movers = builder.build_system(box_size=200.0)
 
     particles = hierarchy.get_children()
     print(f"particles extracted: {len(particles)}")
     print("coordinates of the particles: ", [IMP.core.XYZ(p).get_coordinates() for p in particles])
     print("radii of the particles: ", [IMP.core.XYZR(p).get_radius() for p in particles])
+    
     # Shuffle configuration
-    IMP.pmi.tools.shuffle_configuration(hierarchy, max_translation=20.0)
+    # Now we need to shuffle configurations within a box of size 800 or so
+    # create a bounding box 
+    IMP.pmi.tools.shuffle_configuration(hierarchy, max_translation=2.0)
     
     # Save initial configuration
     output = IMP.pmi.output.Output()
@@ -287,19 +304,6 @@ if __name__ == "__main__":
     #sm = IMP.core.SerialMover(movers)
     print(f"Degrees of freedom: {dof.get_movers()}")
 #
-#    # Create flexible beads or rigid bodies
-#    for particle in particles:
-#        # Make each particle flexible (it needs to be a hierarchy)
-#        h = IMP.atom.Hierarchy(mdl, particle)
-#        dof.create_flexible_bead(h, max_trans=5.0)
-#        
-#    print(f"Degrees of freedom: {dof.get_movers()}")
-#    
-#    # Save shuffled configuration
-#    output_shuffled = IMP.pmi.output.Output()
-#    output_shuffled.init_rmf("shuffled_particles.rmf3", [hierarchy])
-#    output_shuffled.write_rmf("shuffled_particles.rmf3")
-#    
 #    # Run replica exchange using PMI's built-in functionality
 #    rex = IMP.pmi.macros.ReplicaExchange(
 #        mdl, 
@@ -310,14 +314,14 @@ if __name__ == "__main__":
 #        number_of_frames=100,
 #        global_output_directory="output/",
 #        atomistic=False)
-    
+    dof.optimize_flexible_beads(1000)
     rex = SimpleReplicaExchange(
         model=mdl,
         root_hier=hierarchy,
         monte_carlo_sample_objects=dof.get_movers(),
         output_objects=sf.output_objects,
-        monte_carlo_steps=10,
-        number_of_frames=10,
+        monte_carlo_steps=1,
+        number_of_frames=2,
         global_output_directory="output/"
     )
 

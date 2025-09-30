@@ -136,49 +136,85 @@ def pairwise_correlation_gpu(A, B):
 # =====================================================================
 # EXAMPLE RUNNER
 # =====================================================================
-def create_dummy_map_from_model(coords, radii, resolution, voxel_size, box_size, filename="target_map.mrc"):
-    """Generates and saves a simulated .mrc map from a coarse-grained model."""
+def create_dummy_map_from_model(coords, radii, resolution, voxel_size, 
+                                box_size, filename="target_map.mrc"):
+    """Generates and saves a simulated .mrc map from a coarse-grained model.
+       Coordinate frame: bins span [-box_size/2, +box_size/2] uniformly; 
+       origin (0,0,0) at box center.
+       Header origin is set to -box_size/2 so voxel (0,0,0) corresponds 
+       to (-L/2 + Δ/2) + shift semantics.
+    """
     print(f"Creating a dummy target map '{filename}'...")
-    
-    # Debug: Check coordinate bounds
-    min_coords = np.min(coords, axis=0)
-    max_coords = np.max(coords, axis=0)
-    print(f"Coordinate bounds: X=[{min_coords[0]:.1f}, {max_coords[0]:.1f}], "
-          f"Y=[{min_coords[1]:.1f}, {max_coords[1]:.1f}], "
-          f"Z=[{min_coords[2]:.1f}, {max_coords[2]:.1f}]")
-    print(f"Map bounds: [-{box_size/2:.1f}, {box_size/2:.1f}]")
-    
-    # Create grid definition for the new map
-    grid_dim = int(box_size / voxel_size)
-    print(f"Grid dimensions: {grid_dim}x{grid_dim}x{grid_dim}")
-    bins = [np.linspace(-box_size/2, box_size/2, grid_dim + 1)] * 3
-    
-    # Generate the blurred density from the model
+    coords = np.asarray(coords, dtype=np.float32)
+    radii  = np.asarray(radii, dtype=np.float32)
     weights = radii**3
-    print(f"Weights range: [{np.min(weights):.1f}, {np.max(weights):.1f}]")
-    print(f"Using resolution: {resolution} Å, voxel size: {voxel_size} Å")
-    
-    simulated_density = calc_projection_cpu(coords, weights, bins, resolution)
-    
-    # Debug: Check density statistics
-    print(f"Raw density stats:")
-    print(f"  min={np.min(simulated_density):.6f}")
-    print(f"  max={np.max(simulated_density):.6f}")
-    print(f"  mean={np.mean(simulated_density):.6f}")
-    print(f"  std={np.std(simulated_density):.6f}")
-    print(f"  non-zero voxels: {np.count_nonzero(simulated_density)}/{simulated_density.size}")
-    
-    if np.std(simulated_density) < 1e-10:
-        print("ERROR: Generated density has zero variance!")
+
+    # Diagnostics
+    min_coords = coords.min(axis=0)
+    max_coords = coords.max(axis=0)
+    print(f"Coordinate bounds: X=[{min_coords[0]:.1f},{max_coords[0]:.1f}] "
+          f"Y=[{min_coords[1]:.1f},{max_coords[1]:.1f}] "
+          f"Z=[{min_coords[2]:.1f},{max_coords[2]:.1f}]")
+    half = box_size / 2.0
+    print(f"Intended physical cube: [-{half:.1f}, +{half:.1f}] Å per axis")
+
+    # Grid
+    grid_dim = int(round(box_size / voxel_size))
+    assert math.isclose(grid_dim * voxel_size, box_size, rel_tol=1e-6), "box_size not divisible by voxel_size"
+    print(f"Grid: {grid_dim}^3 voxels; voxel_size={voxel_size} Å")
+
+    # Independent bin arrays (edges)
+    bins_x = np.linspace(-half, half, grid_dim + 1, dtype=np.float64)
+    bins_y = np.linspace(-half, half, grid_dim + 1, dtype=np.float64)
+    bins_z = np.linspace(-half, half, grid_dim + 1, dtype=np.float64)
+    bins = (bins_x, bins_y, bins_z)
+
+    # Histogram + blur
+    raw, _ = np.histogramdd(coords, bins=bins, weights=weights)
+    # Optional axis swap: keep consistent with rest of pipeline
+    raw = np.swapaxes(raw, 0, 2)  # matches your existing calc_projection_cpu
+    sigma_vox = resolution_to_sigma(resolution, voxel_size)
+    density = scipy.ndimage.gaussian_filter(raw, sigma_vox, truncate=4).astype(np.float32)
+
+    print(f"Density stats before write: min={density.min():.4g} max={density.max():.4g} "
+          f"mean={density.mean():.4g} std={density.std():.4g} nonzero={np.count_nonzero(density)}")
+
+    if density.std() < 1e-10:
+        print("ERROR: zero variance density")
         return None
-    
-    # Save as an MRC file
+
+    # Write MRC with correct origin and labels
     with mrcfile.new(filename, overwrite=True) as mrc:
-        mrc.set_data(simulated_density.astype(np.float32))
-        mrc.voxel_size = voxel_size
-    
-    print("Dummy map created successfully.")
-    return simulated_density
+        mrc.set_data(density)              # shape (nz, ny, nx) given swap; confirm orientation downstream
+        mrc.voxel_size = voxel_size        # sets cella.{x,y,z} = nx*voxel
+        # Set origin so that voxel index 0 corresponds to physical -half
+        mrc.header.origin.x = -half
+        mrc.header.origin.y = -half
+        mrc.header.origin.z = -half
+        # (Optional) also ensure nxstart,y,z start = 0 (already default)
+        mrc.update_header_stats()          # recompute dmin/dmax/dmean
+        # Add informative labels
+        labels = [
+            f"Simulated map; box={box_size:.1f}A; vox={voxel_size:.3f}A",
+            f"Resolution(param)={resolution:.2f}A; sigma(vox)={sigma_vox:.3f}",
+            f"Origin set to (-{half:.1f}, -{half:.1f}, -{half:.1f}) A",
+            f"grid_dim={grid_dim}"
+        ]
+        for i, lab in enumerate(labels):
+            mrc.header.label[i] = lab.encode('ascii', 'replace')[:80].ljust(80, b'\x00')
+        mrc.header.nlabl = len(labels)
+
+    # Report header interpretation
+    with mrcfile.open(filename, permissive=True) as chk:
+        nx, ny, nz = chk.header.nx, chk.header.ny, chk.header.nz
+        print(f"Written header: nx,ny,nz = {nx},{ny},{nz}")
+        print(f"Cell dims (Å): {chk.header.cella.x:.1f},{chk.header.cella.y:.1f},{chk.header.cella.z:.1f}")
+        print(f"Voxel size (Å): {chk.voxel_size.x:.3f}")
+        print(f"Origin (Å): ({chk.header.origin.x:.1f},{chk.header.origin.y:.1f},{chk.header.origin.z:.1f})")
+        print(f"Center (Å): ({chk.header.origin.x + 0.5*box_size:.1f}, "
+              f"{chk.header.origin.y + 0.5*box_size:.1f}, "
+              f"{chk.header.origin.z + 0.5*box_size:.1f}) expected ≈ (0,0,0)")
+    return density
 
 if __name__ == "__main__":
     # 1. DEFINE YOUR TOY MODEL DATA
@@ -206,6 +242,16 @@ if __name__ == "__main__":
 
     mrcfile.validate(TARGET_MAP_FILE)
     print(f"Dummy target map '{TARGET_MAP_FILE}' created and validated.")
+    
+    #-------------------------------------------------------------------------------
+    # give a perturbed system and then get the density map for this 
+    array_A_perturbed = array_A + np.random.normal(0, 12.0, array_A.shape)
+    array_B_perturbed = array_B + np.random.normal(0, 10.0, array_B.shape)
+    array_C_perturbed = array_C + np.random.normal(0, 15.0, array_C.shape)
+    pert_coords = np.vstack([array_A_perturbed, array_B_perturbed, array_C_perturbed])
+    create_dummy_map_from_model(pert_coords, ideal_radii, RESOLUTION, VOXEL_SIZE, BOX_SIZE, filename="perturbed_map.mrc")
+
+    #-------------------------------------------------------------------------------
     
     # 3. LOAD THE TARGET MAP (this would be done once before an MCMC loop)
     target_map = parse_density(TARGET_MAP_FILE)
