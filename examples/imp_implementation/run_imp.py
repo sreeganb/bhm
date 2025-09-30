@@ -74,7 +74,7 @@ class SimpleParticleSystemBuilder:
         self.ntype = ntype
         self.copy_numbers = copy_numbers
         self.radii = radii   # radius for each particle type
-        self.density = 0.001 # dummy density to designate a mass value 
+        self.density = 1.0 # dummy density to designate a mass value 
         self.colors = colors
 
     def build_system(self, box_size=400.0):
@@ -220,20 +220,30 @@ class ScoringFunction:
 #        
 #        print(f"Added {len(restraints_added)} distance restraints")
         return dr
-    
-    def add_em_restraint(self, em_map_file="experimental_density.mrc"):
+        
+    def add_em_restraint(self, em_map_file="experimental_density.mrc", 
+                        resolution=50.0, weight=1.0):
         """Add EM restraint comparing to experimental density map"""
-        em_restraint = IMP.pmi.restraints.basic.EMArthurRestraint(
-            m=self.model,
-            hierarchy=self.hierarchy,
-            em_map_file=em_map_file,  # Path to experimental map
-            resolution=50.0,
-            weight=1.0
-            )
 
-        # Add to restraint set
+        em_restraint = IMP.pmi.restraints.basic.EMArthurRestraint(
+            hier=self.hierarchy,
+            em_map_file="target_map.mrc",
+            resolution=50.0,
+            normalize_target=True,
+            sigma=1.0,
+            weight=1.0,
+            label="main_em"
+        )
+        
+        # Add to model
         em_restraint.add_to_model()
+        
+        # Add to output objects for statistics
         self.output_objects.append(em_restraint)
+        
+        print(f"Added EM restraint: map={em_map_file}, resolution={resolution}Å")
+        return em_restraint
+
 
 #--------------------------------------------------------------------------
 # Main execution
@@ -267,7 +277,8 @@ if __name__ == "__main__":
     # Add excluded volume using PMI's implementation
     sf.add_excluded_volume_restraint()
     sf.add_pair_distance_restraints()
-    sf.add_em_restraint(em_map_file="target_map.mrc")
+    sf.add_em_restraint(em_map_file="target_map.mrc",
+                        resolution=50.0, weight=1.0)
 #    
 #    # Define interaction parameters: (type1, type2): (min_dist, max_dist, kappa)
 #    # Type 0 = A (8 copies), Type 1 = B (8 copies), Type 2 = C (16 copies)
@@ -317,7 +328,7 @@ if __name__ == "__main__":
         monte_carlo_sample_objects=dof.get_movers(),
         output_objects=sf.output_objects,
         monte_carlo_steps=2,
-        number_of_frames=10,
+        number_of_frames=500,
         global_output_directory="output/"
     )
 

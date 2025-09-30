@@ -70,10 +70,10 @@ class FullSampler(BaseMCSampler):
         print(f"Successfully loaded EM map: {self.em_map_file}")
         
         # Debug the loaded density map
-#        self.debug_density_map()
+        self.debug_density_map()
 
         # **NEW: Center the density map BEFORE creating bins**
-        self.target_density_map = self.center_density_map(self.target_density_map)
+#        self.target_density_map = self.center_density_map(self.target_density_map)
         
         # Debug map properties
         print(f"Map grid: {self.target_density_map.header.nx} x {self.target_density_map.header.ny} x {self.target_density_map.header.nz}")
@@ -100,17 +100,86 @@ class FullSampler(BaseMCSampler):
             else:
                 self.positions_os = self.initialize_positions()
         else:
-            self.positions_os = positions_init
+            #self.positions_os = positions_init
+            self.positions_os = self.params.latest_ideal()
+            
         
         # **NEW: Center particles to origin**
-        self.positions_os = self.center_particles_to_origin(self.positions_os)
-            
+#        self.positions_os = self.center_particles_to_origin(self.positions_os)
+        self._debug_initial_alignment()
+           
         # Create dummy sigma values (not used but needed for compatibility)
         self.sigma = {'AA': 1.0, 'AB': 1.0, 'BC': 1.0}
         
         # DEBUG: Check if initial positions are in bounds
         self._debug_position_bounds()
 #=====================================================================
+    def _debug_initial_alignment(self):
+        """Debug the initial alignment between particles and density"""
+        print("=== INITIAL ALIGNMENT DEBUG ===")
+        
+        # Get particle coordinates
+        all_coords = []
+        for key in ['A', 'B', 'C']:
+            if key in self.positions_os and len(self.positions_os[key]) > 0:
+                all_coords.append(self.positions_os[key])
+        
+        if all_coords:
+            combined = np.vstack(all_coords)
+            particle_com = np.mean(combined, axis=0)
+            print(f"Original particle COM: ({particle_com[0]:.2f}, {particle_com[1]:.2f}, {particle_com[2]:.2f})")
+            
+            # Calculate density COM
+            data = self.target_density_map.data
+            voxel_size = self.target_density_map.voxel_size.x
+            nz, ny, nx = data.shape
+            
+            # Create coordinate grids matching the bins
+            x_coords = np.linspace(self.box_min[0], self.box_max[0], nx)
+            y_coords = np.linspace(self.box_min[1], self.box_max[1], ny) 
+            z_coords = np.linspace(self.box_min[2], self.box_max[2], nz)
+            
+            X, Y, Z = np.meshgrid(x_coords, y_coords, z_coords, indexing='ij')
+            
+            total_density = np.sum(data)
+            if total_density > 0:
+                density_com_x = np.sum(X * data.T) / total_density  # Note: data.T for correct indexing
+                density_com_y = np.sum(Y * data.T) / total_density
+                density_com_z = np.sum(Z * data.T) / total_density
+                density_com = np.array([density_com_x, density_com_y, density_com_z])
+                
+                print(f"Density COM: ({density_com[0]:.2f}, {density_com[1]:.2f}, {density_com[2]:.2f})")
+                
+                # Calculate required translation
+                required_translation = density_com - particle_com
+                print(f"Required translation: ({required_translation[0]:.2f}, {required_translation[1]:.2f}, {required_translation[2]:.2f})")
+            
+            # Check initial CCC without any centering
+            print("Testing CCC without centering...")
+            initial_ccc = self._test_ccc_no_centering()
+            print(f"CCC without centering: {initial_ccc:.6f}")
+            
+    def _test_ccc_no_centering(self):
+        """Test CCC calculation without any centering"""
+        all_coords = []
+        all_radii = []
+        
+        for key in ['A', 'B', 'C']:
+            if key in self.positions_os and len(self.positions_os[key]) > 0:
+                all_coords.append(self.positions_os[key])
+                all_radii.append(np.full(len(self.positions_os[key]), self.params.radii[key]))
+        
+        if all_coords:
+            sphere_coords = np.vstack(all_coords)
+            sphere_radii = np.concatenate(all_radii)
+            
+            # Calculate CCC using ORIGINAL coordinates (no centering)
+            return self.calculate_ccc_score(
+                sphere_coords, sphere_radii, 
+                self.target_density_map, self.resolution, 'cpu'
+            )
+        return 0.0
+#=====================================================================    
     def debug_density_map(self):
         """Debug the loaded density map properties."""
         density = self.target_density_map
@@ -143,143 +212,6 @@ class FullSampler(BaseMCSampler):
         else:
             print("Map has non-zero variance")
 #======================================================================
-    def center_density_map(self, density_map):
-        """
-        Center the density map to align with the particle simulation box.
-        This shifts the density data so that the center of mass of the density
-        aligns with the origin (0,0,0) of the simulation box.
-        """
-        print("=== CENTERING DENSITY MAP ===")
-        
-        # Get the density data
-        data = density_map.data
-        voxel_size = density_map.voxel_size.x  # Assuming cubic voxels
-        
-        # Calculate the center of mass of the density
-        # Create coordinate grids
-        nz, ny, nx = data.shape
-        z_coords, y_coords, x_coords = np.mgrid[0:nz, 0:ny, 0:nx]
-        
-        # Convert to real coordinates (centered at origin)
-        x_real = (x_coords - nx/2) * voxel_size
-        y_real = (y_coords - ny/2) * voxel_size  
-        z_real = (z_coords - nz/2) * voxel_size
-        
-        # Calculate center of mass weighted by density
-        total_density = np.sum(data)
-        if total_density > 0:
-            com_x = np.sum(x_real * data) / total_density
-            com_y = np.sum(y_real * data) / total_density
-            com_z = np.sum(z_real * data) / total_density
-            
-            print(f"Original density center of mass: ({com_x:.2f}, {com_y:.2f}, {com_z:.2f})")
-            
-            # Calculate shift needed to center the density at origin
-            shift_x = -com_x / voxel_size  # Convert to voxel units
-            shift_y = -com_y / voxel_size
-            shift_z = -com_z / voxel_size
-            
-            print(f"Applying shift: ({shift_x:.2f}, {shift_y:.2f}, {shift_z:.2f}) voxels")
-            
-            # Apply the shift using scipy.ndimage.shift
-            centered_data = scipy.ndimage.shift(data, (shift_z, shift_y, shift_x), 
-                                            mode='constant', cval=0.0, order=1)
-            
-            # Create a new MRC file object with the centered data
-            # We need to create a temporary file or work with the data directly
-            import tempfile
-            import os
-            
-            # Create temporary file for the centered map
-            with tempfile.NamedTemporaryFile(suffix='.mrc', delete=False) as tmp_file:
-                temp_filename = tmp_file.name
-            
-            try:
-                # Create new MRC file with centered data
-                with mrcfile.new(temp_filename, overwrite=True) as new_mrc:
-                    new_mrc.set_data(centered_data.astype(data.dtype))
-                    new_mrc.voxel_size = density_map.voxel_size
-                    new_mrc.header.origin.x = density_map.header.origin.x
-                    new_mrc.header.origin.y = density_map.header.origin.y
-                    new_mrc.header.origin.z = density_map.header.origin.z
-                
-                # Close the original file
-                density_map.close()
-                
-                # Open the new centered file
-                centered_density_map = mrcfile.open(temp_filename, permissive=True)
-                
-                # Verify the centering
-                centered_data_verify = centered_density_map.data
-                total_density_new = np.sum(centered_data_verify)
-                if total_density_new > 0:
-                    com_x_new = np.sum(x_real * centered_data_verify) / total_density_new
-                    com_y_new = np.sum(y_real * centered_data_verify) / total_density_new
-                    com_z_new = np.sum(z_real * centered_data_verify) / total_density_new
-                    print(f"New density center of mass: ({com_x_new:.2f}, {com_y_new:.2f}, {com_z_new:.2f})")
-                
-                print("✓ Density map centered successfully")
-                
-                # Store temp filename for cleanup later
-                centered_density_map._temp_file = temp_filename
-                
-                return centered_density_map
-                
-            except Exception as e:
-                # Cleanup on error
-                if os.path.exists(temp_filename):
-                    os.unlink(temp_filename)
-                raise e
-                
-        else:
-            print("ERROR: Density map has zero total density!")
-            return density_map
-
-    def center_particles_to_origin(self, positions):
-        """
-        Center all particles around the origin (0,0,0).
-        This ensures particles start in the center of the simulation box.
-        """
-        print("=== CENTERING PARTICLES ===")
-        
-        # Collect all coordinates
-        all_coords = []
-        for key in ['A', 'B', 'C']:
-            if key in positions and len(positions[key]) > 0:
-                all_coords.append(positions[key])
-        
-        if not all_coords:
-            print("No particles to center")
-            return positions
-        
-        combined_coords = np.vstack(all_coords)
-        
-        # Calculate center of mass of particles
-        particle_com = np.mean(combined_coords, axis=0)
-        print(f"Original particle center of mass: ({particle_com[0]:.2f}, {particle_com[1]:.2f}, {particle_com[2]:.2f})")
-        
-        # Center particles by subtracting COM
-        centered_positions = {}
-        for key in positions:
-            if isinstance(positions[key], np.ndarray) and len(positions[key]) > 0:
-                centered_positions[key] = positions[key] - particle_com
-            else:
-                centered_positions[key] = positions[key]
-        
-        # Verify centering
-        all_coords_new = []
-        for key in ['A', 'B', 'C']:
-            if key in centered_positions and len(centered_positions[key]) > 0:
-                all_coords_new.append(centered_positions[key])
-        
-        if all_coords_new:
-            combined_coords_new = np.vstack(all_coords_new)
-            new_com = np.mean(combined_coords_new, axis=0)
-            print(f"New particle center of mass: ({new_com[0]:.2f}, {new_com[1]:.2f}, {new_com[2]:.2f})")
-        
-        print("Particles centered successfully")
-        return centered_positions
-#=====================================================================
     def _debug_position_bounds(self):
         """Debug function to check if positions are within map bounds."""
         all_coords = []
@@ -549,60 +481,107 @@ class FullSampler(BaseMCSampler):
     # =====================================================================
     # SCORING AND MCMC
     # =====================================================================
+#    def calculate_em_score(self, positions: Dict[str, np.ndarray]) -> Tuple[float, dict]:
+#        """Calculate the EM density map score for the current configuration."""
+#        all_coords = []
+#        all_radii = []
+#        
+#        # Combine all particles
+#        if 'A' in positions and len(positions['A']) > 0:
+#            all_coords.append(positions['A'])
+#            all_radii.append(np.full(len(positions['A']), self.params.radii['A']))
+#            
+#        if 'B' in positions and len(positions['B']) > 0:
+#            all_coords.append(positions['B'])
+#            all_radii.append(np.full(len(positions['B']), self.params.radii['B']))
+#            
+#        if 'C' in positions and len(positions['C']) > 0:
+#            all_coords.append(positions['C'])
+#            all_radii.append(np.full(len(positions['C']), self.params.radii['C']))
+#            
+#        if not all_coords:
+#            return 0.0, {"correlation": 0.0}
+#            
+#        sphere_coords = np.vstack(all_coords)
+#        sphere_radii = np.concatenate(all_radii)
+#        
+#        # **NEW: Center particles relative to map before bounds checking**
+#        particle_com = np.mean(sphere_coords, axis=0)
+#        map_center = np.array([0.0, 0.0, 0.0])  # Your map is centered at origin
+#        translation = map_center - particle_com
+#        centered_coords = sphere_coords + translation
+#        
+#        # Check bounds on centered coordinates
+#        out_penalty = 0.0
+#        out_of_bounds = np.any((centered_coords < self.box_min) | (centered_coords > self.box_max), axis=1)
+#        out_penalty = np.sum(out_of_bounds) * 1000.0
+#        
+#        if out_penalty > 0:
+#            return 100.0 + out_penalty, {"correlation": 0.0}
+#        
+#        # Calculate cross-correlation coefficient using centered coordinates
+#        ccc = self.calculate_ccc_score(
+#            centered_coords, sphere_radii, 
+#            self.target_density_map, self.resolution, 'cpu'
+#        )
+#
+#        # Convert to minimization problem
+#        score = 500 * (1 - ccc)
+#        
+#        # Add excluded volume using ORIGINAL positions (not centered ones)
+#        ex_score = self.excluded_volume_nll(positions)
+#        score += ex_score
+#        
+#        info = {"correlation": ccc}
+#        return score, info
     def calculate_em_score(self, positions: Dict[str, np.ndarray]) -> Tuple[float, dict]:
-        """Calculate the EM density map score for the current configuration."""
+        """Simplified EM score calculation - remove redundant centering"""
         all_coords = []
         all_radii = []
         
         # Combine all particles
-        if 'A' in positions and len(positions['A']) > 0:
-            all_coords.append(positions['A'])
-            all_radii.append(np.full(len(positions['A']), self.params.radii['A']))
-            
-        if 'B' in positions and len(positions['B']) > 0:
-            all_coords.append(positions['B'])
-            all_radii.append(np.full(len(positions['B']), self.params.radii['B']))
-            
-        if 'C' in positions and len(positions['C']) > 0:
-            all_coords.append(positions['C'])
-            all_radii.append(np.full(len(positions['C']), self.params.radii['C']))
-            
+        for key in ['A', 'B', 'C']:
+            if key in positions and len(positions[key]) > 0:
+                all_coords.append(positions[key])
+                all_radii.append(np.full(len(positions[key]), self.params.radii[key]))
+                
         if not all_coords:
             return 0.0, {"correlation": 0.0}
             
         sphere_coords = np.vstack(all_coords)
         sphere_radii = np.concatenate(all_radii)
         
-        # **NEW: Center particles relative to map before bounds checking**
-        particle_com = np.mean(sphere_coords, axis=0)
-        map_center = np.array([0.0, 0.0, 0.0])  # Your map is centered at origin
-        translation = map_center - particle_com
-        centered_coords = sphere_coords + translation
-        
-        # Check bounds on centered coordinates
-        out_penalty = 0.0
-        out_of_bounds = np.any((centered_coords < self.box_min) | (centered_coords > self.box_max), axis=1)
+        # **SIMPLIFIED: Only check bounds, no centering here**
+        out_of_bounds = np.any((sphere_coords < self.box_min) | (sphere_coords > self.box_max), axis=1)
         out_penalty = np.sum(out_of_bounds) * 1000.0
         
         if out_penalty > 0:
             return 100.0 + out_penalty, {"correlation": 0.0}
         
-        # Calculate cross-correlation coefficient using centered coordinates
+        # Calculate CCC using original coordinates
         ccc = self.calculate_ccc_score(
-            centered_coords, sphere_radii, 
+            sphere_coords, sphere_radii, 
             self.target_density_map, self.resolution, 'cpu'
         )
-
+        
         # Convert to minimization problem
         score = 500 * (1 - ccc)
         
-        # Add excluded volume using ORIGINAL positions (not centered ones)
+        # Add excluded volume
         ex_score = self.excluded_volume_nll(positions)
         score += ex_score
         
+        # cluster octets to calculate the octet score and add it to the total score
+        octets, _ = self.octet_sampler.get_octets(positions)
+        octet_scores = self.octet_sampler.calculate_octet_scores_batch(positions, octets, self.sigma)
+        octet_weight = 1.0  # Weight for octet score
+        octet_score = octet_weight * octet_scores.sum()
+        
+        score += octet_score
+        
         info = {"correlation": ccc}
         return score, info
-
+    
     def run_mc(self, n_steps=50000, save_freq=1000, output_dir=None):
         """Monte Carlo sampling with position, tetramer, and octet moves."""
         if output_dir is None:
@@ -650,9 +629,8 @@ class FullSampler(BaseMCSampler):
         self.save_state_to_disk(0, current_positions, self.sigma, current_score, traj_file=trajectory_file)
 
         # MCMC parameters
-        move_types = ['tetramer', 'octet', 'full']
-#        move_probs = [0.12, 0.18, 0.7]
-        move_probs = [0.4, 0.4, 0.2]
+        move_types = ['position','tetramer', 'octet', 'full']
+        move_probs = [0.1, 0.3, 0.5, 0.1] # Adjusted probabilities to include 'full' moves
         temp_start, temp_end = 10.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 

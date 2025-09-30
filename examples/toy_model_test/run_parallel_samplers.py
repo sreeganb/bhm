@@ -150,6 +150,50 @@ def run_single_chain(chain_idx: int,
         # Initialize sampler based on type
         if sampler_key == "full":
             # FullSampler has different constructor parameters
+            # For debug purposes, we shall pass in some dummy position values
+            array_A  = np.array([
+                [ 63.  ,   0.  ,   0.  ],
+                [ 44.55,  44.55,   0.  ],
+                [  0.  ,  63.  ,   0.  ],
+                [-44.55,  44.55,   0.  ],
+                [-63.  ,   0.  ,   0.  ],
+                [-44.55, -44.55,   0.  ],
+                [ -0.  , -63.  ,   0.  ],
+                [ 44.55, -44.55,   0.  ]
+                ])
+            array_B = np.array([
+                [ 63.  ,   0.  , -38.5 ],
+                [ 44.55,  44.55, -38.5 ],
+                [  0.  ,  63.  , -38.5 ],
+                [-44.55,  44.55, -38.5 ],
+                [-63.  ,   0.  , -38.5 ],
+                [-44.55, -44.55, -38.5 ],
+                [ -0.  , -63.  , -38.5 ],
+                [ 44.55, -44.55, -38.5 ]
+                ]) 
+            array_C = np.array([
+                [ 47.00,   0.00, -68.50],
+                [ 79.00,   0.00, -68.50],
+                [ 55.86,  55.86, -68.50],
+                [ 33.23,  33.23, -68.50],
+                [  0.00,  47.00, -68.50],
+                [  0.00,  79.00, -68.50],
+                [-55.86,  55.86, -68.50],
+                [-33.23,  33.23, -68.50],
+                [-47.00,   0.00, -68.50],
+                [-79.00,   0.00, -68.50],
+                [-55.86, -55.86, -68.50],
+                [-33.23, -33.23, -68.50],
+                [  0.00, -47.00, -68.50],
+                [  0.00, -79.00, -68.50],
+                [ 55.86, -55.86, -68.50],
+                [ 33.23, -33.23, -68.50],
+                ])
+            dummy_positions = {
+                'A': array_A,
+                'B': array_B,
+                'C': array_C
+            }
             sampler = sampler_class(
                 sampler_sequence=sampler_sequence,
                 sequence_idx=sequence_position,
@@ -157,6 +201,7 @@ def run_single_chain(chain_idx: int,
                 resolution=55.0,
                 base_output_dir=base_output_dir,
                 positions_init=None,  # Let it use default initialization
+                #positions_init=dummy_positions,
                 specific_chain=chain_idx  # Pass the chain index
             )
         else:
@@ -310,11 +355,12 @@ def main():
     #mcmc_steps = [5000, 5000, 5000, 5000]
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "pair", "tetramer", "octet", "full","pair", "tetramer", "octet", "full",]
     #mcmc_steps = [50000, 10000, 10000, 2000, 50000, 20000, 20000, 5000, 50000, 50000, 50000, 5000]
-#    sampler_sequence = ["pair", "tetramer", "octet", "full", "tetramer", "octet", "full","tetramer", "octet", "full",]
-#    mcmc_steps = [60000, 60000, 60000, 3000, 60000, 60000, 4000, 60000, 60000, 5000]
+    sampler_sequence = ["pair", "tetramer", "octet", "full"]
+    mcmc_steps = [50000, 50000, 50000, 80000]
     
-    sampler_sequence = ["pair", "tetramer", "octet", "full", "octet", "full", "tetramer", "full",]
-    mcmc_steps = [80000, 80000, 80000, 5000, 60000, 5500, 60000, 7500]
+    #sampler_sequence = ["pair", "tetramer", "octet", "full", "octet", "full", "tetramer", "full",]
+    #mcmc_steps = [80000, 80000, 80000, 5000, 60000, 5500, 60000, 7500]
+    
     # Option 3: Mixed sequence with multiple EM steps
     # sampler_sequence = ["pair", "tetramer", "em", "octet", "em"]
     # mcmc_steps = [500000, 500000, 300000, 200000, 200000]
@@ -325,7 +371,7 @@ def main():
     
     # Setup
     output_folder = "output_analysis"
-    n_processes = 8  # Set to None to use all available CPUs
+    n_processes = 8 # Set to None to use all available CPUs
     
     # Initialize sequence manager
     sequence_manager = SamplerSequenceManager(sampler_sequence)
@@ -348,18 +394,19 @@ def main():
             config = {
                 **base_config,
                 "run": True,
-                "n_chains": 8,
+                "n_chains": 16,
                 "n_steps": mcmc_steps[seq_idx],
-                "save_freq": 10,
+                "save_freq": 50,
                 "use_sigma_dist": False,  # FullSampler doesn't use sigma distributions
                 "em_map_file": "simulated_target_density.mrc",  # Add EM map file
-                "resolution": 52.0  # Add resolution parameter
+                #"em_map_file": "target_map.mrc",  # Add EM map file
+                "resolution": 55.0  # Add resolution parameter
             }
         else:
             config = {
                 **base_config,
                 "run": True,
-                "n_chains": 8,
+                "n_chains": 16,
                 "n_steps": mcmc_steps[seq_idx],
                 "save_freq": 50,
                 "use_sigma_dist": False if (is_first or sampler_key in ["full"]) else True
