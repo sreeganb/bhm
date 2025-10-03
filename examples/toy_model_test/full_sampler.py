@@ -24,6 +24,7 @@ from parameters import SystemParameters
 from pair_sampler import PairSampler
 from tetramer_sampler import TetramerSampler
 from octet_sampler import OctetSampler
+from new_sigma_provider import GMMSigmaProvider
 import networkx as nx
 
 # --- Backend Selection ---
@@ -48,7 +49,9 @@ class FullSampler(BaseMCSampler):
                 resolution: float = 50.0,
                 base_output_dir: str = "output_analysis", 
                 positions_init=None,
-                specific_chain: int = None):
+                specific_chain: int = None,
+                sigma_ranges: Dict[str, Tuple[float, float]] = None,
+                prior_type: str = 'gamma'):
         """Initialize EM_Sampler with EM density map."""
         super().__init__()
         
@@ -57,6 +60,7 @@ class FullSampler(BaseMCSampler):
         self.base_output_dir = base_output_dir
         self.sampler_sequence = sampler_sequence
         self.sequence_idx = sequence_idx
+        self.specific_chain = specific_chain
         
         # Set up EM restraint parameters FIRST
         self.em_map_file = em_map_file
@@ -107,10 +111,24 @@ class FullSampler(BaseMCSampler):
         # **NEW: Center particles to origin**
 #        self.positions_os = self.center_particles_to_origin(self.positions_os)
         self._debug_initial_alignment()
-           
+
+        self.positions_os = self.center_particles_to_density_com(self.positions_os)
+
         # Create dummy sigma values (not used but needed for compatibility)
-        self.sigma = {'AA': 1.0, 'AB': 1.0, 'BC': 1.0}
-        
+        # actually initialize sigmas based on if the sampler is first in sequence or not
+        self.sigma_provider = GMMSigmaProvider(
+            sampler_sequence=self.sampler_sequence,
+            sequence_idx=self.sequence_idx,
+            base_output_dir=self.base_output_dir,
+            specific_chain=self.specific_chain,
+            sigma_ranges=sigma_ranges,
+            prior_type=prior_type
+        )
+        #self.sigma = {'AA': 1.0, 'AB': 1.0, 'BC': 1.0}
+        # Initialize sigma values and ranges from provider
+        self.sigma = self.sigma_provider.sample_sigma_values()
+        self.sigma_range = self.sigma_provider.sigma_ranges
+                
         # DEBUG: Check if initial positions are in bounds
         self._debug_position_bounds()
 #=====================================================================
@@ -212,6 +230,52 @@ class FullSampler(BaseMCSampler):
         else:
             print("Map has non-zero variance")
 #======================================================================
+    # Adding a function to center the particles to the center of mass of the map
+    def center_particles_to_density_com(self, positions):
+        """Center particles to match density center of mass"""
+        # Calculate particle COM
+        all_coords = []
+        for key in ['A', 'B', 'C']:
+            if key in positions and len(positions[key]) > 0:
+                all_coords.append(positions[key])
+        
+        if not all_coords:
+            return positions
+            
+        combined = np.vstack(all_coords)
+        particle_com = np.mean(combined, axis=0)
+        
+        # Calculate density COM
+        data = self.target_density_map.data
+        nz, ny, nx = data.shape
+        
+        x_coords = np.linspace(self.box_min[0], self.box_max[0], nx)
+        y_coords = np.linspace(self.box_min[1], self.box_max[1], ny) 
+        z_coords = np.linspace(self.box_min[2], self.box_max[2], nz)
+        
+        X, Y, Z = np.meshgrid(x_coords, y_coords, z_coords, indexing='ij')
+        
+        total_density = np.sum(data)
+        if total_density > 0:
+            density_com_x = np.sum(X * data.T) / total_density
+            density_com_y = np.sum(Y * data.T) / total_density
+            density_com_z = np.sum(Z * data.T) / total_density
+            density_com = np.array([density_com_x, density_com_y, density_com_z])
+            
+            # Apply translation
+            translation = density_com - particle_com
+            
+            centered_positions = {}
+            for key in positions:
+                if isinstance(positions[key], np.ndarray) and len(positions[key]) > 0:
+                    centered_positions[key] = positions[key] + translation
+                else:
+                    centered_positions[key] = positions[key]
+                    
+            return centered_positions
+        
+        return positions
+
     def _debug_position_bounds(self):
         """Debug function to check if positions are within map bounds."""
         all_coords = []
@@ -447,11 +511,11 @@ class FullSampler(BaseMCSampler):
         com = np.mean(combined_coords, axis=0)
         
         # Random translation
-        full_trans_step = 0.1 # Translation step size
+        full_trans_step = 0.2 # Translation step size
         displacement = np.random.normal(0, full_trans_step, 3)
 
         # Create a random vector passing through the COM
-        full_rot_step = 0.05
+        full_rot_step = 0.1
         rand_vec = np.random.normal(size=3)
         rand_vec /= np.linalg.norm(rand_vec) + 1e-10  # Normalize and avoid division by zero
         angle = np.random.normal(0, full_rot_step)
@@ -481,59 +545,6 @@ class FullSampler(BaseMCSampler):
     # =====================================================================
     # SCORING AND MCMC
     # =====================================================================
-#    def calculate_em_score(self, positions: Dict[str, np.ndarray]) -> Tuple[float, dict]:
-#        """Calculate the EM density map score for the current configuration."""
-#        all_coords = []
-#        all_radii = []
-#        
-#        # Combine all particles
-#        if 'A' in positions and len(positions['A']) > 0:
-#            all_coords.append(positions['A'])
-#            all_radii.append(np.full(len(positions['A']), self.params.radii['A']))
-#            
-#        if 'B' in positions and len(positions['B']) > 0:
-#            all_coords.append(positions['B'])
-#            all_radii.append(np.full(len(positions['B']), self.params.radii['B']))
-#            
-#        if 'C' in positions and len(positions['C']) > 0:
-#            all_coords.append(positions['C'])
-#            all_radii.append(np.full(len(positions['C']), self.params.radii['C']))
-#            
-#        if not all_coords:
-#            return 0.0, {"correlation": 0.0}
-#            
-#        sphere_coords = np.vstack(all_coords)
-#        sphere_radii = np.concatenate(all_radii)
-#        
-#        # **NEW: Center particles relative to map before bounds checking**
-#        particle_com = np.mean(sphere_coords, axis=0)
-#        map_center = np.array([0.0, 0.0, 0.0])  # Your map is centered at origin
-#        translation = map_center - particle_com
-#        centered_coords = sphere_coords + translation
-#        
-#        # Check bounds on centered coordinates
-#        out_penalty = 0.0
-#        out_of_bounds = np.any((centered_coords < self.box_min) | (centered_coords > self.box_max), axis=1)
-#        out_penalty = np.sum(out_of_bounds) * 1000.0
-#        
-#        if out_penalty > 0:
-#            return 100.0 + out_penalty, {"correlation": 0.0}
-#        
-#        # Calculate cross-correlation coefficient using centered coordinates
-#        ccc = self.calculate_ccc_score(
-#            centered_coords, sphere_radii, 
-#            self.target_density_map, self.resolution, 'cpu'
-#        )
-#
-#        # Convert to minimization problem
-#        score = 500 * (1 - ccc)
-#        
-#        # Add excluded volume using ORIGINAL positions (not centered ones)
-#        ex_score = self.excluded_volume_nll(positions)
-#        score += ex_score
-#        
-#        info = {"correlation": ccc}
-#        return score, info
     def calculate_em_score(self, positions: Dict[str, np.ndarray]) -> Tuple[float, dict]:
         """Simplified EM score calculation - remove redundant centering"""
         all_coords = []
@@ -572,12 +583,21 @@ class FullSampler(BaseMCSampler):
         score += ex_score
         
         # cluster octets to calculate the octet score and add it to the total score
-        octets, _ = self.octet_sampler.get_octets(positions)
+        octets, tetramers = self.octet_sampler.get_octets(positions)
         octet_scores = self.octet_sampler.calculate_octet_scores_batch(positions, octets, self.sigma)
         octet_weight = 1.0  # Weight for octet score
         octet_score = octet_weight * octet_scores.sum()
         
+        # Compute the tetramer score and add it to the total score
+        scores_array = self.tetramer_sampler.calculate_tetramer_scores_batch(positions, tetramers, self.sigma)
+        total_tet_score = scores_array.sum()
+        weighted_tet_score = 1.0 * total_tet_score
+        score += weighted_tet_score
+        
         score += octet_score
+        
+        # At this point also, include the pair score and add it to the total score
+        
         
         info = {"correlation": ccc}
         return score, info
@@ -629,9 +649,11 @@ class FullSampler(BaseMCSampler):
         self.save_state_to_disk(0, current_positions, self.sigma, current_score, traj_file=trajectory_file)
 
         # MCMC parameters
-        move_types = ['position','tetramer', 'octet', 'full']
-        move_probs = [0.1, 0.3, 0.5, 0.1] # Adjusted probabilities to include 'full' moves
-        temp_start, temp_end = 10.0, 0.1
+#        move_types = ['position','tetramer', 'octet', 'full']
+#        move_probs = [0.1, 0.3, 0.5, 0.1] # Adjusted probabilities to include 'full' moves
+        move_types = ['tetramer', 'octet', 'full']
+        move_probs = [0.4, 0.3, 0.3] # Adjusted probabilities to include 'full' moves
+        temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
         print(f"Starting MCMC sampling for {n_steps} total steps...")

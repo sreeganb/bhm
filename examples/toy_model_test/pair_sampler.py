@@ -11,10 +11,11 @@ from base_sampler import BaseMCSampler  # Import BaseMCSampler
 from parameters import SystemParameters
 from visualization import visualize_3d_configuration
 from scipy.spatial.distance import cdist
-from sigma_provider import GMMSigmaProvider
+from new_sigma_provider import GMMSigmaProvider
 import h5py
 import random
 import pathlib
+from scipy.special import logsumexp
 #----------------------------------------------------------------------
 class PairSampler(BaseMCSampler):
     """
@@ -95,136 +96,403 @@ class PairSampler(BaseMCSampler):
             base_output_dir="output_analysis",
             params=self.params
         )
-        
+
+#    def calculate_score(
+#        self,
+#        pos: Dict[str, np.ndarray],  # input positions
+#        sig: Dict[str, float],       # input sigma values
+#        sig_range: Dict[str, Tuple[float, float]] = None,  # input sigma ranges
+#        excluded_pairs=None,
+#        debug=False,  # Whether to log detailed pair scoring info
+#        debug_file="pair_score_debug.csv"  # File to write debug info to
+#    ) -> Tuple[float, float, float, float]:
+#        """Calculate the log posterior for the pair-level interactions."""
+#        # Setup debug file if requested
+#        debug_fh = None
+#        if debug:
+#            debug_fh = open(debug_file, 'w')
+#            debug_fh.write("Pair Type, Particle1 Type, Particle1 Index, Particle2 Type, Particle2 Index, Distance, Target Distance, Sigma, Score\n")
+#            
+#        # 1) Excluded volume contribution
+#        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
+#                    
+#        # 2) Pairwise negative log-likelihood (pair-specific)
+#        pairwise_score = 0.0
+#        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
+#        
+#        for type1, type2 in pair_types:
+#            pair_key = f"{type1}{type2}"
+#            if pair_key not in self.params.pair_distances:
+#                continue
+#                
+#            target_dist = self.params.pair_distances[pair_key]
+#            sigma_value = sig[pair_key]  # Use the passed sigma
+#
+#            # Calculate pairwise score matrix
+#            score_matrix = self.calculate_pair_scores_matrix(
+#                pos[type1],
+#                pos[type2],
+#                target_dist,
+#                sigma_value
+#            )
+#            
+#            # Zero out excluded pairs if provided
+#            if excluded_pairs:
+#                for i_idx in range(len(pos[type1])):
+#                    for j_idx in range(len(pos[type2])):
+#                        # Check if pair is excluded
+#                        if ((type1, i_idx, type2, j_idx) in excluded_pairs or
+#                            (type2, j_idx, type1, i_idx) in excluded_pairs):
+#                            score_matrix[i_idx, j_idx] = np.inf
+#            
+#            # For debugging, calculate the actual distances between particles
+#            distance_matrix = None
+#            if debug_fh:
+#                distance_matrix = cdist(pos[type1], pos[type2])
+#
+#            # Handle same type vs different type particles
+#            if type1 == type2:
+#                # For same type particles, consider upper triangle only
+#                np.fill_diagonal(score_matrix, np.inf)
+#                selected_scores = []
+#                selected_indices = []
+#                
+#                # Greedy selection of best pairs (avoid double counting)
+#                used = set()
+#                n = len(score_matrix)
+#                
+#                # Get all valid pairs sorted by score
+#                pairs = []
+#                for i in range(n):
+#                    for j in range(i + 1, n):
+#                        if not np.isinf(score_matrix[i, j]):
+#                            pairs.append((score_matrix[i, j], i, j))
+#                
+#                pairs.sort()  # Sort by score
+#                
+#                # Select non-overlapping pairs
+#                for score, i, j in pairs:
+#                    if i not in used and j not in used:
+#                        selected_scores.append(score)
+#                        selected_indices.append((i, j))
+#                        used.add(i)
+#                        used.add(j)
+#                
+#                # Debug information for each selected pair 
+#                if debug_fh and distance_matrix is not None:
+#                    for i, j in selected_indices:
+#                        distance = distance_matrix[i, j]
+#                        pair_score = self.pair_weight * score_matrix[i, j]
+#                        debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
+#            else:
+#                # For different types, use argmin approach
+#                row_min_indices = np.argmin(score_matrix, axis=1)
+#                col_min_indices = np.argmin(score_matrix, axis=0)
+#
+#                # Collect unique index pairs
+#                U = set()
+#                for i, min_idx in enumerate(row_min_indices):
+#                    if not np.isinf(score_matrix[i, min_idx]):  # Check if valid
+#                        U.add((i, min_idx))
+#                for j, min_idx in enumerate(col_min_indices):
+#                    if not np.isinf(score_matrix[min_idx, j]):  # Check if valid
+#                        U.add((min_idx, j))
+#
+#                # Gather the scores for those index pairs
+#                selected_scores = [score_matrix[i, j] for (i, j) in U]
+#                
+#                # Debug for different types
+#                if debug_fh and distance_matrix is not None:
+#                    for i, j in U:
+#                        distance = distance_matrix[i, j]
+#                        pair_score = self.pair_weight * score_matrix[i, j]
+#                        debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
+#
+#            # Sum up the selected scores
+#            pairwise_score_part = np.sum(selected_scores)
+#            pairwise_score += self.pair_weight * pairwise_score_part
+#        
+#        # Close debug file if open
+#        if debug_fh:
+#            debug_fh.close()
+#        
+#        # 3) Prior penalty using sigma provider
+#        prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
+#
+#        total_score = exclusion_score + pairwise_score + prior_penalty
+#
+#        # Write summary to debug files (simplified)
+#        if debug:
+#            os.makedirs("debug_info", exist_ok=True)
+#            
+#            # Write scores
+#            debug_scores_file = "debug_info/debug_scores.csv"
+#            scores_file_exists = os.path.exists(debug_scores_file)
+#            with open(debug_scores_file, 'a') as f:
+#                if not scores_file_exists:
+#                    f.write("Total Score, Exclusion Score, Pairwise Score, Prior Penalty\n")
+#                f.write(f"{total_score:.1f}, {exclusion_score:.1f}, {pairwise_score:.1f}, {prior_penalty:.1f}\n")
+#            
+#            # Write sigma values
+#            sigma_file = "debug_info/sigma_values.csv"
+#            sigma_file_exists = os.path.exists(sigma_file)
+#            with open(sigma_file, 'a') as f:
+#                if not sigma_file_exists:
+#                    header = ", ".join(sig.keys()) + "\n"
+#                    f.write(header)
+#                values = ", ".join(f"{v:.4f}" for v in sig.values())
+#                f.write(f"{values}\n")
+#            
+#        return total_score, exclusion_score, pairwise_score, prior_penalty
+
     def calculate_score(
         self,
-        pos: Dict[str, np.ndarray],  # input positions
-        sig: Dict[str, float],       # input sigma values
-        sig_range: Dict[str, Tuple[float, float]] = None,  # input sigma ranges
+        pos: Dict[str, np.ndarray],
+        sig: Dict[str, float],
+        sig_range: Dict[str, Tuple[float, float]] = None,
         excluded_pairs=None,
-        debug=False,  # Whether to log detailed pair scoring info
-        debug_file="pair_score_debug.csv"  # File to write debug info to
+        debug=False,
+        debug_file="pair_score_debug.csv"
     ) -> Tuple[float, float, float, float]:
         """Calculate the log posterior for the pair-level interactions."""
-        # Setup debug file if requested
-        if debug:
-            debug_fh = open(debug_file, 'w')
-            debug_fh.write("Pair Type, Particle1 Type, Particle1 Index, Particle2 Type, Particle2 Index, Distance, Target Distance, Sigma, Score\n")
-        else:
-            debug_fh = None
-            
+        
         # 1) Excluded volume contribution
         exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
                     
-        # 2) Pairwise negative log-likelihood (pair-specific)
+        # 2) Pairwise negative log-likelihood
         pairwise_score = 0.0
         pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
+        
+        # Temperature parameter for Boltzmann selection (can be adjusted)
+        selection_temp = 2.0
+        
         for type1, type2 in pair_types:
             pair_key = f"{type1}{type2}"
-            if pair_key in self.params.pair_distances:
-                target_dist = self.params.pair_distances[pair_key]
-                sigma_value = sig[pair_key]  # Use the passed sigma
-
-                # Calculate pairwise score matrix
-                score_matrix = self.calculate_pair_scores_matrix(
-                    pos[type1],
-                    pos[type2],
-                    target_dist,
-                    sigma_value
-                )
+            if pair_key not in self.params.pair_distances:
+                continue
                 
-                # Zero out excluded pairs if provided
-                if excluded_pairs:
-                    print(f"Exclusion pairs: {excluded_pairs}")
-                    for i_idx in range(len(pos[type1])):
-                        for j_idx in range(len(pos[type2])):
-                            # Check if (type1, i_idx, type2, j_idx) or the reverse is in excluded_pairs
-                            if ((type1, i_idx, type2, j_idx) in excluded_pairs or
+            target_dist = self.params.pair_distances[pair_key]
+            sigma_value = sig[pair_key]
+
+            # Calculate pairwise score matrix
+            score_matrix = self.calculate_pair_scores_matrix(
+                pos[type1],
+                pos[type2],
+                target_dist,
+                sigma_value
+            )
+            
+            # Apply exclusions if provided
+            if excluded_pairs:
+                for i_idx in range(len(pos[type1])):
+                    for j_idx in range(len(pos[type2])):
+                        if ((type1, i_idx, type2, j_idx) in excluded_pairs or
                             (type2, j_idx, type1, i_idx) in excluded_pairs):
-                                score_matrix[i_idx, j_idx] = np.inf
+                            score_matrix[i_idx, j_idx] = np.inf
+
+            # Handle same type vs different type particles
+            if type1 == type2:
+                # Same type: avoid self-interaction
+                np.fill_diagonal(score_matrix, np.inf)
+                selected_scores = []
                 
-                # For debugging, calculate the actual distances between particles
-                if debug_fh:
-                    distance_matrix = cdist(pos[type1], pos[type2])
-
-                # Handle same type vs different type particles
-                if type1 == type2:
-                    # For same type particles, consider upper triangle only
-                    np.fill_diagonal(score_matrix, np.inf)
-                    m, n = score_matrix.shape
-                    selected_scores = []
-                    selected_indices = []
+                # Probabilistic selection using Boltzmann weights
+                n = len(score_matrix)
+                used = set()
+                
+                for _ in range(n // 2):  # Try to pair up to half the particles
+                    # Get all available pairs
+                    available_pairs = []
+                    for i in range(n):
+                        if i in used:
+                            continue
+                        for j in range(i + 1, n):
+                            if j not in used and not np.isinf(score_matrix[i, j]):
+                                available_pairs.append((i, j, score_matrix[i, j]))
                     
-                    # For each row i, find the minimum element in columns > i
-                    for i in range(m):
-                        if i < n-1:
-                            row_segment = score_matrix[i, i+1:]
-                            # If all inf, skip
-                            if np.all(np.isinf(row_segment)):
-                                continue
-                            j_offset = np.argmin(row_segment)
-                            j = i + 1 + j_offset
-                            selected_scores.append(score_matrix[i, j])
-                            selected_indices.append((i, j))
+                    if not available_pairs:
+                        break
                     
-                    # Debug information for each selected pair 
-                    if debug_fh:
-                        for i, j in selected_indices:
-                            distance = distance_matrix[i, j]
-                            pair_score = self.pair_weight * score_matrix[i, j]
-                            debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
-                else:
-                    # For different types, use argmin approach
-                    row_min_indices = np.argmin(score_matrix, axis=1)
-                    col_min_indices = np.argmin(score_matrix, axis=0)
+                    # Convert scores to probabilities using Boltzmann distribution
+                    scores = np.array([s for _, _, s in available_pairs])
+                    # Subtract min for numerical stability
+                    scores_shifted = scores - np.min(scores)
+                    # Use negative scores for probability (lower score = higher prob)
+                    probs = np.exp(-scores_shifted / selection_temp)
+                    probs = probs / np.sum(probs)
+                    
+                    # Probabilistically select a pair
+                    idx = np.random.choice(len(available_pairs), p=probs)
+                    i, j, score = available_pairs[idx]
+                    
+                    selected_scores.append(score)
+                    used.add(i)
+                    used.add(j)
+                    
+            else:
+                # Different types: each particle finds a partner probabilistically
+                selected_scores = []
+                
+                # For each particle of type1
+                for i in range(len(pos[type1])):
+                    row_scores = score_matrix[i, :]
+                    valid_indices = np.where(~np.isinf(row_scores))[0]
+                    
+                    if len(valid_indices) > 0:
+                        valid_scores = row_scores[valid_indices]
+                        # Boltzmann selection
+                        scores_shifted = valid_scores - np.min(valid_scores)
+                        probs = np.exp(-scores_shifted / selection_temp)
+                        probs = probs / np.sum(probs)
+                        
+                        # Select probabilistically (90% best, 10% exploration)
+                        if np.random.random() < 0.9:
+                            # Choose minimum
+                            j = valid_indices[np.argmin(valid_scores)]
+                        else:
+                            # Probabilistic selection
+                            j = valid_indices[np.random.choice(len(valid_indices), p=probs)]
+                        
+                        selected_scores.append(score_matrix[i, j])
 
-                    # Collect unique index pairs
-                    U = set()
-                    for i, min_idx in enumerate(row_min_indices):
-                        U.add((i, min_idx))
-                    for j, min_idx in enumerate(col_min_indices):
-                        U.add((min_idx, j))
-
-                    # Gather the scores for those index pairs
-                    selected_scores = [score_matrix[i, j] for (i, j) in U if i < score_matrix.shape[0] and j < score_matrix.shape[1]]
-
-                # Sum up the selected scores
-                pairwise_score_part = np.sum(selected_scores)
-                pairwise_score += self.pair_weight * pairwise_score_part
+            # Sum selected scores
+            pairwise_score += self.pair_weight * np.sum(selected_scores)
         
         # 3) Prior penalty using sigma provider
         prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
 
         total_score = exclusion_score + pairwise_score + prior_penalty
-
-        debug = False  # Disable debug logging after first run
-        if debug:
-            # Create debug folder if it doesn't exist
-            debug_folder = "debug_info"
-            os.makedirs(debug_folder, exist_ok=True)
-            
-            # Use fixed filenames without timestamps
-            debug_file = f"{debug_folder}/debug_scores.csv"
-            sigma_file = f"{debug_folder}/sigma_values.csv"
-            
-            # Check if files exist to determine if headers are needed
-            scores_file_exists = os.path.exists(debug_file)
-            sigma_file_exists = os.path.exists(sigma_file)
-            
-            # Write scores
-            with open(debug_file, 'a') as f:
-                if not scores_file_exists:
-                    f.write("Total Score, Exclusion Score, Pairwise Score, Prior Penalty\n")
-                f.write(f"{total_score:.1f}, {exclusion_score:.1f}, {pairwise_score:.1f}, {prior_penalty:.1f}\n")
-            
-            # Write sigma values
-            with open(sigma_file, 'a') as f:
-                if not sigma_file_exists:
-                    f.write("Sigma Type, Sigma Value\n")
-                for key, value in sig.items():
-                    f.write(f"{key}, {value:.1f}\n")
-            
+        
         return total_score, exclusion_score, pairwise_score, prior_penalty
+#    def calculate_score(
+#        self,
+#        pos: Dict[str, np.ndarray],  # input positions
+#        sig: Dict[str, float],       # input sigma values
+#        sig_range: Dict[str, Tuple[float, float]] = None,  # input sigma ranges
+#        excluded_pairs=None,
+#        debug=False,  # Whether to log detailed pair scoring info
+#        debug_file="pair_score_debug.csv"  # File to write debug info to
+#    ) -> Tuple[float, float, float, float]:
+#        """Calculate the log posterior for the pair-level interactions."""
+#        # Setup debug file if requested
+#        if debug:
+#            debug_fh = open(debug_file, 'w')
+#            debug_fh.write("Pair Type, Particle1 Type, Particle1 Index, Particle2 Type, Particle2 Index, Distance, Target Distance, Sigma, Score\n")
+#        else:
+#            debug_fh = None
+#            
+#        # 1) Excluded volume contribution
+#        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
+#                    
+#        # 2) Pairwise negative log-likelihood (pair-specific)
+#        pairwise_score = 0.0
+#        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
+#        for type1, type2 in pair_types:
+#            pair_key = f"{type1}{type2}"
+#            if pair_key in self.params.pair_distances:
+#                target_dist = self.params.pair_distances[pair_key]
+#                sigma_value = sig[pair_key]  # Use the passed sigma
+#
+#                # Calculate pairwise score matrix
+#                score_matrix = self.calculate_pair_scores_matrix(
+#                    pos[type1],
+#                    pos[type2],
+#                    target_dist,
+#                    sigma_value
+#                )
+#                
+#                # Zero out excluded pairs if provided
+#                if excluded_pairs:
+#                    print(f"Exclusion pairs: {excluded_pairs}")
+#                    for i_idx in range(len(pos[type1])):
+#                        for j_idx in range(len(pos[type2])):
+#                            # Check if (type1, i_idx, type2, j_idx) or the reverse is in excluded_pairs
+#                            if ((type1, i_idx, type2, j_idx) in excluded_pairs or
+#                            (type2, j_idx, type1, i_idx) in excluded_pairs):
+#                                score_matrix[i_idx, j_idx] = np.inf
+#                
+#                # For debugging, calculate the actual distances between particles
+#                if debug_fh:
+#                    distance_matrix = cdist(pos[type1], pos[type2])
+#
+#                # Handle same type vs different type particles
+#                if type1 == type2:
+#                    # For same type particles, consider upper triangle only
+#                    np.fill_diagonal(score_matrix, np.inf)
+#                    m, n = score_matrix.shape
+#                    selected_scores = []
+#                    selected_indices = []
+#                    
+#                    # For each row i, find the minimum element in columns > i
+#                    for i in range(m):
+#                        if i < n-1:
+#                            row_segment = score_matrix[i, i+1:]
+#                            # If all inf, skip
+#                            if np.all(np.isinf(row_segment)):
+#                                continue
+#                            j_offset = np.argmin(row_segment)
+#                            j = i + 1 + j_offset
+#                            selected_scores.append(score_matrix[i, j])
+#                            selected_indices.append((i, j))
+#                    
+#                    # Debug information for each selected pair 
+#                    if debug_fh:
+#                        for i, j in selected_indices:
+#                            distance = distance_matrix[i, j]
+#                            pair_score = self.pair_weight * score_matrix[i, j]
+#                            debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
+#                else:
+#                    # For different types, use argmin approach
+#                    row_min_indices = np.argmin(score_matrix, axis=1)
+#                    col_min_indices = np.argmin(score_matrix, axis=0)
+#
+#                    # Collect unique index pairs
+#                    U = set()
+#                    for i, min_idx in enumerate(row_min_indices):
+#                        U.add((i, min_idx))
+#                    for j, min_idx in enumerate(col_min_indices):
+#                        U.add((min_idx, j))
+#
+#                    # Gather the scores for those index pairs
+#                    selected_scores = [score_matrix[i, j] for (i, j) in U if i < score_matrix.shape[0] and j < score_matrix.shape[1]]
+#
+#                # Sum up the selected scores
+#                pairwise_score_part = np.sum(selected_scores)
+#                pairwise_score += self.pair_weight * pairwise_score_part
+#        
+#        # 3) Prior penalty using sigma provider
+#        prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
+#
+#        total_score = exclusion_score + pairwise_score + prior_penalty
+#
+#        debug = False  # Disable debug logging after first run
+#        if debug:
+#            # Create debug folder if it doesn't exist
+#            debug_folder = "debug_info"
+#            os.makedirs(debug_folder, exist_ok=True)
+#            
+#            # Use fixed filenames without timestamps
+#            debug_file = f"{debug_folder}/debug_scores.csv"
+#            sigma_file = f"{debug_folder}/sigma_values.csv"
+#            
+#            # Check if files exist to determine if headers are needed
+#            scores_file_exists = os.path.exists(debug_file)
+#            sigma_file_exists = os.path.exists(sigma_file)
+#            
+#            # Write scores
+#            with open(debug_file, 'a') as f:
+#                if not scores_file_exists:
+#                    f.write("Total Score, Exclusion Score, Pairwise Score, Prior Penalty\n")
+#                f.write(f"{total_score:.1f}, {exclusion_score:.1f}, {pairwise_score:.1f}, {prior_penalty:.1f}\n")
+#            
+#            # Write sigma values
+#            with open(sigma_file, 'a') as f:
+#                if not sigma_file_exists:
+#                    f.write("Sigma Type, Sigma Value\n")
+#                for key, value in sig.items():
+#                    f.write(f"{key}, {value:.1f}\n")
+#            
+#        return total_score, exclusion_score, pairwise_score, prior_penalty
 
     def run_mc(
         self,
@@ -297,6 +565,7 @@ class PairSampler(BaseMCSampler):
             
             # Propose move
             pair_type = None  # Will track which sigma parameter was modified
+            log_q_ratio = 0.0  # For asymmetric proposals
             if move_type == 'position':
                 proposed_positions = self.propose_position_move(
                     self.positions_ps, 
@@ -310,6 +579,14 @@ class PairSampler(BaseMCSampler):
                     accepts['sigma'] / max(1, step)
                 )
             
+            if move_type == 'sigma' and pair_type is not None:
+                # Calculate asymmetric proposal ratio for sigma moves
+                old_sigma = self.sigma[pair_type]
+                new_sigma = proposed_sigma[pair_type]
+                log_q_ratio = np.log(new_sigma) - np.log(old_sigma)
+            else:
+                log_q_ratio = 0.0
+
             # Calculate new score
             proposed_score, prop_excl, prop_pair, prop_prior = self.calculate_score(
                 proposed_positions, proposed_sigma, self.sigma_range,
@@ -318,9 +595,14 @@ class PairSampler(BaseMCSampler):
             
             # Metropolis criterion with Jacobian correction for sigma moves
             delta = proposed_score - current_score
+            log_accept = -delta / temp + log_q_ratio
             
             # Acceptance probability
-            accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
+            if log_accept >=0.0 or np.log(np.random.random()) < log_accept:
+                accept = True
+            else:
+                accept = False
+            #accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
             
             if accept:
                 # Update state

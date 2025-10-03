@@ -240,34 +240,73 @@ class BaseMCSampler:
         distances = cdist(pos1, pos2)
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
 
-    def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = None) -> Tuple[Dict[str, float], str]:
+    def propose_sigma_move(
+        self,
+        sigma: Dict[str, float],
+        accept_rate: Optional[float] = None
+    ) -> Tuple[Dict[str, float], str]:
         """
-        Additive symmetric proposal in linear sigma (no Jacobian needed).
-        accept_rate kept for backward compatibility (ignored).
+        Log-space random walk for sigma:
+            log σ' = log σ + 𝒩(0, τ)
+        This keeps proposals strictly positive and scale-aware.
+
+        Returns a fresh sigma dict and the key that was perturbed.
         """
-        import random
-        
-        # Randomly select which sigma parameter to update
         pair_type = random.choice(list(sigma.keys()))
-        
-        # Current value
-        current_value = sigma[pair_type]
-        
-        # Step size as percentage of current value
-        relative_step_size = 0.005  # changed from 0.005 to 0.005
-        step_size = relative_step_size * max(current_value, 1e-12)
-        
-        # Symmetric proposal: add zero-mean Gaussian noise directly to value
-        proposed_value = current_value + np.random.normal(0, step_size)
-        
-        # Ensure positivity and reasonable bounds
-        proposed_value = max(1e-6, min(20.0, proposed_value))
-        
-        # Create new sigma dictionary with proposed value
+        current_val = float(sigma[pair_type])
+        low, high = self.sigma_range.get(pair_type, (1e-6, 20.0))
+
+        # Base log-step (≈ multiplicative factor e^{±0.1} ≈ 1.1×)
+        tau = 0.10
+
+        # Simple Robbins–Monro adaptation toward target_acceptance
+        if accept_rate is not None:
+            diff = accept_rate - self.target_acceptance
+            tau *= np.clip(1.0 + 2.0 * diff, 0.25, 2.5)
+
+        # Propose in log space and exponentiate
+        current_log = np.log(current_val)
+        proposed_log = current_log + np.random.normal(0.0, tau)
+        proposed_val = float(np.exp(proposed_log))
+
+        # Soft clip into prior range (reflect if we hit the bounds)
+        if proposed_val < low:
+            proposed_val = low * low / max(proposed_val, 1e-12)
+        elif proposed_val > high:
+            proposed_val = high * high / proposed_val
+
         new_sigma = dict(sigma)
-        new_sigma[pair_type] = proposed_value
-        
+        new_sigma[pair_type] = proposed_val
         return new_sigma, pair_type
+    
+#    def propose_sigma_move(self, sigma: Dict[str, float], accept_rate: float = None) -> Tuple[Dict[str, float], str]:
+#        """
+#        Additive symmetric proposal in linear sigma (no Jacobian needed).
+#        accept_rate kept for backward compatibility (ignored).
+#        """
+#        import random
+#        
+#        # Randomly select which sigma parameter to update
+#        pair_type = random.choice(list(sigma.keys()))
+#        
+#        # Current value
+#        current_value = sigma[pair_type]
+#        
+#        # Step size as percentage of current value
+#        relative_step_size = 0.005  # changed from 0.005 to 0.005
+#        step_size = relative_step_size * max(current_value, 1e-12)
+#        
+#        # Symmetric proposal: add zero-mean Gaussian noise directly to value
+#        proposed_value = current_value + np.random.normal(0, step_size)
+#        
+#        # Ensure positivity and reasonable bounds
+#        proposed_value = max(1e-6, min(20.0, proposed_value))
+#        
+#        # Create new sigma dictionary with proposed value
+#        new_sigma = dict(sigma)
+#        new_sigma[pair_type] = proposed_value
+#        
+#        return new_sigma, pair_type
 
     def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
         """
@@ -305,7 +344,64 @@ class BaseMCSampler:
         new_positions[type_name][idx] = proposal
 
         return new_positions
-
+#    def propose_position_move(
+#        self,
+#        positions: Dict[str, np.ndarray],
+#        accept_rate: float = 0.5
+#    ) -> Dict[str, np.ndarray]:
+#        """
+#        Gaussian random walk on a single particle:
+#            x' = x + 𝒩(0, σ_step I)
+#        The particle is chosen uniformly over the entire system.
+#        Proposals that leave the centred simulation box are resampled,
+#        keeping the kernel symmetric without periodic wrapping.
+#        """
+#        # Shallow copies of arrays to leave `positions` untouched
+#        new_positions = {k: v.copy() for k, v in positions.items()}
+#        box_half = self.params.box_size / 2.0
+#
+#        # Build cumulative counts so each particle is equally likely
+#        type_names = list(self.params.component_counts.keys())
+#        counts = [self.params.component_counts[t] for t in type_names]
+#        total_particles = sum(counts)
+#        flat_idx = np.random.randint(total_particles)
+#
+#        # Map flat index to (type, index)
+#        cum = 0
+#        for type_name, count in zip(type_names, counts):
+#            if flat_idx < cum + count:
+#                local_idx = flat_idx - cum
+#                break
+#            cum += count
+#
+#        radius = self.params.radii[type_name]
+#        max_radius = max(self.params.radii.values())
+#
+#        # Base step tuned to reach ~50% acceptance when accept_rate ≈ target
+#        base_step = 2.0 * (max_radius / radius)
+#
+#        # Adapt step with running acceptance feedback
+#        if accept_rate is not None:
+#            factor = np.clip(0.3 + accept_rate, 0.2, 2.5)
+#            step_sigma = base_step * factor
+#        else:
+#            step_sigma = base_step
+#
+#        current_pos = positions[type_name][local_idx]
+#        proposal = current_pos.copy()
+#
+#        # Draw until we remain inside [-box_half, box_half]^3 (symmetric rejection)
+#        for _ in range(16):
+#            candidate = current_pos + np.random.normal(0.0, step_sigma, size=3)
+#            if np.all(np.abs(candidate) <= box_half):
+#                proposal = candidate
+#                break
+#        else:
+#            # If we failed to find an interior point, keep the original (null move)
+#            proposal = current_pos.copy()
+#
+#        new_positions[type_name][local_idx] = proposal
+#        return new_positions
     def save_state_to_disk(self, step, positions, sigmas, score, 
                           prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
                           types=None, bead_numbers=None, traj_file=None):

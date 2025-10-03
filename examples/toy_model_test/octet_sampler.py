@@ -16,7 +16,7 @@ from visualization import visualize_3d_configuration
 from scipy.spatial.distance import cdist
 from scipy.stats import multivariate_normal
 from pair_sampler import PairSampler
-from sigma_provider import GMMSigmaProvider
+from new_sigma_provider import GMMSigmaProvider
 import h5py
 
 class OctetSampler(BaseMCSampler):
@@ -356,130 +356,6 @@ class OctetSampler(BaseMCSampler):
                     new_pos[ptype][indices] = final_positions
         
         return new_pos
-        
-#    def propose_octet_move(self, positions: Dict[str, np.ndarray], octets) -> Dict[str, np.ndarray]:
-#        """
-#        Propose a move for a randomly selected octet by applying a small translation and rotation.
-#        This version does not apply periodic boundary conditions.
-#        """
-#        # Create a deep copy of positions to modify
-#        new_pos = {k: v.copy() for k, v in positions.items()}
-#        
-#        if not octets:
-#            return new_pos # No octets to move, return original positions
-#        
-#        # Select a random octet
-#        octet_idx = np.random.randint(len(octets))
-#        tetramer1, tetramer2 = octets[octet_idx]
-#        
-#        # Collect all particle types and indices belonging to the selected octet
-#        octet_particles_info = []
-#        for tet in [tetramer1, tetramer2]:
-#            # tet is (a_idx, b_idx, c_idx1, c_idx2)
-#            octet_particles_info.extend([
-#                ('A', tet[0]), ('B', tet[1]), ('C', tet[2]), ('C', tet[3])
-#            ])
-#        
-#        # Group indices by particle type for efficient transformation
-#        grouped_indices: Dict[str, List[int]] = {}
-#        for particle_type, particle_idx in octet_particles_info:
-#            grouped_indices.setdefault(particle_type, []).append(particle_idx)
-#        
-#        # Collect current coordinates of all particles in the octet to calculate the centroid
-#        octet_coords_list = []
-#        for particle_type, indices_list in grouped_indices.items():
-#            octet_coords_list.append(new_pos[particle_type][indices_list])
-#        
-#        if not octet_coords_list: # Should not happen if octets were found
-#            return new_pos 
-#            
-#        all_octet_coords = np.vstack(octet_coords_list)
-#        centroid = np.mean(all_octet_coords, axis=0)
-#        
-#        # Generate a random translation vector
-#        displacement = np.random.normal(0, self.octet_trans_step, 3)
-#        
-#        # Generate a random rotation axis and angle
-#        axis = self._random_unit_vector()
-#        angle = np.random.normal(0, self.octet_rot_step)
-#        rotation_matrix = self._rotation_matrix(axis, angle)
-#        
-#        # Apply the transformation to each particle in the octet
-#        for particle_type, indices_list in grouped_indices.items():
-#            # Get current positions of particles of this type in the octet
-#            current_particle_positions = new_pos[particle_type][indices_list]
-#            
-#            # Translate to origin (centroid), rotate, then translate back and apply displacement
-#            transformed_positions = (current_particle_positions - centroid) @ rotation_matrix.T + centroid + displacement
-#            
-#            # Update positions in the new_pos dictionary
-#            new_pos[particle_type][indices_list] = transformed_positions
-#            
-#        return new_pos
-#    
-#    def _random_unit_vector(self):
-#        """Generate a random unit vector."""
-#        vec = np.random.randn(3)
-#        vec /= np.linalg.norm(vec) + 1e-10  # Add small epsilon to avoid division by zero
-#        return vec
-#
-#    def _rotation_matrix(self, axis, theta):
-#        """
-#        Create a 3D rotation matrix using Rodrigues' formula.
-#        More numerically stable implementation.
-#        """
-#        axis = np.asarray(axis)
-#        axis = axis / np.linalg.norm(axis)
-#        a = np.cos(theta / 2.0)
-#        b, c, d = -axis * np.sin(theta / 2.0)
-#        
-#        return np.array([
-#            [a*a+b*b-c*c-d*d, 2*(b*c-a*d), 2*(b*d+a*c)],
-#            [2*(b*c+a*d), a*a+c*c-b*b-d*d, 2*(c*d-a*b)],
-#            [2*(b*d-a*c), 2*(c*d+a*b), a*a+d*d-b*b-c*c]
-#        ])
-    
-#    def get_octets(self, positions: Dict[str, np.ndarray]) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
-#        tetramers = self.ts.get_tetramers(positions)
-#
-#        if len(tetramers) < 2:
-#            return [], tetramers
-#
-#        # 1) Compute geometric centers for each tetramer
-#        centers = np.zeros((len(tetramers), 3), dtype=np.float64)
-#        for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
-#            coords = np.vstack([
-#                positions['A'][a_idx],
-#                positions['B'][b_idx],
-#                positions['C'][c_idx1],
-#                positions['C'][c_idx2]
-#            ])
-#            centers[i] = np.mean(coords, axis=0)
-#
-#        # 2) Build a graph of tetramers (nodes) with edge weights = distances
-#        G = nx.Graph()
-#        for i_t in range(len(tetramers)):
-#            G.add_node(i_t)
-#        for i_t in range(len(tetramers)):
-#            for j_t in range(i_t + 1, len(tetramers)):
-#                dist_ij = np.linalg.norm(centers[i_t] - centers[j_t])
-#                G.add_edge(i_t, j_t, weight=dist_ij)
-#
-#        # 3) Negate the weights to convert min-weight to max-weight problem
-#        for u, v, d in G.edges(data=True):
-#            d['weight'] = -d['weight']
-#
-#        # 4) Compute the maximum-weight perfect matching (which minimizes original distances)
-#        matching = nx.algorithms.matching.max_weight_matching(G, maxcardinality=True)
-#
-#        # 5) Convert the matching (set of edges) into a list of octets
-#        octets = []
-#        for i_t, j_t in matching:
-#            # Sort the node IDs for consistency
-#            i_t, j_t = sorted([i_t, j_t])
-#            octets.append((tetramers[i_t], tetramers[j_t]))
-#
-#        return octets, tetramers
 
     def get_octets(self, positions: Dict[str, np.ndarray]) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
         """Hungarian algorithm for optimal matching - slower but optimal, O(n³)."""
@@ -517,6 +393,7 @@ class OctetSampler(BaseMCSampler):
                 used.add(j)
         
         return octets, tetramers
+    
     def _compute_tetramer_centers_vectorized(self, tetramers: List[Tuple[int, ...]], positions: Dict[str, np.ndarray]) -> np.ndarray:
         """Efficiently compute tetramer centers using vectorization."""
         if not tetramers:
@@ -653,14 +530,6 @@ class OctetSampler(BaseMCSampler):
             # --- Metropolis criterion with Jacobian correction ---
             delta = proposed_score - current_score
             accept_prob = 0.0
-
-#            if move_type == 'sigma' and pair_type is not None:
-#                # Jacobian correction for sigma moves proposed in log-space
-#                jacobian_term = np.log(proposed_sigma[pair_type] / current_sigma[pair_type])
-#                delta += jacobian_term
-#                if step % save_freq == 0:
-#                    print(f"  Sigma move: {pair_type} {current_sigma[pair_type]:.4f}->{proposed_sigma[pair_type]:.4f}, "
-#                        f"Jacobian term: {jacobian_term:.4f}")
 
             if delta < 0:
                 accept_prob = 1.0
