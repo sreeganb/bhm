@@ -85,7 +85,8 @@ class SimpleParticleSystemBuilder:
     def __init__(self, ntype, copy_numbers, radii, colors):
         self.ntype = ntype
         self.copy_numbers = copy_numbers
-        self.radii = radii  # radius for each particle type
+        self.radii = radii   # radius for each particle type
+        self.density = 1.0 # dummy density to designate a mass value 
         self.colors = colors
 
     def build_system(self, box_size=200.0):
@@ -124,7 +125,7 @@ class SimpleParticleSystemBuilder:
                 h = IMP.atom.Hierarchy.setup_particle(mdl, p)
                 
                 # Add mass (optional, for dynamics)
-                mass = 4.0/3.0 * np.pi * (self.radii[ptype]**3)
+                mass = 4.0/3.0 * np.pi * (self.radii[ptype]**3) * self.density
                 IMP.atom.Mass.setup_particle(mdl, p, mass)
                 
                 particles.append(p)
@@ -231,10 +232,10 @@ class ScoringFunction:
 #        
 #        print(f"Added {len(restraints_added)} distance restraints")
         return dr
-    
-    def add_em_restraint(self, em_map_file="experimental_density.mrc"):
+        
+    def add_em_restraint(self, em_map_file="experimental_density.mrc", 
+                        resolution=50.0, weight=1.0):
         """Add EM restraint comparing to experimental density map"""
-        # Create the restraint
         # Create restraint directly
         em_restraint = IMP.pmi.restraints.basic.EMArthurRestraint(
             model=self.model,
@@ -247,7 +248,12 @@ class ScoringFunction:
 
         # Add to model
         em_restraint.add_to_model()        
+        # Add to output objects for statistics
         self.output_objects.append(em_restraint)
+        
+        print(f"Added EM restraint: map={em_map_file}, resolution={resolution}Å")
+        return em_restraint
+
 
 #--------------------------------------------------------------------------
 # Main execution
@@ -282,9 +288,10 @@ if __name__ == "__main__":
     sf = ScoringFunction(mdl, hierarchy, particles, particle_types, ntype, copy_numbers)
 
     # Add excluded volume using PMI's implementation
-#    sf.add_excluded_volume_restraint()
-#    sf.add_pair_distance_restraints()
-    sf.add_em_restraint(em_map_file="target_map.mrc")
+    sf.add_excluded_volume_restraint()
+    sf.add_pair_distance_restraints()
+    sf.add_em_restraint(em_map_file="target_map.mrc",
+                        resolution=50.0, weight=1.0)
 #    
 #    # Define interaction parameters: (type1, type2): (min_dist, max_dist, kappa)
 #    # Type 0 = A (8 copies), Type 1 = B (8 copies), Type 2 = C (16 copies)
@@ -294,7 +301,7 @@ if __name__ == "__main__":
 #        (1, 2): (6.0, 12.0, 2.0),   # B-C interactions
 #        # Add more as needed
 #    }
-#    
+#
 #    sf.add_pair_distance_restraints(interactions)
 #    
 #    # Set up degrees of freedom using PMI

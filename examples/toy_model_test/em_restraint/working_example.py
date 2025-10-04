@@ -12,6 +12,8 @@ import math
 import numpy as np
 import scipy
 import mrcfile
+import IMP 
+import IMP.em
 
 # This script does not require ProDy for the coarse-grained example,
 # but the original functions keep it as a dependency.
@@ -133,88 +135,162 @@ def pairwise_correlation_gpu(A, B):
     bm = B - cp.mean(B)
     return cp.sum(am * bm) / (cp.sqrt(cp.sum(am**2)) * cp.sqrt(cp.sum(bm**2)))
 
+def save_as_imp_mrc(coords, weights, bins, resolution, voxel_size, filename="simulated_map.mrc"):
+    """Create a projected density based on weighted histograms and save as IMP density map"""
+    
+    # Create the histogram and blur it
+    img_, _ = np.histogramdd(coords, weights=weights, bins=bins)
+    img_ = np.swapaxes(img_, 0, 2)  # Match MRC format
+    sigma = resolution / (4 * math.sqrt(2 * math.log(2))) / voxel_size
+    blurred_density = scipy.ndimage.gaussian_filter(img_, sigma, truncate=4).astype(np.float32)
+    
+    print(f"Blurred density shape: {blurred_density.shape}")
+    print(f"Blurred density range: [{blurred_density.min():.6f}, {blurred_density.max():.6f}]")
+    
+    # Create IMP density map with proper initialization
+    nx, ny, nz = blurred_density.shape
+    
+    # Calculate the physical dimensions from bins
+    x_extent = bins[0][-1] - bins[0][0]
+    y_extent = bins[1][-1] - bins[1][0] 
+    z_extent = bins[2][-1] - bins[2][0]
+    
+    # Set origin (center of the map)
+    origin_x = bins[0][0]
+    origin_y = bins[1][0]
+    origin_z = bins[2][0]
+    
+    print(f"Map dimensions: {nx}x{ny}x{nz}")
+    print(f"Physical extents: {x_extent:.1f} x {y_extent:.1f} x {z_extent:.1f}")
+    print(f"Origin: ({origin_x:.1f}, {origin_y:.1f}, {origin_z:.1f})")
+    
+    # Create IMP density map using create_density_map
+    bbox = IMP.algebra.BoundingBox3D(
+        IMP.algebra.Vector3D(origin_x, origin_y, origin_z),
+        IMP.algebra.Vector3D(bins[0][-1], bins[1][-1], bins[2][-1])
+    )
+    
+    model_map = IMP.em.create_density_map(bbox, voxel_size)
+    
+    # Fill the IMP density map with numpy data
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                model_map.set_value(i, j, k, float(blurred_density[i, j, k]))
+    
+    # Set resolution metadata
+    model_map.get_header_writable().set_resolution(resolution)
+    
+    # Calculate RMS for the map
+    model_map.calcRMS()
+    
+    # Save the map
+    IMP.em.write_map(model_map, filename)
+    print(f"IMP density map saved as '{filename}'")
+    
+    return model_map
+       
 # =====================================================================
 # EXAMPLE RUNNER
 # =====================================================================
-def create_dummy_map_from_model(coords, radii, resolution, voxel_size, 
-                                box_size, filename="target_map.mrc"):
-    """Generates and saves a simulated .mrc map from a coarse-grained model.
-       Coordinate frame: bins span [-box_size/2, +box_size/2] uniformly; 
-       origin (0,0,0) at box center.
-       Header origin is set to -box_size/2 so voxel (0,0,0) corresponds 
-       to (-L/2 + Δ/2) + shift semantics.
-    """
+def create_dummy_map_from_model(coords, radii, resolution, voxel_size, box_size, filename="target_map.mrc"):
+    """Generates and saves a simulated .mrc map from a coarse-grained model."""
     print(f"Creating a dummy target map '{filename}'...")
-    coords = np.asarray(coords, dtype=np.float32)
-    radii  = np.asarray(radii, dtype=np.float32)
+    
+    # Debug: Check coordinate bounds
+    min_coords = np.min(coords, axis=0)
+    max_coords = np.max(coords, axis=0)
+    print(f"Coordinate bounds: X=[{min_coords[0]:.1f}, {max_coords[0]:.1f}], "
+          f"Y=[{min_coords[1]:.1f}, {max_coords[1]:.1f}], "
+          f"Z=[{min_coords[2]:.1f}, {max_coords[2]:.1f}]")
+    print(f"Map bounds: [-{box_size/2:.1f}, {box_size/2:.1f}]")
+    
+    # Create grid definition for the new map
+    grid_dim = int(box_size / voxel_size)
+    print(f"Grid dimensions: {grid_dim}x{grid_dim}x{grid_dim}")
+    bins = [np.linspace(-box_size/2, box_size/2, grid_dim + 1)] * 3
+    
+    # Generate the blurred density from the model
     weights = radii**3
-
-    # Diagnostics
-    min_coords = coords.min(axis=0)
-    max_coords = coords.max(axis=0)
-    print(f"Coordinate bounds: X=[{min_coords[0]:.1f},{max_coords[0]:.1f}] "
-          f"Y=[{min_coords[1]:.1f},{max_coords[1]:.1f}] "
-          f"Z=[{min_coords[2]:.1f},{max_coords[2]:.1f}]")
-    half = box_size / 2.0
-    print(f"Intended physical cube: [-{half:.1f}, +{half:.1f}] Å per axis")
-
-    # Grid
-    grid_dim = int(round(box_size / voxel_size))
-    assert math.isclose(grid_dim * voxel_size, box_size, rel_tol=1e-6), "box_size not divisible by voxel_size"
-    print(f"Grid: {grid_dim}^3 voxels; voxel_size={voxel_size} Å")
-
-    # Independent bin arrays (edges)
-    bins_x = np.linspace(-half, half, grid_dim + 1, dtype=np.float64)
-    bins_y = np.linspace(-half, half, grid_dim + 1, dtype=np.float64)
-    bins_z = np.linspace(-half, half, grid_dim + 1, dtype=np.float64)
-    bins = (bins_x, bins_y, bins_z)
-
-    # Histogram + blur
-    raw, _ = np.histogramdd(coords, bins=bins, weights=weights)
-    # Optional axis swap: keep consistent with rest of pipeline
-    raw = np.swapaxes(raw, 0, 2)  # matches your existing calc_projection_cpu
-    sigma_vox = resolution_to_sigma(resolution, voxel_size)
-    density = scipy.ndimage.gaussian_filter(raw, sigma_vox, truncate=4).astype(np.float32)
-
-    print(f"Density stats before write: min={density.min():.4g} max={density.max():.4g} "
-          f"mean={density.mean():.4g} std={density.std():.4g} nonzero={np.count_nonzero(density)}")
-
-    if density.std() < 1e-10:
-        print("ERROR: zero variance density")
+    print(f"Weights range: [{np.min(weights):.1f}, {np.max(weights):.1f}]")
+    print(f"Using resolution: {resolution} Å, voxel size: {voxel_size} Å")
+    
+    simulated_density = calc_projection_cpu(coords, weights, bins, resolution)
+    
+    save_as_imp_mrc(coords, weights, bins, resolution, voxel_size)
+    
+    # Debug: Check density statistics
+    print(f"Raw density stats:")
+    print(f"  min={np.min(simulated_density):.6f}")
+    print(f"  max={np.max(simulated_density):.6f}")
+    print(f"  mean={np.mean(simulated_density):.6f}")
+    print(f"  std={np.std(simulated_density):.6f}")
+    print(f"  non-zero voxels: {np.count_nonzero(simulated_density)}/{simulated_density.size}")
+    
+    if np.std(simulated_density) < 1e-10:
+        print("ERROR: Generated density has zero variance!")
         return None
-
-    # Write MRC with correct origin and labels
+    
+    # Save as an MRC file
     with mrcfile.new(filename, overwrite=True) as mrc:
-        mrc.set_data(density)              # shape (nz, ny, nx) given swap; confirm orientation downstream
-        mrc.voxel_size = voxel_size        # sets cella.{x,y,z} = nx*voxel
-        # Set origin so that voxel index 0 corresponds to physical -half
-        mrc.header.origin.x = -half
-        mrc.header.origin.y = -half
-        mrc.header.origin.z = -half
-        # (Optional) also ensure nxstart,y,z start = 0 (already default)
-        mrc.update_header_stats()          # recompute dmin/dmax/dmean
-        # Add informative labels
-        labels = [
-            f"Simulated map; box={box_size:.1f}A; vox={voxel_size:.3f}A",
-            f"Resolution(param)={resolution:.2f}A; sigma(vox)={sigma_vox:.3f}",
-            f"Origin set to (-{half:.1f}, -{half:.1f}, -{half:.1f}) A",
-            f"grid_dim={grid_dim}"
-        ]
-        for i, lab in enumerate(labels):
-            mrc.header.label[i] = lab.encode('ascii', 'replace')[:80].ljust(80, b'\x00')
-        mrc.header.nlabl = len(labels)
-
-    # Report header interpretation
-    with mrcfile.open(filename, permissive=True) as chk:
-        nx, ny, nz = chk.header.nx, chk.header.ny, chk.header.nz
-        print(f"Written header: nx,ny,nz = {nx},{ny},{nz}")
-        print(f"Cell dims (Å): {chk.header.cella.x:.1f},{chk.header.cella.y:.1f},{chk.header.cella.z:.1f}")
-        print(f"Voxel size (Å): {chk.voxel_size.x:.3f}")
-        print(f"Origin (Å): ({chk.header.origin.x:.1f},{chk.header.origin.y:.1f},{chk.header.origin.z:.1f})")
-        print(f"Center (Å): ({chk.header.origin.x + 0.5*box_size:.1f}, "
-              f"{chk.header.origin.y + 0.5*box_size:.1f}, "
-              f"{chk.header.origin.z + 0.5*box_size:.1f}) expected ≈ (0,0,0)")
-    return density
+        # Set the data first
+        mrc.set_data(simulated_density.astype(np.float32))
+       
+        # Set voxel size (this is the key metadata!)
+        mrc.voxel_size = voxel_size
+       
+        # Set unit cell dimensions (should match the actual map size)
+        # The unit cell size = grid_dimensions * voxel_size
+        cell_size = grid_dim * voxel_size
+        mrc.header.cella.x = cell_size
+        mrc.header.cella.y = cell_size
+        mrc.header.cella.z = cell_size
+       
+        # Set unit cell angles (90 degrees for orthogonal)
+        mrc.header.cellb.alpha = 90.0
+        mrc.header.cellb.beta = 90.0
+        mrc.header.cellb.gamma = 90.0
+       
+        # Set space group (1 = P1, most common for EM maps)
+        mrc.header.ispg = 1
+       
+        # Set the map origin (center the map)
+        mrc.header.nxstart = -grid_dim // 2
+        mrc.header.nystart = -grid_dim // 2
+        mrc.header.nzstart = -grid_dim // 2
+       
+        # Set labels to store resolution information
+        # MRC format allows up to 10 labels of 80 characters each
+        label1 = f"Resolution: {resolution:.2f} Angstrom"
+        label2 = f"Voxel size: {voxel_size:.3f} Angstrom/pixel"
+        label3 = f"Box size: {box_size:.1f} Angstrom"
+        label4 = f"Grid: {grid_dim}x{grid_dim}x{grid_dim}"
+        label5 = f"Generated from {len(coords)} spheres"
+       
+        # Convert to byte strings and pad to 80 characters
+        mrc.header.label[0] = label1.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[1] = label2.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[2] = label3.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[3] = label4.ljust(80).encode('utf-8')[:80]
+        mrc.header.label[4] = label5.ljust(80).encode('utf-8')[:80]
+       
+        # Set the number of labels used
+        mrc.header.nlabl = 5
+       
+        # Ensure header statistics are up to date
+        mrc.update_header_stats()
+       
+        # Print confirmation of metadata
+        print(f"MRC metadata set:")
+        print(f"  Voxel size: {mrc.voxel_size}")
+        print(f"  Grid dimensions: {mrc.header.nx} x {mrc.header.ny} x {mrc.header.nz}")
+        print(f"  Cell dimensions: {mrc.header.cella}")
+        print(f"  Map origin: ({mrc.header.nxstart}, {mrc.header.nystart}, {mrc.header.nzstart})")
+        print(f"  Space group: {mrc.header.ispg}")
+        print(f"  Labels: {mrc.header.nlabl} set")
+    
+    print("Dummy map created successfully.")
+    return simulated_density
 
 if __name__ == "__main__":
     # 1. DEFINE YOUR TOY MODEL DATA
@@ -242,16 +318,6 @@ if __name__ == "__main__":
 
     mrcfile.validate(TARGET_MAP_FILE)
     print(f"Dummy target map '{TARGET_MAP_FILE}' created and validated.")
-    
-    #-------------------------------------------------------------------------------
-    # give a perturbed system and then get the density map for this 
-    array_A_perturbed = array_A + np.random.normal(0, 12.0, array_A.shape)
-    array_B_perturbed = array_B + np.random.normal(0, 10.0, array_B.shape)
-    array_C_perturbed = array_C + np.random.normal(0, 15.0, array_C.shape)
-    pert_coords = np.vstack([array_A_perturbed, array_B_perturbed, array_C_perturbed])
-    create_dummy_map_from_model(pert_coords, ideal_radii, RESOLUTION, VOXEL_SIZE, BOX_SIZE, filename="perturbed_map.mrc")
-
-    #-------------------------------------------------------------------------------
     
     # 3. LOAD THE TARGET MAP (this would be done once before an MCMC loop)
     target_map = parse_density(TARGET_MAP_FILE)
