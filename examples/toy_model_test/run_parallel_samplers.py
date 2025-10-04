@@ -72,7 +72,7 @@ class SamplerSequenceManager:
         return f"{sampler_name}sampler_results_{current_idx}"
 
 def run_analysis(sampler_key: str, sampler_index: int, sampler_sequence: List[str], sequence_position: int):
-    """Run the fit_gmm.py script for the specified sampler with sequence information."""
+    """Run the new_fit_gmm.py script for the specified sampler with sequence information."""
     
     print(f"\nRunning analysis for {sampler_key} sampler (occurrence #{sampler_index}) at sequence position {sequence_position}...")
     
@@ -88,7 +88,7 @@ def run_analysis(sampler_key: str, sampler_index: int, sampler_sequence: List[st
         # Build command with the new arguments
         cmd = [
             "python", 
-            "fit_gmm.py",
+            "new_fit_gmm.py",
             "--sequence", sequence_str,
             "--sampler", sampler_key,
             "--position", str(sequence_position),
@@ -351,12 +351,12 @@ def main():
     # Option 2: EM-only sampling
     #sampler_sequence = ["pair", "tetramer", "octet", "full"]
     #mcmc_steps = [100000, 50000, 50000, 2000]
-    #sampler_sequence = ["pair", "pair", "tetramer", "octet"]
-    #mcmc_steps = [5000, 5000, 5000, 5000]
+    #sampler_sequence = ["pair", "full"]
+    #mcmc_steps = [10000, 1000]
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "pair", "tetramer", "octet", "full","pair", "tetramer", "octet", "full",]
     #mcmc_steps = [50000, 10000, 10000, 2000, 50000, 20000, 20000, 5000, 50000, 50000, 50000, 5000]
-    sampler_sequence = ["pair", "tetramer", "octet", "full"]
-    mcmc_steps = [50000, 50000, 50000, 80000]
+    sampler_sequence = ["pair"]
+    mcmc_steps = [90000]
     
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "octet", "full", "tetramer", "full",]
     #mcmc_steps = [80000, 80000, 80000, 5000, 60000, 5500, 60000, 7500]
@@ -394,9 +394,9 @@ def main():
             config = {
                 **base_config,
                 "run": True,
-                "n_chains": 16,
+                "n_chains": 8,
                 "n_steps": mcmc_steps[seq_idx],
-                "save_freq": 50,
+                "save_freq": 10,
                 "use_sigma_dist": False,  # FullSampler doesn't use sigma distributions
                 "em_map_file": "simulated_target_density.mrc",  # Add EM map file
                 #"em_map_file": "target_map.mrc",  # Add EM map file
@@ -406,9 +406,9 @@ def main():
             config = {
                 **base_config,
                 "run": True,
-                "n_chains": 16,
+                "n_chains": 8,
                 "n_steps": mcmc_steps[seq_idx],
-                "save_freq": 50,
+                "save_freq": 60,
                 "use_sigma_dist": False if (is_first or sampler_key in ["full"]) else True
             }
         
@@ -444,7 +444,7 @@ def main():
         print(f"\n{sampler_class.__name__} sampling complete.")
         print(f"Results saved in: {output_folder}/{directory_name}/")
         
-        # Run the fit_gmm analysis for this sampler - UPDATED to handle EM samplers
+        # Run the new_fit_gmm analysis for this sampler - UPDATED to handle EM samplers
         analysis_success = run_analysis(
             sampler_key=sampler_key, 
             sampler_index=current_idx,

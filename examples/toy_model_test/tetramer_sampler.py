@@ -13,7 +13,7 @@ from base_sampler import BaseMCSampler
 from parameters import SystemParameters
 from scipy.spatial.distance import cdist
 from pair_sampler import PairSampler
-from sigma_provider import GMMSigmaProvider
+from new_sigma_provider import GMMSigmaProvider
 
 #-----------------------------------------------------------------------
 class TetramerSampler(BaseMCSampler):
