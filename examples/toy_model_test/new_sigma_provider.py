@@ -298,8 +298,13 @@ class GMMSigmaProvider:
                 if not match:
                     continue
                 chain_id = match.group(1)
-                if self.specific_chain and self.specific_chain not in chain_id:
-                    continue
+                
+                # Convert specific_chain to string for comparison
+                if self.specific_chain is not None:
+                    chain_str = str(self.specific_chain)
+                    if chain_str not in chain_id:
+                        continue
+                        
                 candidates.append((chain_id, os.path.join(directory, fname)))
 
             if not candidates:
@@ -307,7 +312,7 @@ class GMMSigmaProvider:
 
             # Prefer a deterministic choice if specific_chain was given, otherwise pick one at random.
             chain_id, filepath = (
-                candidates[0] if self.specific_chain else random.choice(candidates)
+                candidates[0] if self.specific_chain is not None else random.choice(candidates)
             )
             with open(filepath, "r", encoding="utf-8") as fh:
                 payload = json.load(fh)
@@ -324,7 +329,6 @@ class GMMSigmaProvider:
             weights /= weights.sum()
 
             self.gmm_models[pair] = GMMPayload(means=means, variances=variances, weights=weights)
-
 
 # --------------------------------------------------------------------------- #
 # Convenience wrapper (kept for compatibility with existing scripts)

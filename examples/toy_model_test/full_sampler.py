@@ -104,8 +104,8 @@ class FullSampler(BaseMCSampler):
             else:
                 self.positions_os = self.initialize_positions()
         else:
-            #self.positions_os = positions_init
-            self.positions_os = self.params.latest_ideal()
+            self.positions_os = positions_init
+            #self.positions_os = self.params.latest_ideal()
             
         
         # **NEW: Center particles to origin**
@@ -325,12 +325,22 @@ class FullSampler(BaseMCSampler):
             return self.initialize_positions()
             
         # Try to load the latest trajectory file
-        traj_file = os.path.join(prev_dir, "trajectory_chain_1.h5")
-        if os.path.exists(traj_file):
-            return self._load_positions_from_h5(traj_file)
-        else:
-            print(f"Trajectory file not found: {traj_file}")
+        traj_files = sorted(
+            f for f in Path(prev_dir).glob("trajectory_chain_*.h5")
+            if f.is_file()
+        )
+        if not traj_files:
+            print(f"Trajectory files not found in {prev_dir}")
             return self.initialize_positions()
+
+        if self.specific_chain is not None:
+            match = [f for f in traj_files if f.stem.endswith(f"{self.specific_chain}")]
+            chosen_file = match[0] if match else random.choice(traj_files)
+        else:
+            chosen_file = random.choice(traj_files)
+
+        print(f"Loading positions from {chosen_file.name}")
+        return self._load_positions_from_h5(str(chosen_file))
 
     def _load_positions_from_h5(self, filename: str) -> Dict[str, np.ndarray]:
         """Load the latest positions from an HDF5 trajectory file."""
@@ -511,11 +521,11 @@ class FullSampler(BaseMCSampler):
         com = np.mean(combined_coords, axis=0)
         
         # Random translation
-        full_trans_step = 0.2 # Translation step size
+        full_trans_step = 0.25 # Translation step size
         displacement = np.random.normal(0, full_trans_step, 3)
 
         # Create a random vector passing through the COM
-        full_rot_step = 0.1
+        full_rot_step = 0.15 # Rotation step size in radians
         rand_vec = np.random.normal(size=3)
         rand_vec /= np.linalg.norm(rand_vec) + 1e-10  # Normalize and avoid division by zero
         angle = np.random.normal(0, full_rot_step)
@@ -576,7 +586,7 @@ class FullSampler(BaseMCSampler):
         )
         
         # Convert to minimization problem
-        score = 500 * (1 - ccc)
+        score = 1000 * (1 - ccc)
         
         # Add excluded volume
         ex_score = self.excluded_volume_nll(positions)
@@ -597,7 +607,9 @@ class FullSampler(BaseMCSampler):
         score += octet_score
         
         # At this point also, include the pair score and add it to the total score
+        _, _, pair_scores, _ = self.pair_sampler.calculate_score(positions, self.sigma, self.sigma_range)
         
+        score += pair_scores # pair_scores is already summed
         
         info = {"correlation": ccc}
         return score, info
@@ -605,15 +617,15 @@ class FullSampler(BaseMCSampler):
     def run_mc(self, n_steps=50000, save_freq=1000, output_dir=None):
         """Monte Carlo sampling with position, tetramer, and octet moves."""
         if output_dir is None:
-            output_dir = f"{self.base_output_dir}/em_sampler_results_1/"
+            output_dir = f"{self.base_output_dir}/fullsampler_results_1/"
             
         os.makedirs(output_dir, exist_ok=True)
         trajectory_file = os.path.join(output_dir, "trajectory_chain_1.h5")
         
         # Debug log file
-        em_debug_log_file = os.path.join(output_dir, "em_debug.txt")
+        full_debug_log_file = os.path.join(output_dir, "full_debug.txt")
 
-        with open(em_debug_log_file, 'w') as f:
+        with open(full_debug_log_file, 'w') as f:
             f.write("Step,MoveType,Correlation,Score,Accepted,Temp\n")
         
         # Create empty trajectory file
@@ -623,7 +635,7 @@ class FullSampler(BaseMCSampler):
         # Initialize tracking
         best_positions = {k: v.copy() for k, v in self.positions_os.items()}
         best_score = float('inf')
-        em_history = {
+        full_history = {
             'correlation': np.zeros(n_steps // save_freq + 1),
             'score': np.zeros(n_steps // save_freq + 1)
         }
@@ -642,8 +654,8 @@ class FullSampler(BaseMCSampler):
             return None, None
 
         best_score = current_score
-        em_history['correlation'][0] = curr_em_info.get('correlation', 0.0)
-        em_history['score'][0] = current_score
+        full_history['correlation'][0] = curr_em_info.get('correlation', 0.0)
+        full_history['score'][0] = current_score
 
         # Save initial state
         self.save_state_to_disk(0, current_positions, self.sigma, current_score, traj_file=trajectory_file)
@@ -651,8 +663,8 @@ class FullSampler(BaseMCSampler):
         # MCMC parameters
 #        move_types = ['position','tetramer', 'octet', 'full']
 #        move_probs = [0.1, 0.3, 0.5, 0.1] # Adjusted probabilities to include 'full' moves
-        move_types = ['tetramer', 'octet', 'full']
-        move_probs = [0.4, 0.3, 0.3] # Adjusted probabilities to include 'full' moves
+        move_types = ['position', 'tetramer', 'octet', 'full']
+        move_probs = [0.25, 0.25, 0.25, 0.25] # Adjusted probabilities to include 'full' moves
         temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 
@@ -682,7 +694,7 @@ class FullSampler(BaseMCSampler):
             proposed_score, prop_em_info = self.calculate_em_score(proposed_positions)
 
             if not np.isfinite(proposed_score) or not np.isfinite(current_score):
-                with open(em_debug_log_file, 'a') as f:
+                with open(full_debug_log_file, 'a') as f:
                     f.write(f"{step},{move_type},NaN,NaN,REJECTED(InvalidScore),{temp:.3f}\n")
                 continue
 
@@ -692,7 +704,7 @@ class FullSampler(BaseMCSampler):
 
             # Log step
             em_info = prop_em_info if accept else curr_em_info
-            with open(em_debug_log_file, 'a') as f:
+            with open(full_debug_log_file, 'a') as f:
                 f.write(f"{step},{move_type},"
                         f"{em_info.get('correlation', 0.0):.6f},"
                         f"{proposed_score if accept else current_score:.6f},"
@@ -715,9 +727,9 @@ class FullSampler(BaseMCSampler):
             # Save state periodically
             if step % save_freq == 0 and step > 0:
                 save_idx = step // save_freq
-                em_history['correlation'][save_idx] = curr_em_info.get('correlation', 0.0)
-                em_history['score'][save_idx] = current_score
-                
+                full_history['correlation'][save_idx] = curr_em_info.get('correlation', 0.0)
+                full_history['score'][save_idx] = current_score
+
                 self.save_state_to_disk(step, current_positions, self.sigma, current_score, traj_file=trajectory_file)
                 
                 acceptance_rate = sum(accepts.values()) / (step + 1)
@@ -733,8 +745,8 @@ class FullSampler(BaseMCSampler):
                       f"Tet: {tet_rate:.2f}, Oct: {oct_rate:.2f}")
 
         # Save final results
-        em_history_df = pd.DataFrame(em_history)
-        em_history_df.to_csv(os.path.join(output_dir, "em_history.csv"), index=False)
+        full_history_df = pd.DataFrame(full_history)
+        full_history_df.to_csv(os.path.join(output_dir, "full_history.csv"), index=False)
 
         print("\nSampling complete:")
         for mv_type in move_types:

@@ -142,11 +142,12 @@ def count_sampler_occurrences(sequence: List[str], target: str, position: int) -
     return sum(1 for i in range(position + 1) if sequence[i] == target)
 
 
-def apply_burnin(series: List[float], fraction: float) -> List[float]:
+def apply_burnin_with_steps(series: List[float], steps: List[int], fraction: float) -> tuple[List[float], List[int]]:
+    """Apply burn-in and return both values and corresponding step numbers."""
     if not series:
-        return series
+        return series, steps
     cut = int(len(series) * fraction)
-    return series[cut:]
+    return series[cut:], steps[cut:]
 
 
 def compute_rhat_table(all_sigma_histories: Dict[str, Dict[str, List[float]]]) -> Dict[str, float | None]:
@@ -175,108 +176,162 @@ def compute_rhat_table(all_sigma_histories: Dict[str, Dict[str, List[float]]]) -
     return rhat
 
 
-def add_rhat_page(pdf: PdfPages, rhat: Dict[str, float | None], sampler_label: str, out_dir: str) -> None:
-    """Write R-hat table to PDF and text file."""
+def add_rhat_page(pdf: PdfPages, rhat: Dict[str, float | None], sampler_label: str, out_dir: str, burnin_frac: float) -> None:
+    """Write R-hat table to PDF and text file (Page 1)."""
     txt_path = os.path.join(out_dir, f"rhat_{sampler_label}.txt")
     with open(txt_path, "w", encoding="utf-8") as fh:
-        fh.write(f"R-hat values for {sampler_label}\n")
+        fh.write(f"R-hat values for {sampler_label} (burn-in: {burnin_frac*100:.0f}%)\n")
         for k, val in rhat.items():
             line = f"{k}: {val:.3f}" if val is not None else f"{k}: N/A"
             fh.write(line + "\n")
     print(f"[Rhat] Summary written to {txt_path}")
 
-    fig, ax = plt.subplots(figsize=(5, 1.5 + 0.3 * max(len(rhat), 1)))
-    fig.suptitle(f"R-hat ({sampler_label})", fontsize=14)
+    fig, ax = plt.subplots(figsize=(6, 2.5 + 0.4 * max(len(rhat), 1)))
+    fig.suptitle(f"R-hat Convergence Diagnostics ({sampler_label})\nBurn-in: {burnin_frac*100:.0f}%", 
+                 fontsize=14, fontweight='bold')
     ax.axis("off")
 
     rows = [[sigma_type, f"{val:.3f}" if val is not None else "N/A"] for sigma_type, val in rhat.items()]
-    table = ax.table(cellText=rows, colLabels=["Sigma Type", "R-hat"], loc="center")
+    table = ax.table(cellText=rows, colLabels=["Sigma Type", "R-hat"], loc="center", cellLoc='center')
     table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1, 1.4)
+    table.set_fontsize(11)
+    table.scale(1, 1.6)
+    
+    # Color code R-hat values
+    for i, (_, val) in enumerate(rhat.items(), start=1):
+        if val is not None:
+            if val < 1.01:
+                color = '#90EE90'  # Light green
+            elif val < 1.05:
+                color = '#FFFFE0'  # Light yellow
+            else:
+                color = '#FFB6C1'  # Light red
+            table[(i, 1)].set_facecolor(color)
 
+    plt.tight_layout()
     pdf.savefig(fig)
     plt.close(fig)
 
 
-def plot_combined_gmm(
+def add_individual_chain_trace_page(
+    pdf: PdfPages,
+    chain_id: str,
+    chain_data: Dict[str, List[float]],
+    chain_steps: Dict[str, List[int]],
+    sampler_label: str,
+    burnin_step: int
+) -> None:
+    """Create one page with trace plots for all sigma types in a single chain."""
+    sns.set(style="whitegrid")
+    
+    sigma_types = ["AA", "AB", "BC"]
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # Blue, Orange, Green
+    
+    fig, axes = plt.subplots(3, 1, figsize=(10, 9))
+    fig.suptitle(f"Trace Plots - Chain {chain_id} ({sampler_label})\nPost burn-in (step ≥ {burnin_step})", 
+                 fontsize=14, fontweight='bold')
+    
+    for ax, sigma_type, color in zip(axes, sigma_types, colors):
+        values = chain_data.get(sigma_type, [])
+        steps = chain_steps.get(sigma_type, [])
+        if values and steps:
+            ax.plot(steps, values, color=color, linewidth=1.2, alpha=0.8)
+            ax.axvline(x=burnin_step, color='red', linestyle='--', linewidth=1.5, alpha=0.7, label='Burn-in cutoff')
+            ax.set_ylabel(f"σ_{{{sigma_type}}}", fontsize=11, fontweight='bold')
+            ax.set_xlabel("MCMC Step", fontsize=10)
+            ax.grid(True, alpha=0.3)
+            ax.set_title(f"Sigma {sigma_type}", fontsize=11)
+            ax.legend(loc='best', fontsize=9)
+        else:
+            ax.text(0.5, 0.5, f"No data for {sigma_type}", 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_ylabel(f"σ_{{{sigma_type}}}", fontsize=11)
+    
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
+def add_combined_trace_page(
     pdf: PdfPages,
     sigma_type: str,
+    all_chain_data: Dict[str, List[float]],
+    all_chain_steps: Dict[str, List[int]],
     sampler_label: str,
-    chain_data: Dict[str, np.ndarray],
-    chain_models: Dict[str, GaussianMixture],
-    output_dir: str,
+    burnin_step: int
 ) -> None:
-    """Histogram + mixture curves for a sigma component."""
-    plt.figure(figsize=(10, 7))
-    sns.set(style="darkgrid")
-    palette = sns.color_palette("husl", len(chain_data))
+    """Create one page showing trace plots from all chains for a single sigma type."""
+    sns.set(style="whitegrid")
+    
+    fig, ax = plt.subplots(figsize=(10, 7))
+    fig.suptitle(f"Combined Trace Plot - Sigma {sigma_type} ({sampler_label})\nPost burn-in (step ≥ {burnin_step})", 
+                 fontsize=14, fontweight='bold')
+    
+    palette = sns.color_palette("husl", len(all_chain_data))
+    
+    for (chain_id, values), steps, color in zip(
+        sorted(all_chain_data.items()),
+        [all_chain_steps[cid] for cid in sorted(all_chain_data.keys())],
+        palette
+    ):
+        if values and steps:
+            ax.plot(steps, values, color=color, linewidth=1.0, alpha=0.7, label=f"Chain {chain_id}")
+    
+    ax.axvline(x=burnin_step, color='red', linestyle='--', linewidth=2.0, alpha=0.8, label='Burn-in cutoff')
+    ax.set_xlabel("MCMC Step", fontsize=12, fontweight='bold')
+    ax.set_ylabel(f"σ_{{{sigma_type}}} Value", fontsize=12, fontweight='bold')
+    ax.legend(fontsize=10, loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
 
-    for (chain_id, data), color in zip(chain_data.items(), palette):
+
+def add_combined_distribution_page(
+    pdf: PdfPages,
+    sigma_type: str,
+    all_chain_data: Dict[str, np.ndarray],
+    all_chain_models: Dict[str, GaussianMixture],
+    sampler_label: str
+) -> None:
+    """Create one page showing distributions from all chains for a single sigma type."""
+    sns.set(style="whitegrid")
+    
+    fig, ax = plt.subplots(figsize=(10, 7))
+    fig.suptitle(f"Distribution Comparison - Sigma {sigma_type} ({sampler_label})", 
+                 fontsize=14, fontweight='bold')
+    
+    palette = sns.color_palette("husl", len(all_chain_data))
+    
+    for (chain_id, data), color in zip(sorted(all_chain_data.items()), palette):
+        # Plot histogram
         sns.histplot(
             data,
             bins=30,
             stat="density",
-            alpha=0.35,
+            alpha=0.25,
             label=f"Chain {chain_id}",
             color=color,
+            ax=ax
         )
-
-        gmm = chain_models.get(chain_id)
+        
+        # Overlay GMM curve if available
+        gmm = all_chain_models.get(chain_id)
         if gmm is not None:
-            x = np.linspace(data.min(), data.max(), 400).reshape(-1, 1)
-            pdf_vals = np.exp(gmm.score_samples(x))
-            plt.plot(x, pdf_vals, color=color, lw=2)
-
-    plt.title(f"{sigma_type} — {sampler_label}")
-    plt.xlabel("Sigma")
-    plt.ylabel("Density")
-    plt.legend()
+            x_range = np.linspace(data.min(), data.max(), 400).reshape(-1, 1)
+            pdf_vals = np.exp(gmm.score_samples(x_range))
+            ax.plot(x_range, pdf_vals, color=color, linewidth=2.5, alpha=0.9)
+    
+    ax.set_xlabel(f"σ_{{{sigma_type}}} Value", fontsize=12, fontweight='bold')
+    ax.set_ylabel("Density", fontsize=12, fontweight='bold')
+    ax.legend(fontsize=10, loc='best')
+    ax.grid(True, alpha=0.3)
+    
     plt.tight_layout()
-
-    pdf.savefig()
-    out_png = os.path.join(output_dir, f"gmm_{sigma_type}_{sampler_label}.png")
-    plt.savefig(out_png, dpi=200)
-    plt.close()
-    print(f"[Plot] {sigma_type} saved to {out_png}")
-
-def plot_sigma_traces(
-    pdf: PdfPages,
-    sigma_histories: Dict[str, Dict[str, List[float]]],
-    sampler_label: str,
-) -> None:
-    """Trace plots for all sigma types."""
-    sns.set(style="darkgrid")
-    all_sigma_types = set()
-    for chain_data in sigma_histories.values():
-        all_sigma_types.update(chain_data.keys())
-    all_sigma_types = sorted(all_sigma_types)
-
-    n_types = len(all_sigma_types)
-    n_cols = 2
-    n_rows = (n_types + 1) // n_cols
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 3 * n_rows), squeeze=False)
-    fig.suptitle(f"Sigma Traces ({sampler_label})", fontsize=16)
-
-    for idx, sigma_type in enumerate(all_sigma_types):
-        ax = axes[idx // n_cols][idx % n_cols]
-        for chain_id, chain_data in sigma_histories.items():
-            values = chain_data.get(sigma_type, [])
-            if not values:
-                continue
-            ax.plot(values, label=f"Chain {chain_id}", alpha=0.7)
-        ax.set_title(sigma_type)
-        ax.set_xlabel("Sample Index")
-        ax.set_ylabel("Sigma Value")
-        ax.legend()
-
-    for j in range(idx + 1, n_rows * n_cols):
-        fig.delaxes(axes[j // n_cols][j % n_cols])
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     pdf.savefig(fig)
     plt.close(fig)
+
 
 def analyze_mcmc_data(
     output_folder: str,
@@ -287,7 +342,13 @@ def analyze_mcmc_data(
     do_gmm_fits: bool = True,
     do_diagnostics: bool = True,
 ) -> None:
-    """Collect sigma trajectories, compute R-hat, fit GMMs, and save plots."""
+    """
+    Generate comprehensive PDF report with structured pages:
+    - Page 1: R-hat table
+    - Pages 2-N: Individual chain trace plots (one page per chain, showing step numbers)
+    - Pages N+1, N+2, N+3: Combined trace plots for AA, AB, BC (all chains together)
+    - Pages N+4, N+5, N+6: Combined distributions for AA, AB, BC
+    """
     sampler_folder = get_sampler_folder_name(sampler_type, sampler_position)
     sampler_dir = os.path.join(output_folder, sampler_folder)
     if not os.path.isdir(sampler_dir):
@@ -301,50 +362,100 @@ def analyze_mcmc_data(
         print(f"[analyze] No trajectory files in {sampler_dir}")
         return
 
+    # Load all sigma histories WITH step numbers
     sigma_histories = defaultdict(lambda: defaultdict(list))
+    sigma_steps = defaultdict(lambda: defaultdict(list))
+    
     for filename in trajectory_files:
-        chain_id = filename.removeprefix("trajectory_").removesuffix(".h5")
+        chain_id = filename.replace("trajectory_chain_", "").replace(".h5", "")
         states = load_trajectory_from_hdf5(os.path.join(sampler_dir, filename))
         for state in states:
+            step = state["step"]
             for sigma_type, value in state["sigma"].items():
                 sigma_histories[chain_id][sigma_type].append(float(value))
+                sigma_steps[chain_id][sigma_type].append(int(step))
 
     if isinstance(burnin, str):
         print("[analyze] Automatic burn-in detection disabled; using 0.4")
         burnin = 0.4
 
+    # Calculate burn-in step (use first chain's steps as reference)
+    first_chain = list(sigma_histories.keys())[0]
+    first_sigma = list(sigma_histories[first_chain].keys())[0]
+    total_samples = len(sigma_histories[first_chain][first_sigma])
+    burnin_idx = int(total_samples * burnin)
+    burnin_step = sigma_steps[first_chain][first_sigma][burnin_idx] if burnin_idx < total_samples else 0
+    
+    print(f"[Burn-in] Removing first {burnin*100:.0f}% of samples (step < {burnin_step})")
+
+    # Apply burn-in while keeping step information
     for chain_id in sigma_histories:
         for sigma_type in list(sigma_histories[chain_id].keys()):
-            sigma_histories[chain_id][sigma_type] = apply_burnin(
-                sigma_histories[chain_id][sigma_type], float(burnin)
+            values, steps = apply_burnin_with_steps(
+                sigma_histories[chain_id][sigma_type],
+                sigma_steps[chain_id][sigma_type],
+                float(burnin)
             )
+            sigma_histories[chain_id][sigma_type] = values
+            sigma_steps[chain_id][sigma_type] = steps
 
     sampler_label = f"{sampler_type.capitalize()}Sampler_{sampler_position}"
-    pdf_path = os.path.join(sampler_dir, f"{sampler_label}_summary.pdf")
+    pdf_path = os.path.join(sampler_dir, f"{sampler_label}_report.pdf")
 
     with PdfPages(pdf_path) as pdf:
+        # PAGE 1: R-hat table
         rhat = compute_rhat_table(sigma_histories)
-        add_rhat_page(pdf, rhat, sampler_label, sampler_dir)
+        add_rhat_page(pdf, rhat, sampler_label, sampler_dir, burnin)
+        print(f"[Report] Page 1: R-hat table")
 
+        # PAGES 2-N: Individual chain traces (one page per chain, with step numbers)
+        for chain_id in sorted(sigma_histories.keys()):
+            add_individual_chain_trace_page(
+                pdf, chain_id, 
+                sigma_histories[chain_id], 
+                sigma_steps[chain_id],
+                sampler_label,
+                burnin_step
+            )
+            print(f"[Report] Added trace page for Chain {chain_id}")
+
+        # PAGES N+1, N+2, N+3: Combined trace plots (all chains together)
+        sigma_types = ["AA", "AB", "BC"]
+        for sigma_type in sigma_types:
+            chain_data = {}
+            chain_step_data = {}
+            for chain_id in sigma_histories.keys():
+                if sigma_type in sigma_histories[chain_id]:
+                    chain_data[chain_id] = sigma_histories[chain_id][sigma_type]
+                    chain_step_data[chain_id] = sigma_steps[chain_id][sigma_type]
+            
+            if chain_data:
+                add_combined_trace_page(pdf, sigma_type, chain_data, chain_step_data, sampler_label, burnin_step)
+                print(f"[Report] Added combined trace plot for Sigma {sigma_type}")
+
+        # Fit GMMs and prepare combined distribution data
         if do_gmm_fits:
-            for sigma_type in ["AA", "AB", "BC"]:
+            for sigma_type in sigma_types:
                 chain_data = {}
                 chain_models = {}
+                
                 for chain_id, chain_vals in sigma_histories.items():
                     values = np.asarray(chain_vals.get(sigma_type, []), dtype=float)
                     values = values[np.isfinite(values)]
                     if len(values) == 0:
                         continue
+                    
                     chain_data[chain_id] = values
                     model = fit_gmm_simple(values, sigma_type)
                     chain_models[chain_id] = model
                     save_gmm_simple(model, sigma_type, chain_id, sampler_dir, values)
-
+                
+                # PAGES N+4, N+5, N+6: Combined distributions
                 if chain_data:
-                    plot_combined_gmm(pdf, sigma_type, sampler_label, chain_data, chain_models, sampler_dir)
-                    plot_sigma_traces(pdf, sigma_histories, sampler_label)
+                    add_combined_distribution_page(pdf, sigma_type, chain_data, chain_models, sampler_label)
+                    print(f"[Report] Added combined distribution page for Sigma {sigma_type}")
 
-    print(f"[analyze] Report saved to {pdf_path}")
+    print(f"[Report] Complete PDF saved to {pdf_path}")
 
 
 def analyze_sampler_in_sequence(
@@ -414,7 +525,7 @@ def main() -> None:
         "-b",
         type=str,
         default="0.4",
-        help='Burn-in fraction (0–1). "auto" falls back to 0.4.',
+        help='Burn-in fraction (0–1).',
     )
     parser.add_argument(
         "--no-gmm",
@@ -424,17 +535,14 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.burnin.lower() == "auto":
-        burnin = "auto"
-    else:
-        try:
-            burnin = float(args.burnin)
-            if not (0.0 <= burnin < 1.0):
-                print("[cli] Burn-in outside [0,1); using 0.4")
-                burnin = 0.4
-        except ValueError:
-            print("[cli] Invalid burn-in; using 0.4")
+    try:
+        burnin = float(args.burnin)
+        if not (0.0 <= burnin < 1.0):
+            print("[cli] Burn-in outside [0,1); using 0.4")
             burnin = 0.4
+    except ValueError:
+        print("[cli] Invalid burn-in; using 0.4")
+        burnin = 0.4
 
     sampler_sequence = [token.strip().lower() for token in args.sequence.split(",")]
     valid = {"pair", "tetramer", "octet", "full"}
@@ -448,9 +556,9 @@ def main() -> None:
         sampler_position=args.position,
         output_folder=args.output,
         burnin=burnin,
-        do_trace_plots=False,
+        do_trace_plots=True,
         do_gmm_fits=not args.no_gmm,
-        do_diagnostics=False,
+        do_diagnostics=True,
     )
     if not ok:
         sys.exit(1)

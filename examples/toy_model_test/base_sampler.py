@@ -351,55 +351,33 @@ class BaseMCSampler:
         accept_rate: float = 0.5
     ) -> Dict[str, np.ndarray]:
         """
-        Gaussian random walk on a single particle:
-            x' = x + 𝒩(0, σ_step I)
-        The particle is chosen uniformly over the entire system.
-        Proposals that leave the centred simulation box are resampled,
-        keeping the kernel symmetric without periodic wrapping.
+        Single-particle Gaussian move with reflective walls.
         """
-        # Shallow copies of arrays to leave `positions` untouched
         new_positions = {k: v.copy() for k, v in positions.items()}
         box_half = self.params.box_size / 2.0
 
-        # Build cumulative counts so each particle is equally likely
         type_names = list(self.params.component_counts.keys())
         counts = [self.params.component_counts[t] for t in type_names]
-        total_particles = sum(counts)
-        flat_idx = np.random.randint(total_particles)
+        cum_counts = np.cumsum(counts)
+        flat_idx = np.random.randint(cum_counts[-1])
 
-        # Map flat index to (type, index)
-        cum = 0
-        for type_name, count in zip(type_names, counts):
-            if flat_idx < cum + count:
-                local_idx = flat_idx - cum
+        for type_name, count, cum in zip(type_names, counts, cum_counts):
+            if flat_idx < cum:
+                local_idx = flat_idx - (cum - count)
                 break
-            cum += count
 
         radius = self.params.radii[type_name]
         max_radius = max(self.params.radii.values())
+        step_sigma = 2.0 * (max_radius / radius)
 
-        # Base step tuned to reach ~50% acceptance when accept_rate ≈ target
-        base_step = 2.0 * (max_radius / radius)
+        proposal = positions[type_name][local_idx] + np.random.normal(0.0, step_sigma, 3)
 
-        # Adapt step with running acceptance feedback
-        if accept_rate is not None:
-            factor = np.clip(0.3 + accept_rate, 0.2, 2.5)
-            step_sigma = base_step * factor
-        else:
-            step_sigma = base_step
-
-        current_pos = positions[type_name][local_idx]
-        proposal = current_pos.copy()
-
-        # Draw until we remain inside [-box_half, box_half]^3 (symmetric rejection)
-        for _ in range(16):
-            candidate = current_pos + np.random.normal(0.0, step_sigma, size=3)
-            if np.all(np.abs(candidate) <= box_half):
-                proposal = candidate
-                break
-        else:
-            # If we failed to find an interior point, keep the original (null move)
-            proposal = current_pos.copy()
+        for dim in range(3):
+            while proposal[dim] > box_half or proposal[dim] < -box_half:
+                if proposal[dim] > box_half:
+                    proposal[dim] = 2 * box_half - proposal[dim]
+                else:
+                    proposal[dim] = -2 * box_half - proposal[dim]
 
         new_positions[type_name][local_idx] = proposal
         return new_positions
