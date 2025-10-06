@@ -481,7 +481,7 @@ class OctetSampler(BaseMCSampler):
 
         # --- Main MCMC loop parameters ---
         move_types = ['position', 'sigma', 'tetramer', 'octet']
-        move_probs = [0.2, 0.1, 0.3, 0.4]
+        move_probs = [0.1, 0.2, 0.3, 0.4]
         temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 

@@ -664,7 +664,7 @@ class FullSampler(BaseMCSampler):
 #        move_types = ['position','tetramer', 'octet', 'full']
 #        move_probs = [0.1, 0.3, 0.5, 0.1] # Adjusted probabilities to include 'full' moves
         move_types = ['position', 'tetramer', 'octet', 'full']
-        move_probs = [0.25, 0.25, 0.25, 0.25] # Adjusted probabilities to include 'full' moves
+        move_probs = [0.1, 0.2, 0.2, 0.5] # Adjusted probabilities to include 'full' moves
         temp_start, temp_end = 5.0, 0.1
         temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
 

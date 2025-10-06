@@ -355,8 +355,8 @@ def main():
     #mcmc_steps = [10000, 1000]
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "pair", "tetramer", "octet", "full","pair", "tetramer", "octet", "full",]
     #mcmc_steps = [50000, 10000, 10000, 2000, 50000, 20000, 20000, 5000, 50000, 50000, 50000, 5000]
-    sampler_sequence = ["pair", "tetramer", "full"]
-    mcmc_steps = [60000, 60000, 3000]
+    sampler_sequence = ["pair", "tetramer", "octet"]
+    mcmc_steps = [60000, 60000, 60000]
     
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "octet", "full", "tetramer", "full",]
     #mcmc_steps = [80000, 80000, 80000, 5000, 60000, 5500, 60000, 7500]
@@ -398,9 +398,10 @@ def main():
                 "n_steps": mcmc_steps[seq_idx],
                 "save_freq": 10,
                 "use_sigma_dist": False,  # FullSampler doesn't use sigma distributions
-                "em_map_file": "simulated_target_density.mrc",  # Add EM map file
-                #"em_map_file": "target_map.mrc",  # Add EM map file
-                "resolution": 55.0  # Add resolution parameter
+                #"em_map_file": "simulated_target_density.mrc",  # Add EM map file
+                "em_map_file": "target_map.mrc",  # Add EM map file
+                #"resolution": 55.0  # Add resolution parameter
+                "resolution": 50.0  # Add resolution parameter
             }
         else:
             config = {

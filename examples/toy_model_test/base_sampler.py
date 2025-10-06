@@ -240,40 +240,96 @@ class BaseMCSampler:
         distances = cdist(pos1, pos2)
         return ((distances - target_dist) ** 2) / (2 * sigma**2) + np.log(2 * np.pi * sigma**2)
 
+#    def propose_sigma_move(
+#        self,
+#        sigma: Dict[str, float],
+#        accept_rate: Optional[float] = None
+#    ) -> Tuple[Dict[str, float], str]:
+#        """
+#        Log-space random walk for sigma:
+#            log σ' = log σ + 𝒩(0, τ)
+#        This keeps proposals strictly positive and scale-aware.
+#
+#        Returns a fresh sigma dict and the key that was perturbed.
+#        """
+#        pair_type = random.choice(list(sigma.keys()))
+#        current_val = float(sigma[pair_type])
+#        low, high = self.sigma_range.get(pair_type, (1e-6, 20.0))
+#
+#        # Base log-step (≈ multiplicative factor e^{±0.1} ≈ 1.1×)
+#        tau = 0.10
+#
+#        # Simple Robbins–Monro adaptation toward target_acceptance
+#        if accept_rate is not None:
+#            diff = accept_rate - self.target_acceptance
+#            tau *= np.clip(1.0 + 2.0 * diff, 0.25, 2.5)
+#
+#        # Propose in log space and exponentiate
+#        current_log = np.log(current_val)
+#        proposed_log = current_log + np.random.normal(0.0, tau)
+#        proposed_val = float(np.exp(proposed_log))
+#
+#        # Soft clip into prior range (reflect if we hit the bounds)
+#        if proposed_val < low:
+#            proposed_val = low * low / max(proposed_val, 1e-12)
+#        elif proposed_val > high:
+#            proposed_val = high * high / proposed_val
+#
+#        new_sigma = dict(sigma)
+#        new_sigma[pair_type] = proposed_val
+#        return new_sigma, pair_type
+
     def propose_sigma_move(
         self,
         sigma: Dict[str, float],
         accept_rate: Optional[float] = None
     ) -> Tuple[Dict[str, float], str]:
         """
-        Log-space random walk for sigma:
-            log σ' = log σ + 𝒩(0, τ)
-        This keeps proposals strictly positive and scale-aware.
+        Non-adaptive Metropolis proposal that preserves detailed balance.
 
-        Returns a fresh sigma dict and the key that was perturbed.
+        - Selects a single pair_type uniformly at random.
+        - Uses an additive Gaussian step in linear sigma with constant scale
+          per parameter (independent of the current value/state).
+        - Applies exact reflective boundary conditions on [low, high],
+          which keeps proposals unbiased and symmetric within bounds.
+
+        Returns:
+            (new_sigma, pair_type): a shallow copy with one updated entry.
         """
+        import numpy as np
+        import random
+
+        # Choose which parameter to update (uniform)
         pair_type = random.choice(list(sigma.keys()))
         current_val = float(sigma[pair_type])
+
+        # Bounds (strictly positive)
         low, high = self.sigma_range.get(pair_type, (1e-6, 20.0))
+        # Guard invalid current values by snapping into bounds
+        if not np.isfinite(current_val) or current_val <= 0.0:
+            current_val = np.clip((low + high) * 0.5 if np.isfinite(current_val) else (low + high) * 0.5, low, high)
 
-        # Base log-step (≈ multiplicative factor e^{±0.1} ≈ 1.1×)
-        tau = 0.10
+        # Constant, state-independent proposal width (ensures symmetry q(x->y)=q(y->x))
+        width = max(high - low, 1e-9)
+        step_sd = 0.15 * width  # tune as needed; constant for this pair_type
 
-        # Simple Robbins–Monro adaptation toward target_acceptance
-        if accept_rate is not None:
-            diff = accept_rate - self.target_acceptance
-            tau *= np.clip(1.0 + 2.0 * diff, 0.25, 2.5)
+        # Symmetric additive Gaussian proposal in sigma-space
+        proposed = current_val + np.random.normal(0.0, step_sd)
 
-        # Propose in log space and exponentiate
-        current_log = np.log(current_val)
-        proposed_log = current_log + np.random.normal(0.0, tau)
-        proposed_val = float(np.exp(proposed_log))
+        # Reflective boundary conditions preserve symmetry on [low, high]
+        def reflect(x: float, a: float, b: float) -> float:
+            w = b - a
+            if w <= 0.0:
+                return float(np.clip(x, a, b))
+            # Repeated reflections until inside [a, b]
+            while x < a or x > b:
+                if x < a:
+                    x = a + (a - x)
+                if x > b:
+                    x = b - (x - b)
+            return float(x)
 
-        # Soft clip into prior range (reflect if we hit the bounds)
-        if proposed_val < low:
-            proposed_val = low * low / max(proposed_val, 1e-12)
-        elif proposed_val > high:
-            proposed_val = high * high / proposed_val
+        proposed_val = reflect(proposed, low, high)
 
         new_sigma = dict(sigma)
         new_sigma[pair_type] = proposed_val
@@ -386,7 +442,7 @@ class BaseMCSampler:
                           prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
                           types=None, bead_numbers=None, traj_file=None):
         """
-        Save state directly to an HDF5 file in a memory-efficient manner.
+        Save state directly to an HDF5 file.
         """
         # If types or bead_numbers are not provided, default to empty dictionaries.
         if types is None:

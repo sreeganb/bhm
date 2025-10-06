@@ -561,9 +561,10 @@ class PairSampler(BaseMCSampler):
             
             if move_type == 'sigma' and pair_type is not None:
                 # Calculate asymmetric proposal ratio for sigma moves
-                old_sigma = self.sigma[pair_type]
-                new_sigma = proposed_sigma[pair_type]
-                log_q_ratio = np.log(new_sigma) - np.log(old_sigma)
+                #old_sigma = self.sigma[pair_type]
+                #new_sigma = proposed_sigma[pair_type]
+                #log_q_ratio = np.log(new_sigma) - np.log(old_sigma)
+                log_q_ratio = 0.0
             else:
                 log_q_ratio = 0.0
 
