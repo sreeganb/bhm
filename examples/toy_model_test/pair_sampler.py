@@ -97,154 +97,6 @@ class PairSampler(BaseMCSampler):
             params=self.params
         )
 
-#    def calculate_score(
-#        self,
-#        pos: Dict[str, np.ndarray],  # input positions
-#        sig: Dict[str, float],       # input sigma values
-#        sig_range: Dict[str, Tuple[float, float]] = None,  # input sigma ranges
-#        excluded_pairs=None,
-#        debug=False,  # Whether to log detailed pair scoring info
-#        debug_file="pair_score_debug.csv"  # File to write debug info to
-#    ) -> Tuple[float, float, float, float]:
-#        """Calculate the log posterior for the pair-level interactions."""
-#        # Setup debug file if requested
-#        debug_fh = None
-#        if debug:
-#            debug_fh = open(debug_file, 'w')
-#            debug_fh.write("Pair Type, Particle1 Type, Particle1 Index, Particle2 Type, Particle2 Index, Distance, Target Distance, Sigma, Score\n")
-#            
-#        # 1) Excluded volume contribution
-#        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
-#                    
-#        # 2) Pairwise negative log-likelihood (pair-specific)
-#        pairwise_score = 0.0
-#        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
-#        
-#        for type1, type2 in pair_types:
-#            pair_key = f"{type1}{type2}"
-#            if pair_key not in self.params.pair_distances:
-#                continue
-#                
-#            target_dist = self.params.pair_distances[pair_key]
-#            sigma_value = sig[pair_key]  # Use the passed sigma
-#
-#            # Calculate pairwise score matrix
-#            score_matrix = self.calculate_pair_scores_matrix(
-#                pos[type1],
-#                pos[type2],
-#                target_dist,
-#                sigma_value
-#            )
-#            
-#            # Zero out excluded pairs if provided
-#            if excluded_pairs:
-#                for i_idx in range(len(pos[type1])):
-#                    for j_idx in range(len(pos[type2])):
-#                        # Check if pair is excluded
-#                        if ((type1, i_idx, type2, j_idx) in excluded_pairs or
-#                            (type2, j_idx, type1, i_idx) in excluded_pairs):
-#                            score_matrix[i_idx, j_idx] = np.inf
-#            
-#            # For debugging, calculate the actual distances between particles
-#            distance_matrix = None
-#            if debug_fh:
-#                distance_matrix = cdist(pos[type1], pos[type2])
-#
-#            # Handle same type vs different type particles
-#            if type1 == type2:
-#                # For same type particles, consider upper triangle only
-#                np.fill_diagonal(score_matrix, np.inf)
-#                selected_scores = []
-#                selected_indices = []
-#                
-#                # Greedy selection of best pairs (avoid double counting)
-#                used = set()
-#                n = len(score_matrix)
-#                
-#                # Get all valid pairs sorted by score
-#                pairs = []
-#                for i in range(n):
-#                    for j in range(i + 1, n):
-#                        if not np.isinf(score_matrix[i, j]):
-#                            pairs.append((score_matrix[i, j], i, j))
-#                
-#                pairs.sort()  # Sort by score
-#                
-#                # Select non-overlapping pairs
-#                for score, i, j in pairs:
-#                    if i not in used and j not in used:
-#                        selected_scores.append(score)
-#                        selected_indices.append((i, j))
-#                        used.add(i)
-#                        used.add(j)
-#                
-#                # Debug information for each selected pair 
-#                if debug_fh and distance_matrix is not None:
-#                    for i, j in selected_indices:
-#                        distance = distance_matrix[i, j]
-#                        pair_score = self.pair_weight * score_matrix[i, j]
-#                        debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
-#            else:
-#                # For different types, use argmin approach
-#                row_min_indices = np.argmin(score_matrix, axis=1)
-#                col_min_indices = np.argmin(score_matrix, axis=0)
-#
-#                # Collect unique index pairs
-#                U = set()
-#                for i, min_idx in enumerate(row_min_indices):
-#                    if not np.isinf(score_matrix[i, min_idx]):  # Check if valid
-#                        U.add((i, min_idx))
-#                for j, min_idx in enumerate(col_min_indices):
-#                    if not np.isinf(score_matrix[min_idx, j]):  # Check if valid
-#                        U.add((min_idx, j))
-#
-#                # Gather the scores for those index pairs
-#                selected_scores = [score_matrix[i, j] for (i, j) in U]
-#                
-#                # Debug for different types
-#                if debug_fh and distance_matrix is not None:
-#                    for i, j in U:
-#                        distance = distance_matrix[i, j]
-#                        pair_score = self.pair_weight * score_matrix[i, j]
-#                        debug_fh.write(f"{pair_key},{type1},{i},{type2},{j},{distance:.6f},{target_dist:.6f},{sigma_value:.6f},{pair_score:.6f}\n")
-#
-#            # Sum up the selected scores
-#            pairwise_score_part = np.sum(selected_scores)
-#            pairwise_score += self.pair_weight * pairwise_score_part
-#        
-#        # Close debug file if open
-#        if debug_fh:
-#            debug_fh.close()
-#        
-#        # 3) Prior penalty using sigma provider
-#        prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
-#
-#        total_score = exclusion_score + pairwise_score + prior_penalty
-#
-#        # Write summary to debug files (simplified)
-#        if debug:
-#            os.makedirs("debug_info", exist_ok=True)
-#            
-#            # Write scores
-#            debug_scores_file = "debug_info/debug_scores.csv"
-#            scores_file_exists = os.path.exists(debug_scores_file)
-#            with open(debug_scores_file, 'a') as f:
-#                if not scores_file_exists:
-#                    f.write("Total Score, Exclusion Score, Pairwise Score, Prior Penalty\n")
-#                f.write(f"{total_score:.1f}, {exclusion_score:.1f}, {pairwise_score:.1f}, {prior_penalty:.1f}\n")
-#            
-#            # Write sigma values
-#            sigma_file = "debug_info/sigma_values.csv"
-#            sigma_file_exists = os.path.exists(sigma_file)
-#            with open(sigma_file, 'a') as f:
-#                if not sigma_file_exists:
-#                    header = ", ".join(sig.keys()) + "\n"
-#                    f.write(header)
-#                values = ", ".join(f"{v:.4f}" for v in sig.values())
-#                f.write(f"{values}\n")
-#            
-#        return total_score, exclusion_score, pairwise_score, prior_penalty
-
     def calculate_score(
         self,
         pos: Dict[str, np.ndarray],
@@ -254,7 +106,7 @@ class PairSampler(BaseMCSampler):
         debug=False,
         debug_file="pair_score_debug.csv"
     ) -> Tuple[float, float, float, float]:
-        """Calculate the log posterior for the pair-level interactions."""
+        """Calculate the log posterior using union-of-argmin pairing strategy."""
         
         # 1) Excluded volume contribution
         exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
@@ -262,9 +114,6 @@ class PairSampler(BaseMCSampler):
         # 2) Pairwise negative log-likelihood
         pairwise_score = 0.0
         pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
-        
-        # Temperature parameter for Boltzmann selection (can be adjusted)
-        selection_temp = 2.0
         
         for type1, type2 in pair_types:
             pair_key = f"{type1}{type2}"
@@ -274,7 +123,7 @@ class PairSampler(BaseMCSampler):
             target_dist = self.params.pair_distances[pair_key]
             sigma_value = sig[pair_key]
 
-            # Calculate pairwise score matrix
+            # Calculate score matrix (WITH proper normalization term)
             score_matrix = self.calculate_pair_scores_matrix(
                 pos[type1],
                 pos[type2],
@@ -290,80 +139,211 @@ class PairSampler(BaseMCSampler):
                             (type2, j_idx, type1, i_idx) in excluded_pairs):
                             score_matrix[i_idx, j_idx] = np.inf
 
-            # Handle same type vs different type particles
+            # Use union-of-argmin strategy (boss's simple approach)
             if type1 == type2:
-                # Same type: avoid self-interaction
+                # Same type: use upper triangle only
                 np.fill_diagonal(score_matrix, np.inf)
-                selected_scores = []
+                unique_pairs = set()
                 
-                # Probabilistic selection using Boltzmann weights
-                n = len(score_matrix)
-                used = set()
+                # Row minimums (each particle finds best partner with index > itself)
+                for i in range(len(score_matrix)):
+                    row_segment = score_matrix[i, i+1:]
+                    if len(row_segment) > 0 and not np.all(np.isinf(row_segment)):
+                        j = i + 1 + np.argmin(row_segment)
+                        unique_pairs.add((i, j))
                 
-                for _ in range(n // 2):  # Try to pair up to half the particles
-                    # Get all available pairs
-                    available_pairs = []
-                    for i in range(n):
-                        if i in used:
-                            continue
-                        for j in range(i + 1, n):
-                            if j not in used and not np.isinf(score_matrix[i, j]):
-                                available_pairs.append((i, j, score_matrix[i, j]))
-                    
-                    if not available_pairs:
-                        break
-                    
-                    # Convert scores to probabilities using Boltzmann distribution
-                    scores = np.array([s for _, _, s in available_pairs])
-                    # Subtract min for numerical stability
-                    scores_shifted = scores - np.min(scores)
-                    # Use negative scores for probability (lower score = higher prob)
-                    probs = np.exp(-scores_shifted / selection_temp)
-                    probs = probs / np.sum(probs)
-                    
-                    # Probabilistically select a pair
-                    idx = np.random.choice(len(available_pairs), p=probs)
-                    i, j, score = available_pairs[idx]
-                    
-                    selected_scores.append(score)
-                    used.add(i)
-                    used.add(j)
-                    
+                # Column minimums (check reverse direction)
+                for j in range(len(score_matrix)):
+                    col_segment = score_matrix[:j, j]
+                    if len(col_segment) > 0 and not np.all(np.isinf(col_segment)):
+                        i = np.argmin(col_segment)
+                        unique_pairs.add((min(i,j), max(i,j)))  # Store in canonical order
             else:
-                # Different types: each particle finds a partner probabilistically
-                selected_scores = []
+                # Different types: union of row and column argmins
+                unique_pairs = set()
                 
-                # For each particle of type1
-                for i in range(len(pos[type1])):
-                    row_scores = score_matrix[i, :]
-                    valid_indices = np.where(~np.isinf(row_scores))[0]
-                    
-                    if len(valid_indices) > 0:
-                        valid_scores = row_scores[valid_indices]
-                        # Boltzmann selection
-                        scores_shifted = valid_scores - np.min(valid_scores)
-                        probs = np.exp(-scores_shifted / selection_temp)
-                        probs = probs / np.sum(probs)
-                        
-                        # Select probabilistically (90% best, 10% exploration)
-                        if np.random.random() < 0.9:
-                            # Choose minimum
-                            j = valid_indices[np.argmin(valid_scores)]
-                        else:
-                            # Probabilistic selection
-                            j = valid_indices[np.random.choice(len(valid_indices), p=probs)]
-                        
-                        selected_scores.append(score_matrix[i, j])
-
-            # Sum selected scores
+                # Each type1 particle finds best type2 partner
+                for i, j in enumerate(np.argmin(score_matrix, axis=1)):
+                    if not np.isinf(score_matrix[i, j]):
+                        unique_pairs.add((i, j))
+                
+                # Each type2 particle finds best type1 partner
+                for j, i in enumerate(np.argmin(score_matrix, axis=0)):
+                    if not np.isinf(score_matrix[i, j]):
+                        unique_pairs.add((i, j))
+            
+            # Sum scores for unique pairs
+            selected_scores = [score_matrix[i, j] for i, j in unique_pairs]
             pairwise_score += self.pair_weight * np.sum(selected_scores)
         
-        # 3) Prior penalty using sigma provider
+        # 3) Prior penalty using sigma provider (YOUR KEY IMPROVEMENT)
         prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
 
         total_score = exclusion_score + pairwise_score + prior_penalty
         
         return total_score, exclusion_score, pairwise_score, prior_penalty
+
+#    def calculate_score(
+#        self,
+#        pos: Dict[str, np.ndarray],
+#        sig: Dict[str, float],
+#        sig_range: Dict[str, Tuple[float, float]] = None,
+#        excluded_pairs=None,
+#        debug=False,
+#        debug_file="pair_score_debug.csv"
+#    ) -> Tuple[float, float, float, float]:
+#        """Calculate the log posterior for the pair-level interactions."""
+#        
+#        # 1) Excluded volume contribution
+#        exclusion_score = self.exclusion_weight * self.excluded_volume_nll(pos)
+#                    
+#        # 2) Pairwise negative log-likelihood
+#        pairwise_score = 0.0
+#        pair_types = [('A', 'A'), ('A', 'B'), ('B', 'C')]
+#        
+#        # Temperature parameter for Boltzmann selection (can be adjusted)
+#        selection_temp = 3.0
+#        
+#        for type1, type2 in pair_types:
+#            pair_key = f"{type1}{type2}"
+#            if pair_key not in self.params.pair_distances:
+#                continue
+#                
+#            target_dist = self.params.pair_distances[pair_key]
+#            sigma_value = sig[pair_key]
+#
+#            # Calculate pairwise score matrix
+#            score_matrix = self.calculate_pair_scores_matrix(
+#                pos[type1],
+#                pos[type2],
+#                target_dist,
+#                sigma_value
+#            )
+#            
+#            # Apply exclusions if provided
+#            if excluded_pairs:
+#                for i_idx in range(len(pos[type1])):
+#                    for j_idx in range(len(pos[type2])):
+#                        if ((type1, i_idx, type2, j_idx) in excluded_pairs or
+#                            (type2, j_idx, type1, i_idx) in excluded_pairs):
+#                            score_matrix[i_idx, j_idx] = np.inf
+#
+#            # Handle same type vs different type particles
+#            if type1 == type2:
+#                # Same type: avoid self-interaction and use optimal pairing
+#                np.fill_diagonal(score_matrix, np.inf)
+#                selected_scores = self._solve_same_type_pairing_probabilistic(
+#                    score_matrix, selection_temp
+#                )
+#            else:
+#                # Different types: use Hungarian algorithm or probabilistic bipartite matching
+#                selected_scores = self._solve_bipartite_pairing_probabilistic(
+#                    score_matrix, selection_temp
+#                )
+#
+#            # Sum selected scores
+#            pairwise_score += self.pair_weight * np.sum(selected_scores)
+#        
+#        # 3) Prior penalty using sigma provider
+#        prior_penalty = self.sigma_provider.calculate_negative_log_prior(sig)
+#
+#        total_score = exclusion_score + pairwise_score + prior_penalty
+#        
+#        return total_score, exclusion_score, pairwise_score, prior_penalty
+#
+#    def _solve_same_type_pairing_probabilistic(self, score_matrix, temp):
+#        """
+#        Solve same-type pairing with probabilistic selection but avoid double counting.
+#        """
+#        n = len(score_matrix)
+#        used = set()
+#        selected_scores = []
+#        
+#        # Create list of all valid pairs
+#        valid_pairs = []
+#        for i in range(n):
+#            for j in range(i + 1, n):
+#                if not np.isinf(score_matrix[i, j]):
+#                    valid_pairs.append((i, j, score_matrix[i, j]))
+#        
+#        if not valid_pairs:
+#            return []
+#        
+#        # Sort by score for better convergence
+#        valid_pairs.sort(key=lambda x: x[2])
+#        
+#        # Probabilistic selection with exclusion
+#        for _ in range(n // 2):  # Maximum possible pairs
+#            # Filter available pairs (not already used)
+#            available_pairs = [(i, j, score) for i, j, score in valid_pairs 
+#                            if i not in used and j not in used]
+#            
+#            if not available_pairs:
+#                break
+#            
+#            # Convert to Boltzmann probabilities
+#            scores = np.array([score for _, _, score in available_pairs])
+#            scores_shifted = scores - np.min(scores)
+#            probs = np.exp(-scores_shifted / temp)
+#            probs = probs / np.sum(probs)
+#            
+#            # Select pair probabilistically
+#            idx = np.random.choice(len(available_pairs), p=probs)
+#            i, j, score = available_pairs[idx]
+#            
+#            selected_scores.append(score)
+#            used.add(i)
+#            used.add(j)
+#        
+#        return selected_scores
+#
+#    def _solve_bipartite_pairing_probabilistic(self, score_matrix, temp):
+#        """
+#        Solve bipartite matching avoiding double counting using Hungarian-inspired approach.
+#        """
+#        n_type1, n_type2 = score_matrix.shape
+#        
+#        # Option 1: Use scipy's Hungarian algorithm for exact solution
+#        try:
+#            from scipy.optimize import linear_sum_assignment
+#            row_ind, col_ind = linear_sum_assignment(score_matrix)
+#            return [score_matrix[i, j] for i, j in zip(row_ind, col_ind) 
+#                    if not np.isinf(score_matrix[i, j])]
+#        except ImportError:
+#            pass
+#        
+#        # Option 2: Greedy probabilistic assignment (fallback)
+#        selected_scores = []
+#        used_type2 = set()
+#        
+#        for i in range(n_type1):
+#            # Find available partners for particle i
+#            available_partners = []
+#            for j in range(n_type2):
+#                if j not in used_type2 and not np.isinf(score_matrix[i, j]):
+#                    available_partners.append((j, score_matrix[i, j]))
+#            
+#            if not available_partners:
+#                continue
+#            
+#            # Probabilistic selection among available partners
+#            partners, scores = zip(*available_partners)
+#            scores = np.array(scores)
+#            scores_shifted = scores - np.min(scores)
+#            probs = np.exp(-scores_shifted / temp)
+#            probs = probs / np.sum(probs)
+#            
+#            # Select partner
+#            if np.random.random() < 0.7:  # 70% greedy, 30% exploration
+#                j_idx = np.argmin(scores)
+#            else:
+#                j_idx = np.random.choice(len(partners), p=probs)
+#            
+#            j = partners[j_idx]
+#            selected_scores.append(score_matrix[i, j])
+#            used_type2.add(j)
+#        
+#        return selected_scores
 #    def calculate_score(
 #        self,
 #        pos: Dict[str, np.ndarray],  # input positions

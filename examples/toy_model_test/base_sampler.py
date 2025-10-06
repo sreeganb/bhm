@@ -308,100 +308,102 @@ class BaseMCSampler:
 #        
 #        return new_sigma, pair_type
 
-    def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
-        """
-        MCMC position proposal with inverse radius scaling: larger particles move less.
-        Uses clipping to stay within centered box boundaries.
-        """
-        import random
-        
-        # Deep copy to avoid modifying original
-        new_positions = {key: np.copy(array) for key, array in positions.items()}
-        
-        # Randomly select particle type and index
-        type_names = list(self.params.component_counts.keys())
-        type_name = random.choice(type_names)
-        idx = np.random.randint(self.params.component_counts[type_name])
-
-        # Get min radius across all particle types for scaling
-        min_radius = min(self.params.radii.values())
-
-        # Inverse scaling: smaller radius = larger moves
-        base_step = 4.0  # Adjust this value as needed for optimal acceptance rate
-        step_size = base_step * (min_radius / self.params.radii[type_name])
-
-        # Current position
-        current_pos = positions[type_name][idx]
-
-        # Symmetric Gaussian proposal
-        proposal = current_pos + np.random.normal(0, step_size, 3)
-
-        # Clip to centered box boundaries [-box_size/2, box_size/2]
-        half_box = self.params.box_size / 2
-        proposal = np.clip(proposal, -half_box, half_box)
-
-        # Update the selected particle
-        new_positions[type_name][idx] = proposal
-
-        return new_positions
-#    def propose_position_move(
-#        self,
-#        positions: Dict[str, np.ndarray],
-#        accept_rate: float = 0.5
-#    ) -> Dict[str, np.ndarray]:
+#    def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
 #        """
-#        Gaussian random walk on a single particle:
-#            x' = x + 𝒩(0, σ_step I)
-#        The particle is chosen uniformly over the entire system.
-#        Proposals that leave the centred simulation box are resampled,
-#        keeping the kernel symmetric without periodic wrapping.
+#        MCMC position proposal with inverse radius scaling: larger particles move less.
+#        Uses clipping to stay within centered box boundaries.
 #        """
-#        # Shallow copies of arrays to leave `positions` untouched
-#        new_positions = {k: v.copy() for k, v in positions.items()}
-#        box_half = self.params.box_size / 2.0
-#
-#        # Build cumulative counts so each particle is equally likely
+#        import random
+#        
+#        # Deep copy to avoid modifying original
+#        new_positions = {key: np.copy(array) for key, array in positions.items()}
+#        
+#        # Randomly select particle type and index
 #        type_names = list(self.params.component_counts.keys())
-#        counts = [self.params.component_counts[t] for t in type_names]
-#        total_particles = sum(counts)
-#        flat_idx = np.random.randint(total_particles)
+#        type_name = random.choice(type_names)
+#        idx = np.random.randint(self.params.component_counts[type_name])
 #
-#        # Map flat index to (type, index)
-#        cum = 0
-#        for type_name, count in zip(type_names, counts):
-#            if flat_idx < cum + count:
-#                local_idx = flat_idx - cum
-#                break
-#            cum += count
+#        # Get min radius across all particle types for scaling
+#        min_radius = min(self.params.radii.values())
 #
-#        radius = self.params.radii[type_name]
-#        max_radius = max(self.params.radii.values())
+#        # Inverse scaling: smaller radius = larger moves
+#        base_step = 4.0  # Adjust this value as needed for optimal acceptance rate
+#        step_size = base_step * (min_radius / self.params.radii[type_name])
 #
-#        # Base step tuned to reach ~50% acceptance when accept_rate ≈ target
-#        base_step = 2.0 * (max_radius / radius)
+#        # Current position
+#        current_pos = positions[type_name][idx]
 #
-#        # Adapt step with running acceptance feedback
-#        if accept_rate is not None:
-#            factor = np.clip(0.3 + accept_rate, 0.2, 2.5)
-#            step_sigma = base_step * factor
-#        else:
-#            step_sigma = base_step
+#        # Symmetric Gaussian proposal
+#        proposal = current_pos + np.random.normal(0, step_size, 3)
 #
-#        current_pos = positions[type_name][local_idx]
-#        proposal = current_pos.copy()
+#        # Clip to centered box boundaries [-box_size/2, box_size/2]
+#        half_box = self.params.box_size / 2
+#        proposal = np.clip(proposal, -half_box, half_box)
 #
-#        # Draw until we remain inside [-box_half, box_half]^3 (symmetric rejection)
-#        for _ in range(16):
-#            candidate = current_pos + np.random.normal(0.0, step_sigma, size=3)
-#            if np.all(np.abs(candidate) <= box_half):
-#                proposal = candidate
-#                break
-#        else:
-#            # If we failed to find an interior point, keep the original (null move)
-#            proposal = current_pos.copy()
+#        # Update the selected particle
+#        new_positions[type_name][idx] = proposal
 #
-#        new_positions[type_name][local_idx] = proposal
 #        return new_positions
+
+    def propose_position_move(
+        self,
+        positions: Dict[str, np.ndarray],
+        accept_rate: float = 0.5
+    ) -> Dict[str, np.ndarray]:
+        """
+        Gaussian random walk on a single particle:
+            x' = x + 𝒩(0, σ_step I)
+        The particle is chosen uniformly over the entire system.
+        Proposals that leave the centred simulation box are resampled,
+        keeping the kernel symmetric without periodic wrapping.
+        """
+        # Shallow copies of arrays to leave `positions` untouched
+        new_positions = {k: v.copy() for k, v in positions.items()}
+        box_half = self.params.box_size / 2.0
+
+        # Build cumulative counts so each particle is equally likely
+        type_names = list(self.params.component_counts.keys())
+        counts = [self.params.component_counts[t] for t in type_names]
+        total_particles = sum(counts)
+        flat_idx = np.random.randint(total_particles)
+
+        # Map flat index to (type, index)
+        cum = 0
+        for type_name, count in zip(type_names, counts):
+            if flat_idx < cum + count:
+                local_idx = flat_idx - cum
+                break
+            cum += count
+
+        radius = self.params.radii[type_name]
+        max_radius = max(self.params.radii.values())
+
+        # Base step tuned to reach ~50% acceptance when accept_rate ≈ target
+        base_step = 2.0 * (max_radius / radius)
+
+        # Adapt step with running acceptance feedback
+        if accept_rate is not None:
+            factor = np.clip(0.3 + accept_rate, 0.2, 2.5)
+            step_sigma = base_step * factor
+        else:
+            step_sigma = base_step
+
+        current_pos = positions[type_name][local_idx]
+        proposal = current_pos.copy()
+
+        # Draw until we remain inside [-box_half, box_half]^3 (symmetric rejection)
+        for _ in range(16):
+            candidate = current_pos + np.random.normal(0.0, step_sigma, size=3)
+            if np.all(np.abs(candidate) <= box_half):
+                proposal = candidate
+                break
+        else:
+            # If we failed to find an interior point, keep the original (null move)
+            proposal = current_pos.copy()
+
+        new_positions[type_name][local_idx] = proposal
+        return new_positions
+
     def save_state_to_disk(self, step, positions, sigmas, score, 
                           prior_score=0, pair_score=0, exvol_score=0, tet_score=0, oct_score=0,
                           types=None, bead_numbers=None, traj_file=None):
