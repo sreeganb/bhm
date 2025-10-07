@@ -4,7 +4,7 @@ import os
 import h5py
 from typing import Dict, Tuple, Any, Optional, Callable
 from core.state import SystemState
-from core.sigma import calculate_negative_log_prior
+from core.sigma import GMMSigmaProvider
 
 def run_mcmc_sampling(
     state: SystemState,
@@ -50,8 +50,11 @@ def run_mcmc_sampling(
     accepts = {move: 0 for move in propose_fn_dict}
     attempts = {move: 0 for move in propose_fn_dict}
     
+    # Initialize sigma provider
+    sig_provider = GMMSigmaProvider()
+    
     # Calculate initial score
-    prior_penalty = calculate_negative_log_prior(state)
+    prior_penalty = sig_provider.calculate_negative_log_prior(state)
     current_score, *score_components = score_fn(state, prior_penalty)
     
     # Convert move_probs dict to arrays for random choice
@@ -78,8 +81,8 @@ def run_mcmc_sampling(
         proposed_state = state.copy()
         propose_fn(proposed_state, attempts[move_type] / max(1, accepts[move_type]))
         
-        # Calculate new score
-        new_prior = calculate_negative_log_prior(proposed_state)
+        # Calculate new score with prior
+        new_prior = sig_provider.calculate_negative_log_prior(proposed_state)  # Fixed: added sig_provider
         proposed_score, *prop_components = score_fn(proposed_state, new_prior)
         
         # Metropolis acceptance criterion
@@ -95,6 +98,7 @@ def run_mcmc_sampling(
             state = proposed_state
             current_score = proposed_score
             score_components = prop_components
+            prior_penalty = new_prior
             accepts[move_type] += 1
             
             # Update best state if improved

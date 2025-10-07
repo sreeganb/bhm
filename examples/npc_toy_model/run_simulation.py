@@ -2,8 +2,8 @@
 from core.parameters import SystemParameters
 from core.system import setup_system
 from samplers.pair import run_pair_sampling
-from samplers.tetramer import run_tetramer_sampling
-from samplers.octet import run_octet_sampling
+#from samplers.tetramer import run_tetramer_sampling
+#from samplers.octet import run_octet_sampling
 from pipeline import SamplerPipeline
 
 def main():

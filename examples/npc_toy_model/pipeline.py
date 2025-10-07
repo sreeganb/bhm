@@ -1,7 +1,7 @@
 # pipeline.py
 from typing import List, Dict, Any, Tuple
 from core.state import SystemState
-from core.sigma import initialize_sigma
+from core.sigma import GMMSigmaProvider
 import os
 import json
 import time
@@ -16,6 +16,15 @@ class SamplerPipeline:
     def __init__(self, initial_state: SystemState):
         self.initial_state = initial_state
         self.stages = []
+        
+        # Create base analysis directory structure
+        base_analysis_dir = "output_analysis"
+        os.makedirs(base_analysis_dir, exist_ok=True)
+        
+        # Create placeholder directories for each sampler type
+        for sampler_type in ["pairsampler_results", "tetramersampler_results", "octetsampler_results"]:
+            sampler_dir = os.path.join(base_analysis_dir, sampler_type)
+            os.makedirs(sampler_dir, exist_ok=True)
     
     def add_stage(
         self, 
@@ -133,10 +142,13 @@ class SamplerPipeline:
         }
         
         sampler_name = sampler_name_map.get(stage_name, 'PairSampler')
+        sig_provider = GMMSigmaProvider(sampler_name=sampler_name, 
+                                        prior_type='uniform',
+                                        sequence_position=0)
         
         for state in states:
             # Initialize sigma values for this sampler type
-            initialize_sigma(
+            sig_provider.initialize_sigma(
                 state=state,
                 sigma_source="gmm",
                 sampler_name=sampler_name

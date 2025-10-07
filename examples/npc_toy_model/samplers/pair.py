@@ -2,8 +2,9 @@
 import numpy as np
 from typing import Dict, Any, Optional, Callable, Tuple
 from core.state import SystemState
-from core.scoring import calculate_excluded_volume, calculate_pair_scores
 from samplers.base import run_mcmc_sampling
+from scoring.pair_score import PairNLL
+from scoring.exvol_score import ExvolNLL
 
 def propose_position_move(state: SystemState, acceptance_rate: float = 0.5) -> None:
     """Propose position move and update state in-place"""
@@ -48,14 +49,12 @@ def neg_log_posterior(
 ) -> Tuple[float, float, float, float]:
     """Calculate negative log posterior for pair sampler"""
     # Calculate excluded volume contribution
-    exclusion_score = calculate_excluded_volume(state.positions)
+    exs = ExvolNLL(state.positions, kappa=100.0)
+    exclusion_score = exs.compute_score()
     
     # Calculate pairwise score, excluding specified pairs
-    pair_score = calculate_pair_scores(
-        state.positions, 
-        state.sigma,
-        excluded_pairs=excluded_pairs or set()
-    )
+    ps = PairNLL(state.positions, state.sigma)
+    pair_score = ps.compute_score()
     
     # Total score
     total_score = exclusion_score + pair_score + prior_penalty
