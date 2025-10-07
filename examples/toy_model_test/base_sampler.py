@@ -364,43 +364,6 @@ class BaseMCSampler:
 #        
 #        return new_sigma, pair_type
 
-#    def propose_position_move(self, positions: Dict[str, np.ndarray], accept_rate: float = 0.5) -> Dict[str, np.ndarray]:
-#        """
-#        MCMC position proposal with inverse radius scaling: larger particles move less.
-#        Uses clipping to stay within centered box boundaries.
-#        """
-#        import random
-#        
-#        # Deep copy to avoid modifying original
-#        new_positions = {key: np.copy(array) for key, array in positions.items()}
-#        
-#        # Randomly select particle type and index
-#        type_names = list(self.params.component_counts.keys())
-#        type_name = random.choice(type_names)
-#        idx = np.random.randint(self.params.component_counts[type_name])
-#
-#        # Get min radius across all particle types for scaling
-#        min_radius = min(self.params.radii.values())
-#
-#        # Inverse scaling: smaller radius = larger moves
-#        base_step = 4.0  # Adjust this value as needed for optimal acceptance rate
-#        step_size = base_step * (min_radius / self.params.radii[type_name])
-#
-#        # Current position
-#        current_pos = positions[type_name][idx]
-#
-#        # Symmetric Gaussian proposal
-#        proposal = current_pos + np.random.normal(0, step_size, 3)
-#
-#        # Clip to centered box boundaries [-box_size/2, box_size/2]
-#        half_box = self.params.box_size / 2
-#        proposal = np.clip(proposal, -half_box, half_box)
-#
-#        # Update the selected particle
-#        new_positions[type_name][idx] = proposal
-#
-#        return new_positions
-
     def propose_position_move(
         self,
         positions: Dict[str, np.ndarray],

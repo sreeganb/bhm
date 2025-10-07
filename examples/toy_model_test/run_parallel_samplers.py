@@ -355,8 +355,8 @@ def main():
     #mcmc_steps = [10000, 1000]
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "pair", "tetramer", "octet", "full","pair", "tetramer", "octet", "full",]
     #mcmc_steps = [50000, 10000, 10000, 2000, 50000, 20000, 20000, 5000, 50000, 50000, 50000, 5000]
-    sampler_sequence = ["pair", "tetramer", "octet"]
-    mcmc_steps = [60000, 60000, 60000]
+    sampler_sequence = ["pair"]
+    mcmc_steps = [50000]
     
     #sampler_sequence = ["pair", "tetramer", "octet", "full", "octet", "full", "tetramer", "full",]
     #mcmc_steps = [80000, 80000, 80000, 5000, 60000, 5500, 60000, 7500]
@@ -371,7 +371,7 @@ def main():
     
     # Setup
     output_folder = "output_analysis"
-    n_processes = 8 # Set to None to use all available CPUs
+    n_processes = 16 # Set to None to use all available CPUs
     
     # Initialize sequence manager
     sequence_manager = SamplerSequenceManager(sampler_sequence)
