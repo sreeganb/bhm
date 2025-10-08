@@ -23,9 +23,9 @@ def main():
     # Add sampling stages
     pipeline.add_stage(
         run_pair_sampling,
-        n_steps=1000,
-        save_freq=10,
-        temp_start=10.0,
+        n_steps=100,
+        save_freq=1,
+        temp_start=5.0,
         temp_end=1.0
     )
     
@@ -47,7 +47,7 @@ def main():
     
     # Run the pipeline with multiple chains
     results = pipeline.run(
-        output_base="output/final_simulation",
+        output_base="output",
         n_chains=8  # Run 8 parallel chains for each stage
     )
     

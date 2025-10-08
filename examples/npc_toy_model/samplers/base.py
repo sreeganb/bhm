@@ -5,6 +5,7 @@ import h5py
 from typing import Dict, Tuple, Any, Optional, Callable
 from core.state import SystemState
 from core.sigma import GMMSigmaProvider
+from core.io_utils import save_state_to_disk
 
 def run_mcmc_sampling(
     state: SystemState,
@@ -41,8 +42,10 @@ def run_mcmc_sampling(
     # Setup output directory
     os.makedirs(output_dir, exist_ok=True)
     trajectory_file = os.path.join(output_dir, "trajectory.h5")
-    with h5py.File(trajectory_file, 'w') as f:
-        pass  # Create empty file
+    
+    # Remove existing trajectory file if it exists
+    if os.path.exists(trajectory_file):
+        os.remove(trajectory_file)
     
     # Initialize tracking variables
     best_state = state.copy()
@@ -57,6 +60,14 @@ def run_mcmc_sampling(
     prior_penalty = sig_provider.calculate_negative_log_prior(state)
     current_score, *score_components = score_fn(state, prior_penalty)
     
+    # Unpack score components (adjust based on your score_fn return signature)
+    # Assuming score_fn returns: (total_score, exvol_score, pair_score)
+    # Add more components as needed: tet_score, oct_score, etc.
+    exvol_score = score_components[0] if len(score_components) > 0 else 0.0
+    pair_score = score_components[1] if len(score_components) > 1 else 0.0
+    tet_score = score_components[2] if len(score_components) > 2 else 0.0
+    oct_score = score_components[3] if len(score_components) > 3 else 0.0
+    
     # Convert move_probs dict to arrays for random choice
     move_types = list(move_probs.keys())
     move_weights = np.array([move_probs[m] for m in move_types])
@@ -67,6 +78,7 @@ def run_mcmc_sampling(
     temp = temp_start
     
     print(f"Starting MCMC sampling for {n_steps} steps...")
+    print(f"Output will be saved to: {trajectory_file}")
     
     # Main MCMC loop
     for step in range(1, n_steps + 1):
@@ -82,8 +94,14 @@ def run_mcmc_sampling(
         propose_fn(proposed_state, attempts[move_type] / max(1, accepts[move_type]))
         
         # Calculate new score with prior
-        new_prior = sig_provider.calculate_negative_log_prior(proposed_state)  # Fixed: added sig_provider
+        new_prior = sig_provider.calculate_negative_log_prior(proposed_state)
         proposed_score, *prop_components = score_fn(proposed_state, new_prior)
+        
+        # Unpack proposed score components
+        prop_exvol = prop_components[0] if len(prop_components) > 0 else 0.0
+        prop_pair = prop_components[1] if len(prop_components) > 1 else 0.0
+        prop_tet = prop_components[2] if len(prop_components) > 2 else 0.0
+        prop_oct = prop_components[3] if len(prop_components) > 3 else 0.0
         
         # Metropolis acceptance criterion
         delta = proposed_score - current_score
@@ -91,13 +109,17 @@ def run_mcmc_sampling(
         
         if debug and step % 10 == 0:
             print(f"DEBUG: Move: {move_type}, Delta: {delta:.2f}, Temp: {temp:.2f}")
-            print(f"DEBUG: Score components: {score_components}")
+            print(f"DEBUG: Current score: {current_score:.2f} (exvol={exvol_score:.2f}, pair={pair_score:.2f})")
+            print(f"DEBUG: Proposed score: {proposed_score:.2f} (exvol={prop_exvol:.2f}, pair={prop_pair:.2f})")
         
         if accept:
             # Accept the move
             state = proposed_state
             current_score = proposed_score
-            score_components = prop_components
+            exvol_score = prop_exvol
+            pair_score = prop_pair
+            tet_score = prop_tet
+            oct_score = prop_oct
             prior_penalty = new_prior
             accepts[move_type] += 1
             
@@ -114,18 +136,22 @@ def run_mcmc_sampling(
             acceptance_rates = {k: accepts[k] / max(1, attempts[k]) for k in accepts}
             adapt_step_sizes(acceptance_rates)
         
-        # Save trajectory
+        # Save trajectory using io_utils
         if step % save_freq == 0 or step == n_steps:
-            with h5py.File(trajectory_file, 'a') as f:
-                frame_group = f.create_group(f"frame_{step}")
-                for component, positions in state.positions.items():
-                    frame_group.create_dataset(component, data=positions)
-                # Save sigma values
-                sigma_group = frame_group.create_group("sigma")
-                for key, value in state.sigma.items():
-                    sigma_group.attrs[key] = value
-                # Save score
-                frame_group.attrs["score"] = current_score
+            save_state_to_disk(
+                step=step,
+                positions=state.positions,
+                sigmas=state.sigma,
+                score=current_score,
+                prior_score=prior_penalty,
+                pair_score=pair_score,
+                exvol_score=exvol_score,
+                tet_score=tet_score,
+                oct_score=oct_score,
+                types=getattr(state, 'types', None),  # If state has these attributes
+                bead_numbers=getattr(state, 'bead_numbers', None),
+                traj_file=trajectory_file
+            )
             
             # Status update
             accept_rate = sum(accepts.values()) / max(1, sum(attempts.values()))
@@ -136,5 +162,6 @@ def run_mcmc_sampling(
     for move in move_types:
         rate = accepts[move] / max(1, attempts[move])
         print(f"- {move}: {rate:.2f} acceptance ({accepts[move]}/{attempts[move]})")
+    print(f"\nTrajectory saved to: {trajectory_file}")
     
     return best_state, trajectory_file

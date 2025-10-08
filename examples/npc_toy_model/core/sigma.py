@@ -6,6 +6,8 @@ import numpy as np
 from typing import Dict, List, Tuple, Union
 from scipy import stats
 
+from core.state import SystemState
+
 class GMMSigmaProvider:
     """
     Provides sigma values from GMM fits and calculates negative log priors.
@@ -28,7 +30,7 @@ class GMMSigmaProvider:
     
     # Sigma range for simple priors
     SIGMA_MIN = 0.0
-    SIGMA_MAX = 50.0
+    SIGMA_MAX = 20.0
     
     # Available simple priors
     SIMPLE_PRIORS = {
@@ -124,46 +126,66 @@ class GMMSigmaProvider:
         
         return gmm_params
 
-    def initialize_sigma(self, state, sigma_source: str = "auto", sampler_name: str = None):
+    def initialize_sigma(
+        self,
+        state: SystemState,
+        sigma_source: str = "gmm",
+        sampler_name: str = "PairSampler",
+        spread_chains: bool = True,
+        chain_id: int = 0,
+        n_chains: int = 1
+    ) -> None:
         """
-        Initialize sigma values for a given state.
+        Initialize sigma values for a state, with option to spread chains
         
         Args:
-            state: SystemState object to initialize sigma for
-            sigma_source: "gmm" to force GMM, "simple" to force simple prior, "auto" to decide based on sequence position
-            sampler_name: Override the sampler name if needed
+            state: SystemState to initialize
+            sigma_source: "gmm" or "uniform"
+            sampler_name: Which sampler (affects which pairs are used)
+            spread_chains: If True, spread initial values across parameter space
+            chain_id: Chain identifier (0 to n_chains-1)
+            n_chains: Total number of chains
         """
-        if sampler_name:
-            # Update sampler name and reload GMM if needed
-            if sampler_name != self.sampler_name:
-                self.sampler_name = sampler_name
-                source_sampler = self.SAMPLER_SOURCES.get(sampler_name, "pairsampler")
-                self.output_dir = os.path.join(os.getcwd(), f"output_analysis/{source_sampler}_results")
-                if self.sequence_position > 0:
-                    self.gmm_params = self._load_gmm_parameters()
-        
-        # Determine which sampling method to use
-        if sigma_source == "auto":
-            use_gmm = self.sequence_position > 0 and self.use_gmm
-        elif sigma_source == "gmm":
-            use_gmm = self.use_gmm
-        else:  # "simple"
-            use_gmm = False
-        
-        if use_gmm:
-            # Sample from GMM
-            sampled_sigma = self.sample_sigma_values()
+        # Get pair types for this sampler
+        if sampler_name == "PairSampler":
+            pair_types = ["AA", "AB", "BC"]
+        elif sampler_name == "TetramerSampler":
+            pair_types = ["AA", "AB", "BC"]  # Adjust as needed
         else:
-            # Sample from simple prior
-            sampled_sigma = self._sample_from_simple_prior()
+            pair_types = list(state.sigma.keys())
         
-        # Update state's sigma values
-        state.sigma = sampled_sigma
+        state.sigma = {}
+        state.sigma_range = {}
         
-        source_type = "GMM" if use_gmm else f"simple ({self.prior_type})"
-        print(f"Initialized sigma for {self.sampler_name} using {source_type}:")
-        for key, value in sampled_sigma.items():
-            print(f"  {key}: {value:.4f}")
+        for pair_type in pair_types:
+            # Define reasonable bounds
+            # Adjust these based on your target distances
+            if pair_type == "AA":
+                low, high = 1.0, 5.0
+            elif pair_type == "AB":
+                low, high = 1.5, 8.0
+            elif pair_type == "BC":
+                low, high = 2.0, 12.0
+            else:
+                low, high = 1.0, 10.0
+            
+            state.sigma_range[pair_type] = (low, high)
+            
+            if sigma_source == "gmm":
+                # Sample from GMM
+                state.sigma[pair_type] = self.sample_from_gmm(pair_type)
+            else:
+                # Uniform initialization
+                if spread_chains and n_chains > 1:
+                    # Spread chains across parameter space in log-space
+                    frac = chain_id / max(1, n_chains - 1)
+                    log_val = np.log(low) + frac * (np.log(high) - np.log(low))
+                    state.sigma[pair_type] = float(np.exp(log_val))
+                else:
+                    # Random initialization
+                    state.sigma[pair_type] = float(
+                        np.exp(np.random.uniform(np.log(low), np.log(high)))
+                    )
         
         return state
 

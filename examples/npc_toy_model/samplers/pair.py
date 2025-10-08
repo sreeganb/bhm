@@ -7,40 +7,109 @@ from scoring.pair_score import PairNLL
 from scoring.exvol_score import ExvolNLL
 
 def propose_position_move(state: SystemState, acceptance_rate: float = 0.5) -> None:
-    """Propose position move and update state in-place"""
-    # Adaptive step size based on acceptance rate
-    step_size = 0.1 * min(2.0, max(0.1, acceptance_rate))
+    """
+    Single-particle Gaussian move with reflective walls.
+    Updates state in-place.
+    """
+    box_half = state.box_size / 2.0
     
-    # Choose particle type and index
-    particle_type = np.random.choice(list(state.positions.keys()))
-    if len(state.positions[particle_type]) > 0:
-        idx = np.random.randint(len(state.positions[particle_type]))
-        
-        # Apply small displacement
-        displacement = np.random.normal(0, step_size, 3)
-        state.positions[particle_type][idx] += displacement
-        
-        # Apply periodic boundary conditions
-        state.positions[particle_type][idx] %= state.box_size
+    # Get all particle types and counts
+    type_names = list(state.positions.keys())
+    counts = [len(state.positions[t]) for t in type_names]
+    
+    if sum(counts) == 0:
+        return  # No particles to move
+    
+    # Flatten particle selection across all types
+    cum_counts = np.cumsum(counts)
+    flat_idx = np.random.randint(cum_counts[-1])
+    
+    # Find which type and local index
+    type_name = None
+    local_idx = 0
+    for tn, count, cum in zip(type_names, counts, cum_counts):
+        if flat_idx < cum:
+            type_name = tn
+            local_idx = flat_idx - (cum - count)
+            break
+    
+    if type_name is None or len(state.positions[type_name]) == 0:
+        return
+    
+    # Get radius for this particle type (from params if available)
+    radius = getattr(state, 'radii', {}).get(type_name, 1.0)
+    max_radius = max(getattr(state, 'radii', {type_name: 1.0}).values())
+    
+    # Step size scaled by particle size
+    step_sigma = 2.0 * (max_radius / radius)
+    
+    # Generate proposal
+    current_pos = state.positions[type_name][local_idx].copy()
+    proposal = current_pos + np.random.normal(0.0, step_sigma, 3)
+    
+    # Apply reflective boundary conditions for each dimension
+    for dim in range(3):
+        while proposal[dim] > box_half or proposal[dim] < -box_half:
+            if proposal[dim] > box_half:
+                proposal[dim] = 2 * box_half - proposal[dim]
+            else:
+                proposal[dim] = -2 * box_half - proposal[dim]
+    
+    # Update state in-place
+    state.positions[type_name][local_idx] = proposal
 
 def propose_sigma_move(state: SystemState, acceptance_rate: float = 0.5) -> None:
-    """Propose sigma move and update state in-place"""
-    # Adaptive step size based on acceptance rate
-    step_factor = 1.0 + 0.1 * min(1.0, max(0.1, acceptance_rate))
+    """
+    Non-adaptive Metropolis proposal that preserves detailed balance.
+    Updates state in-place.
     
-    # Choose a sigma key to modify
-    sigma_key = np.random.choice(list(state.sigma.keys()))
+    - Selects a single pair_type uniformly at random.
+    - Uses an additive Gaussian step in linear sigma with constant scale
+      per parameter (independent of the current value/state).
+    - Applies exact reflective boundary conditions on [low, high],
+      which keeps proposals unbiased and symmetric within bounds.
+    """
+    if len(state.sigma) == 0:
+        return
     
-    # Apply log-normal perturbation
-    if np.random.random() < 0.5:
-        state.sigma[sigma_key] *= step_factor
+    # Choose which parameter to update (uniform)
+    pair_type = np.random.choice(list(state.sigma.keys()))
+    current_val = float(state.sigma[pair_type])
+    
+    # Bounds (strictly positive)
+    if pair_type in state.sigma_range:
+        low, high = state.sigma_range[pair_type]
     else:
-        state.sigma[sigma_key] /= step_factor
+        low, high = 1e-6, 20.0
     
-    # Enforce bounds if sigma_range is defined
-    if sigma_key in state.sigma_range:
-        min_val, max_val = state.sigma_range[sigma_key]
-        state.sigma[sigma_key] = max(min_val, min(max_val, state.sigma[sigma_key]))
+    # Guard invalid current values by snapping into bounds
+    if not np.isfinite(current_val) or current_val <= 0.0:
+        current_val = np.clip((low + high) * 0.5 if np.isfinite(current_val) else (low + high) * 0.5, low, high)
+    
+    # Constant, state-independent proposal width (ensures symmetry q(x->y)=q(y->x))
+    width = max(high - low, 1e-9)
+    step_sd = 0.15 * width  # tune as needed; constant for this pair_type
+    
+    # Symmetric additive Gaussian proposal in sigma-space
+    proposed = current_val + np.random.normal(0.0, step_sd)
+    
+    # Reflective boundary conditions preserve symmetry on [low, high]
+    def reflect(x: float, a: float, b: float) -> float:
+        w = b - a
+        if w <= 0.0:
+            return float(np.clip(x, a, b))
+        # Repeated reflections until inside [a, b]
+        while x < a or x > b:
+            if x < a:
+                x = a + (a - x)
+            if x > b:
+                x = b - (x - b)
+        return float(x)
+    
+    proposed_val = reflect(proposed, low, high)
+    
+    # Update state in-place
+    state.sigma[pair_type] = proposed_val
 
 def neg_log_posterior(
     state: SystemState, 
