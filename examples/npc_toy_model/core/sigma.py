@@ -17,7 +17,8 @@ class GMMSigmaProvider:
     SAMPLER_SOURCES = {
         "PairSampler": "pairsampler",
         "TetramerSampler": "pairsampler",
-        "OctetSampler": "tetramersampler"
+        "OctetSampler": "tetramersampler",
+        "FullSampler": "fullsampler"
     }
     
     # Default sigma values if GMM not available

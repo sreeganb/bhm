@@ -62,6 +62,10 @@ def run_mcmc_diagnostics(
             'max': float(np.max(all_samples))
         }
     
+    # create the pdf plots 
+    print(f"\n    Generating diagnostic plots...")
+    plot_diagnostics(stage_output, chain_dirs)
+    
     return results
 
 def extract_sigma_trajectories(stage_output: str, chain_dirs: List[str]) -> List[Dict[str, np.ndarray]]:
@@ -222,3 +226,99 @@ def calculate_ess(chains: List[np.ndarray], burn_in_frac: float = 0.5) -> float:
     ess = n_total / rho_sum
     
     return ess
+
+#------------------------------------------------------------
+# Function to plot the time series of sigma parameters, AA, AB and BC
+# clubbed together for each chain in a single figure, plotted together in the same
+# axis, saved as pdfpages in the directory stage_output/diagnostics created if not
+# already present. then pdfpages adds one page per chain for the sigma parameters, 
+# not only that, one page per chain for scores vs step as well, including the pair score
+# components, exvol, tet, oct, pair, total score. at the end of this pdf document I need
+# to add a summary page with the R-hat values for each sigma parameter, and the ESS values
+# for each sigma parameter as well. 
+#------------------------------------------------------------
+def plot_diagnostics(stage_output: str, chain_dirs: List[str]) -> None:
+    """Plot sigma parameter trajectories and scores for diagnostics"""
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    diag_dir = os.path.join(stage_output, "diagnostics")
+    os.makedirs(diag_dir, exist_ok=True)
+    pdf_path = os.path.join(diag_dir, "mcmc_diagnostics.pdf")
+    
+    with PdfPages(pdf_path) as pdf:
+        for chain_dir in chain_dirs:
+            h5_file = os.path.join(stage_output, chain_dir, "trajectory.h5")
+            if not os.path.exists(h5_file):
+                continue
+            
+            try:
+                with h5py.File(h5_file, 'r') as f:
+                    if 'trajectory' not in f:
+                        continue
+                    
+                    traj_group = f['trajectory']
+                    state_names = sorted([k for k in traj_group.keys() if k.startswith('state_')])
+                    
+                    if not state_names:
+                        continue
+                    
+                    # Extract sigma parameters and scores
+                    sigma_params = {}
+                    scores = {
+                        'total_score': [],
+                        'pair_score': [],
+                        'exvol_score': [],
+                        'tet_score': [],
+                        'oct_score': []
+                    }
+                    
+                    for state_name in state_names:
+                        state = traj_group[state_name]
+                        
+                        # Sigma parameters
+                        if 'sigma' in state:
+                            sigma_vals = state['sigma']
+                            for param in sigma_vals.attrs.keys():
+                                if param not in sigma_params:
+                                    sigma_params[param] = []
+                                sigma_params[param].append(sigma_vals.attrs[param])
+                        
+                        # Scores
+                        for score_key in scores.keys():
+                            if score_key in state.attrs:
+                                scores[score_key].append(state.attrs[score_key])
+                            else:
+                                scores[score_key].append(0.0)
+                    
+                    # Convert to numpy arrays
+                    for param in sigma_params.keys():
+                        sigma_params[param] = np.array(sigma_params[param])
+                    for score_key in scores.keys():
+                        scores[score_key] = np.array(scores[score_key])
+                    
+                    # Plot sigma parameters
+                    plt.figure(figsize=(10, 6))
+                    for param, values in sigma_params.items():
+                        plt.plot(values, label=param)
+                    plt.title(f"Sigma Parameters - Chain: {chain_dir}")
+                    plt.xlabel("Step")
+                    plt.ylabel("Sigma Value")
+                    plt.legend()
+                    plt.tight_layout()
+                    pdf.savefig()
+                    plt.close()
+                    # Plot scores
+                    plt.figure(figsize=(10, 6))
+                    for score_key, values in scores.items():
+                        plt.plot(values, label=score_key)
+                    plt.title(f"Scores - Chain: {chain_dir}")
+                    plt.xlabel("Step")
+                    plt.ylabel("Score Value")
+                    plt.legend()
+                    plt.tight_layout()
+                    pdf.savefig()
+                    plt.close() 
+            except Exception as e:
+                print(f"    Warning: Failed to plot diagnostics for {h5_file}: {e}")
+            
