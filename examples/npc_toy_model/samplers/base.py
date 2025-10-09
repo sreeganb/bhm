@@ -17,6 +17,7 @@ def run_mcmc_sampling(
     output_dir: str = "output",
     temp_start: float = 10.0,
     temp_end: float = 1.0,
+    equilibration_steps: int = 500,  # NEW: steps at high temp
     adapt_step_sizes: Optional[Callable] = None,
     debug: bool = False
 ) -> Tuple[SystemState, str]:
@@ -27,12 +28,14 @@ def run_mcmc_sampling(
         state: Initial system state
         score_fn: Function to calculate score (neg_log_posterior)
         propose_fn_dict: Dict of proposal functions for each move type
+                        Each function should take (state) and modify it in-place
         move_probs: Dict of probabilities for each move type
         n_steps: Number of MCMC steps to run
         save_freq: How often to save trajectory frames
         output_dir: Directory to save output
         temp_start: Initial temperature
         temp_end: Final temperature
+        equilibration_steps: Number of steps at high temperature before annealing
         adapt_step_sizes: Function to adapt step sizes based on acceptance
         debug: Whether to print debug info
     
@@ -60,9 +63,7 @@ def run_mcmc_sampling(
     prior_penalty = sig_provider.calculate_negative_log_prior(state)
     current_score, *score_components = score_fn(state, prior_penalty)
     
-    # Unpack score components (adjust based on your score_fn return signature)
-    # Assuming score_fn returns: (total_score, exvol_score, pair_score)
-    # Add more components as needed: tet_score, oct_score, etc.
+    # Unpack score components
     exvol_score = score_components[0] if len(score_components) > 0 else 0.0
     pair_score = score_components[1] if len(score_components) > 1 else 0.0
     tet_score = score_components[2] if len(score_components) > 2 else 0.0
@@ -73,11 +74,14 @@ def run_mcmc_sampling(
     move_weights = np.array([move_probs[m] for m in move_types])
     move_weights /= move_weights.sum()  # Normalize
     
-    # Temperature schedule
-    temp_decay = (temp_end / temp_start) ** (1.0 / n_steps)
+    # Temperature schedule with equilibration phase
+    annealing_steps = n_steps - equilibration_steps
+    temp_decay = (temp_end / temp_start) ** (1.0 / max(1, annealing_steps))
     temp = temp_start
     
     print(f"Starting MCMC sampling for {n_steps} steps...")
+    print(f"  - Equilibration: {equilibration_steps} steps at T={temp_start:.2f}")
+    print(f"  - Annealing: {annealing_steps} steps from T={temp_start:.2f} to T={temp_end:.2f}")
     print(f"Output will be saved to: {trajectory_file}")
     
     # Main MCMC loop
@@ -89,9 +93,9 @@ def run_mcmc_sampling(
         # Get proposal function for this move
         propose_fn = propose_fn_dict[move_type]
         
-        # Make proposal
+        # Make proposal - copy state and apply move in-place
         proposed_state = state.copy()
-        propose_fn(proposed_state, attempts[move_type] / max(1, accepts[move_type]))
+        propose_fn(proposed_state)
         
         # Calculate new score with prior
         new_prior = sig_provider.calculate_negative_log_prior(proposed_state)
@@ -128,8 +132,12 @@ def run_mcmc_sampling(
                 best_score = current_score
                 best_state = state.copy()
         
-        # Update temperature
-        temp = temp_start * (temp_decay ** step)
+        # Update temperature: stay high during equilibration, then anneal
+        if step > equilibration_steps:
+            steps_into_annealing = step - equilibration_steps
+            temp = temp_start * (temp_decay ** steps_into_annealing)
+        else:
+            temp = temp_start  # Keep high temperature during equilibration
         
         # Adapt step sizes if provided
         if adapt_step_sizes and step % 100 == 0:
@@ -148,7 +156,7 @@ def run_mcmc_sampling(
                 exvol_score=exvol_score,
                 tet_score=tet_score,
                 oct_score=oct_score,
-                types=getattr(state, 'types', None),  # If state has these attributes
+                types=getattr(state, 'types', None),
                 bead_numbers=getattr(state, 'bead_numbers', None),
                 traj_file=trajectory_file
             )

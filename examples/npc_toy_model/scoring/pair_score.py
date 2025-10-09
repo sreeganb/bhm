@@ -83,7 +83,7 @@ class PairNLL:
                         # Find the row with minimum NLL
                         best_local_idx = np.argmin(valid_nll)
                         i_idx = valid_rows[best_local_idx]  # Map back to original row index
-                        selected_pairs.add((type1, i_idx, type2, j_idx))
+                        selected_pairs.add((type1, i_idx, type2, j))
                 
                 # Note: Using a set automatically handles duplicates. If particle i picks j
                 # as its best partner AND particle j picks i as its best partner, the pair
@@ -100,7 +100,7 @@ class PairNLL:
                 # Column-wise minima: for each type2 particle, find its best type1 partner
                 for j in range(n2):
                     i_idx = np.argmin(nll_matrix[:, j])
-                    selected_pairs.add((type1, i_idx, type2, j_idx))
+                    selected_pairs.add((type1, i_idx, type2, j))
             
             # Store selected pairs
             pair_distance_scores[pair_type] = selected_pairs

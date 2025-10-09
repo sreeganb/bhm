@@ -1,3 +1,4 @@
+# core/state.py
 import numpy as np
 import torch
 from typing import Dict, Any, Optional, List, Tuple, Sequence
@@ -17,7 +18,7 @@ class SystemState:
         self.box_size: float = 0.0
 
         # Sampler sequencing
-        # User-defined ordered list of samplers (e.g. ["pair","tetramer","octet"])
+        # User-defined ordered list of samplers (e.g. ["pair","tetramer","octet", "full"])
         self.sampler_sequence: List[str] = list(sampler_sequence) if sampler_sequence is not None else []
         # Name of the sampler currently operating on this state
         self.current_sampler: Optional[str] = current_sampler

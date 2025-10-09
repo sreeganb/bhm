@@ -7,12 +7,12 @@ import torch
 from typing import Dict, Optional, Sequence
 from core.state import SystemState
 from core.parameters import SystemParameters
-
+from core.io_utils import load_trajectory_from_disk  # Added import for trajectory loading
 
 class SystemBuilder:
     """
     Class-based initializer for SystemState, supporting chained samplers
-    (pair, tetramer, octet) with ideal, random, or trajectory inputs.
+    (pair, tetramer, octet, full) with ideal, random, or trajectory inputs.
     """
     def __init__(
         self,
@@ -53,8 +53,10 @@ class SystemBuilder:
             return self._load_trajectory()
         if self.source == "random":
             return self._random_positions()
-        # default to ideal
-        return self._ideal_positions()
+        if self.source == "ideal":
+            return self._ideal_positions()
+        # default to random coordinates
+        return self._random_positions()
 
     def _use_trajectory(self) -> bool:
         """
@@ -87,27 +89,11 @@ class SystemBuilder:
 
     def _load_trajectory(self) -> Dict[str, np.ndarray]:
         """
-        Load positions from HDF5 trajectory (last or specified frame).
+        Load positions from HDF5 trajectory using the standardized io_utils function.
         """
         traj_file = self.trajectory_file or self._auto_select_file()
-        with h5py.File(traj_file, 'r') as f:
-            # choose frame
-            if self.frame == -1:
-                frames = sorted(k for k in f if k.startswith('frame_'))
-                if not frames:
-                    raise ValueError(f"No frames in {traj_file}")
-                key = frames[-1]
-            else:
-                key = f'frame_{self.frame}'
-            if key not in f:
-                raise ValueError(f"Frame {key} not in {traj_file}")
-            grp = f[key]
-            pos: Dict[str, np.ndarray] = {}
-            for comp in self.params.component_counts:
-                if comp not in grp:
-                    raise ValueError(f"Component {comp} missing in {key} of {traj_file}")
-                pos[comp] = np.array(grp[comp])
-            return pos
+        # Use load_trajectory_from_disk for consistent loading (returns positions dict when just_coordinates=True)
+        return load_trajectory_from_disk(traj_file, step=self.frame, just_coordinates=True)
 
     def _random_positions(self) -> Dict[str, np.ndarray]:
         """
