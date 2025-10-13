@@ -26,6 +26,7 @@ def run_mcmc_sampling(
     Args:
         state: Initial system state (with sigma_prior already attached)
         score_fn: Function to calculate score (neg_log_posterior)
+                 Should compute prior internally from state.sigma_prior
         propose_fn_dict: Dict of proposal functions for each move type
                         Each function should take (state) and modify it in-place
         move_probs: Dict of probabilities for each move type
@@ -54,20 +55,25 @@ def run_mcmc_sampling(
     accepts = {move: 0 for move in propose_fn_dict}
     attempts = {move: 0 for move in propose_fn_dict}
     
-    # Get sigma prior (already computed and attached by pipeline)
+    # Verify sigma prior is attached (should be done by pipeline)
     sigma_prior = getattr(state, 'sigma_prior', None)
     if sigma_prior is None:
         raise ValueError("state.sigma_prior not found - pipeline must attach it before sampling")
 
-    # Calculate initial score with prior
-    prior_penalty = -sigma_prior.log_prior(state.sigma)
-    current_score, *score_components = score_fn(state, prior_penalty)
+    # Calculate initial score (score_fn computes prior internally!)
+    # The score_fn signature is: score_fn(state, prior_penalty=0.0)
+    # But we pass prior_penalty as a dummy - the function computes it internally
+    current_score, *score_components = score_fn(state, prior_penalty=0.0)
     
-    # Unpack score components
+    # Unpack score components (order depends on sampler)
+    # pair sampler: (total, exvol, pair, prior)
+    # tetramer sampler: (total, exvol, pair, tetramer, prior)
+    # octet sampler: (total, exvol, pair, tetramer, octet, prior)
     exvol_score = score_components[0] if len(score_components) > 0 else 0.0
     pair_score = score_components[1] if len(score_components) > 1 else 0.0
     tet_score = score_components[2] if len(score_components) > 2 else 0.0
     oct_score = score_components[3] if len(score_components) > 3 else 0.0
+    prior_penalty = score_components[-1] if len(score_components) > 0 else 0.0  # Last component is always prior
     
     # Setup move selection
     move_types = list(move_probs.keys())
@@ -83,6 +89,7 @@ def run_mcmc_sampling(
     print(f"  - Equilibration: {equilibration_steps} steps at T={temp_start:.2f}")
     print(f"  - Annealing: {annealing_steps} steps from T={temp_start:.2f} to T={temp_end:.2f}")
     print(f"  - Using {'GMM' if sigma_prior.use_gmm else sigma_prior.prior_type} prior for sigma")
+    print(f"  - Initial score: {current_score:.2f} (prior penalty: {prior_penalty:.2f})")
     print(f"Output will be saved to: {trajectory_file}")
     
     # Main MCMC loop
@@ -91,33 +98,38 @@ def run_mcmc_sampling(
         move_type = np.random.choice(move_types, p=move_weights)
         attempts[move_type] += 1
         
+        # Create proposed state and apply move
         proposed_state = state.copy()
         propose_fn_dict[move_type](proposed_state)
         
-        # Copy sigma_prior to proposed state (same prior applies)
+        # CRITICAL: Copy sigma_prior reference to proposed state
+        # (same prior object applies to both current and proposed)
         proposed_state.sigma_prior = sigma_prior
         
-        # Calculate new score with prior (only recompute if sigma changed)
-        if move_type == 'sigma':
-            new_prior = -sigma_prior.log_prior(proposed_state.sigma)
-        else:
-            new_prior = prior_penalty  # Reuse prior if sigma unchanged
-        
-        proposed_score, *prop_components = score_fn(proposed_state, new_prior)
+        # Calculate new score (score_fn computes prior internally from state.sigma_prior)
+        # The function will evaluate: -log_prior(proposed_state.sigma)
+        proposed_score, *prop_components = score_fn(proposed_state, prior_penalty=0.0)
         
         # Unpack proposed scores
         prop_exvol = prop_components[0] if len(prop_components) > 0 else 0.0
         prop_pair = prop_components[1] if len(prop_components) > 1 else 0.0
         prop_tet = prop_components[2] if len(prop_components) > 2 else 0.0
         prop_oct = prop_components[3] if len(prop_components) > 3 else 0.0
+        new_prior = prop_components[-1] if len(prop_components) > 0 else 0.0
         
-        # Metropolis acceptance
+        # Metropolis-Hastings acceptance criterion
+        # delta = -log(posterior_proposed) - (-log(posterior_current))
+        # Accept if posterior_proposed > posterior_current (i.e., delta < 0)
         delta = proposed_score - current_score
         accept = delta < 0 or np.random.random() < np.exp(-delta / temp)
         
         if debug and step % 10 == 0:
-            print(f"DEBUG: Move={move_type}, Delta={delta:.2f}, Temp={temp:.2f}, "
-                  f"Prior={'changed' if move_type == 'sigma' else 'same'}")
+            sigma_str = ', '.join([f'{k}={v:.2f}' for k, v in state.sigma.items()])
+            print(f"Step {step}: Move={move_type}, Delta={delta:.2f}, T={temp:.2f}, "
+                  f"Prior={prior_penalty:.2f}, Sigma=[{sigma_str}]")
+            if move_type == 'sigma':
+                prop_sigma_str = ', '.join([f'{k}={v:.2f}' for k, v in proposed_state.sigma.items()])
+                print(f"  Proposed sigma: [{prop_sigma_str}], New prior: {new_prior:.2f}")
         
         if accept:
             state = proposed_state
@@ -131,18 +143,18 @@ def run_mcmc_sampling(
                 best_score = current_score
                 best_state = state.copy()
         
-        # Update temperature
+        # Update temperature (simulated annealing)
         if step > equilibration_steps:
             temp = temp_start * (temp_decay ** (step - equilibration_steps))
         else:
             temp = temp_start
         
-        # Adapt step sizes
+        # Adaptive step size tuning
         if adapt_step_sizes and step % 100 == 0:
             acceptance_rates = {k: accepts[k] / max(1, attempts[k]) for k in accepts}
             adapt_step_sizes(acceptance_rates)
         
-        # Save trajectory
+        # Save trajectory to disk
         if step % save_freq == 0 or step == n_steps:
             save_state_to_disk(
                 step=step,
@@ -160,13 +172,26 @@ def run_mcmc_sampling(
             )
             
             accept_rate = sum(accepts.values()) / max(1, sum(attempts.values()))
-            print(f"Step {step}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, Accept={accept_rate:.2f}")
+            sigma_str = ', '.join([f'{k}={v:.2f}' for k, v in state.sigma.items()][:3])
+            print(f"Step {step}/{n_steps}: Score={current_score:.2f}, T={temp:.2f}, "
+                  f"Accept={accept_rate:.2%}, Sigma=[{sigma_str}]")
     
     # Print final statistics
-    print("\nSampling complete:")
+    print("\n" + "="*60)
+    print("Sampling complete!")
+    print("="*60)
+    print(f"Best score: {best_score:.2f}")
+    print(f"Final score: {current_score:.2f}")
+    print(f"\nAcceptance rates:")
     for move in move_types:
         rate = accepts[move] / max(1, attempts[move])
-        print(f"- {move}: {rate:.2f} acceptance ({accepts[move]}/{attempts[move]})")
+        print(f"  {move:>12s}: {rate:>6.2%} ({accepts[move]}/{attempts[move]})")
+    
+    print(f"\nFinal sigma values:")
+    for k, v in state.sigma.items():
+        print(f"  {k}: {v:.3f}")
+    
     print(f"\nTrajectory saved to: {trajectory_file}")
+    print("="*60 + "\n")
     
     return best_state, trajectory_file

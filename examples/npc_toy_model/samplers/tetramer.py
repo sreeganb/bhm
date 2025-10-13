@@ -1,4 +1,3 @@
-# samplers/tetramer.py
 from typing import Optional, Tuple
 from core.state import SystemState
 from samplers.base import run_mcmc_sampling
@@ -8,27 +7,35 @@ from scoring.exvol_score import ExvolNLL
 from core.movers import propose_particle_move, propose_sigma_move, propose_tetramer_move
 
 def neg_log_posterior(
-    state: SystemState, 
-    prior_penalty: float = 0.0,
+    state: SystemState,
+    prior_penalty: float = 0.0,   # Ignored input; prior is computed here
     excluded_pairs: Optional[set] = None
 ) -> Tuple[float, float, float, float, float]:
-    """Calculate negative log posterior for tetramer sampler"""
-    
-    # Calculate excluded volume contribution
+    """
+    -log posterior = ExVol NLL + Pair NLL + Tetramer NLL + (-log prior).
+
+    Returns:
+        (total_score, exclusion_score, pair_score, tetramer_score, prior_penalty)
+    """
+    # Excluded volume score
     exs = ExvolNLL(state.positions, kappa=100.0)
     exclusion_score = exs.compute_score()
-    
-    # Calculate pairwise score (background pairs not in tetramers)
+
+    # Pair score
     ps = PairNLL(state.positions, state.sigma)
     pair_score = ps.compute_score()
-    
-    # Calculate tetrameric score (structured ABCC units)
+
+    # Tetramer score
     ts = TetramerNLL(state)
     tetramer_score = ts.compute_score()
 
-    # Total score = excluded volume + pairs + tetramers + prior
+    # Prior on sigma
+    if hasattr(state, "sigma_prior") and state.sigma_prior is not None:
+        prior_penalty = -state.sigma_prior.log_prior(state.sigma)
+    else:
+        prior_penalty = 0.0
+
     total_score = exclusion_score + pair_score + tetramer_score + prior_penalty
-    
     return total_score, exclusion_score, pair_score, tetramer_score, prior_penalty
 
 def run_tetramer_sampling(
@@ -38,49 +45,29 @@ def run_tetramer_sampling(
     **kwargs
 ) -> Tuple[SystemState, str]:
     """
-    Run tetramer-level MCMC sampling.
-    
-    Move hierarchy:
-    - 60% tetramer moves (rigid body translation/rotation)
-    - 25% individual particle moves (fine adjustments)
-    - 15% sigma moves (parameter updates)
-    
-    This emphasizes structured tetramer moves while allowing
-    fine-tuning through individual particle and parameter moves.
+    Run tetramer-level MCMC sampling with move mix:
+      - 60% tetramer rigid-body moves
+      - 30% single-particle moves
+      - 10% sigma parameter moves
     """
-    
-    # Define proposal functions
     propose_fns = {
-        'tetramer': propose_tetramer_move,   # Rigid body moves
-        'position': propose_particle_move,   # Individual particle moves
-        'sigma': propose_sigma_move          # Parameter moves
+        "tetramer": propose_tetramer_move,
+        "position": propose_particle_move,
+        "sigma": propose_sigma_move,
     }
-    
-    # Define move probabilities - tetramer moves dominate
-    move_probs = {
-        'tetramer': 0.60,   # Dominant: structured rigid body moves
-        'position': 0.25,   # Secondary: fine particle adjustments
-        'sigma': 0.15       # Tertiary: parameter optimization
-    }
-    
-    # Create score function
-    score_fn = lambda s, p: neg_log_posterior(s, p)
-    
-    # Run MCMC with tetramer-focused sampling
+    move_probs = {"tetramer": 0.50, "position": 0.40, "sigma": 0.10}
+
     return run_mcmc_sampling(
         state=state,
-        score_fn=score_fn,
+        score_fn=neg_log_posterior,
         propose_fn_dict=propose_fns,
         move_probs=move_probs,
         n_steps=n_steps,
         output_dir=output_dir,
-        **kwargs
+        **kwargs,
     )
 
 def get_tetramers(state) -> list:
-    """
-    Convenience function to get tetramers from state.
-    Delegates to the movers module implementation.
-    """
+    """Convenience passthrough to the tetramer finder in core.movers."""
     from core.movers import get_tetramers as _get_tetramers
     return _get_tetramers(state)

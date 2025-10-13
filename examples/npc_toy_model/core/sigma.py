@@ -1,163 +1,234 @@
+"""
+Sigma Prior Management
+======================
+Centralized handling of sigma (nuisance parameter) initialization and priors.
+"""
 import os
 import json
 import numpy as np
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple, Any
 from scipy import stats
-from core.state import SystemState
-from typing import List, Tuple, Any
 
-class SigmaPrior:
-    """Prior distribution for sigma parameters"""
+#==================================================================================
+# GLOBAL CONFIGURATION: Default sigma ranges for all pair types
+#==================================================================================
+DEFAULT_SIGMA_RANGES = {
+    'AA': (0.24, 7.0),
+    'AB': (0.14, 4.5),
+    'BC': (0.16, 5.0)
+}
+
+#==================================================================================
+# Default hyperparameters for parametric priors - BETTER CALIBRATION
+#==================================================================================
+DEFAULT_GAMMA_PARAMS = {
+    # For AA pairs (larger particles, ~48nm diameter, expect sigma ~ 1-2nm)
+    'AA': {'shape': 6.0, 'scale': 0.4},   # mean=1.6, std=0.8, 95% within (0.4, 3.3)
     
-    # Define available prior distributions as class attribute
-    PRIOR_DISTRIBUTIONS = {
-        'uniform': lambda low, high: stats.uniform(loc=low, scale=high-low),
-        'jeffreys': lambda low, high: stats.loguniform(a=low, b=high),
-        'log_uniform': lambda low, high: stats.loguniform(a=low, b=high),
-        'gamma': lambda shape, scale: stats.gamma(a=shape, scale=scale),
-        'cauchy': lambda loc, scale: stats.cauchy(loc=loc, scale=scale)
-    }
+    # For AB pairs (mixed sizes, expect sigma ~ 0.5-1.5nm)
+    'AB': {'shape': 6.0, 'scale': 0.25},  # mean=1.0, std=0.5, 95% within (0.25, 2.1)
+    
+    # For BC pairs (small particles, expect sigma ~ 0.8-2nm)
+    'BC': {'shape': 6.0, 'scale': 0.35}   # mean=1.4, std=0.7, 95% within (0.35, 2.9)
+}
+
+
+DEFAULT_HALF_CAUCHY_PARAMS = {
+    'AA': {'scale': 1.0},   # median = scale
+    'AB': {'scale': 0.6},
+    'BC': {'scale': 0.8}
+}
+
+#==================================================================================
+# Prior Distributions Factory
+#==================================================================================
+def get_prior_distribution(prior_type: str, low: float, high: float, 
+                          hyperparams: Optional[Dict[str, float]] = None):
+    """Get a prior distribution object based on type and parameters."""
+    if prior_type == 'uniform':
+        return stats.uniform(loc=low, scale=high-low)
+    
+    elif prior_type in ['jeffreys', 'log_uniform']:
+        return stats.loguniform(a=low, b=high)
+    
+    elif prior_type == 'gamma':
+        if hyperparams is None:
+            mean = (low + high) / 2
+            cv = 0.5
+            shape = 1 / (cv ** 2)
+            scale = mean / shape
+        else:
+            shape = hyperparams.get('shape', 2.0)
+            scale = hyperparams.get('scale', 1.5)
+        
+        return stats.gamma(a=shape, scale=scale)
+    
+    elif prior_type == 'inv_gamma':
+        # Inverse-Gamma is conjugate prior for σ²
+        # Parameterized so E[σ] ≈ target, with concentration around it
+        if hyperparams is None:
+            # Default: concentrated around 1nm with moderate spread
+            shape = 5.0   # Higher shape = more concentrated
+            scale = 4.0   # E[σ] = sqrt(scale/(shape-1)) for shape > 1
+        else:
+            shape = hyperparams.get('shape', 5.0)
+            scale = hyperparams.get('scale', 4.0)
+        
+        return stats.invgamma(a=shape, scale=scale)
+        
+    
+    elif prior_type == 'half_cauchy':
+        if hyperparams is None:
+            scale = (low + high) / 2
+        else:
+            scale = hyperparams.get('scale', 2.0)
+        
+        return stats.halfcauchy(scale=scale)
+    
+    else:
+        raise ValueError(f"Unknown prior type: {prior_type}")
+
+#==================================================================================
+# SigmaPrior Class
+#==================================================================================
+class SigmaPrior:
+    """Prior distribution for sigma parameters."""
     
     def __init__(self, 
                  pair_types: List[str],
                  sigma_ranges: Dict[str, Tuple[float, float]],
                  prior_type: str = "uniform",
                  use_gmm: bool = False,
-                 gmm_params: Optional[Dict[str, Dict[str, Any]]] = None):
-        """
-        Initialize sigma prior.
-        
-        Args:
-            pair_types: List of pair type names (e.g., ['AA', 'AB', 'BC'])
-            sigma_ranges: Dict mapping pair types to (low, high) bounds
-            prior_type: Type of prior ("uniform", "jeffreys", "log_uniform")
-            use_gmm: Whether to use GMM distribution
-            gmm_params: GMM parameters if use_gmm=True
-        """
+                 gmm_params: Optional[Dict[str, Dict[str, Any]]] = None,
+                 hyperparams: Optional[Dict[str, Dict[str, float]]] = None):
         self.pair_types = pair_types
         self.sigma_ranges = sigma_ranges
         self.prior_type = prior_type
         self.use_gmm = use_gmm
         self.gmm_params = gmm_params or {}
+        self.hyperparams = hyperparams or {}
         
-        # Validate prior type
-        if not use_gmm and prior_type not in self.PRIOR_DISTRIBUTIONS:
-            raise ValueError(f"Unknown prior type: {prior_type}. Choose from {list(self.PRIOR_DISTRIBUTIONS.keys())}")
+        if prior_type == 'gamma' and not hyperparams:
+            self.hyperparams = DEFAULT_GAMMA_PARAMS.copy()
+        elif prior_type == 'half_cauchy' and not hyperparams:
+            self.hyperparams = DEFAULT_HALF_CAUCHY_PARAMS.copy()
         
-        # Validate ranges
         for pt in pair_types:
             if pt not in sigma_ranges:
                 raise ValueError(f"Missing sigma range for pair type: {pt}")
-        
-    def _load_gmm(self, gmm_file: str) -> Optional[Dict]:
-        """Load GMM parameters from JSON file."""
-        if not os.path.exists(gmm_file):
-            print(f"Warning: GMM file not found: {gmm_file}")
-            return None
-            
-        try:
-            with open(gmm_file, 'r') as f:
-                gmm_data = json.load(f)
-            
-            # Validate GMM structure
-            for pair_type in self.pair_types:
-                if pair_type not in gmm_data:
-                    print(f"Warning: Missing GMM data for {pair_type}")
-                    return None
-                    
-                gmm = gmm_data[pair_type]
-                required_keys = ['weights', 'means', 'covariances', 'n_components']
-                if not all(k in gmm for k in required_keys):
-                    print(f"Warning: Invalid GMM structure for {pair_type}")
-                    return None
-            
-            print(f"Loaded GMM prior from {gmm_file}")
-            return gmm_data
-            
-        except Exception as e:
-            print(f"Error loading GMM file: {e}")
-            return None
     
-    def initialize_sigma(self, rng: np.random.Generator = None) -> Dict[str, float]:
-        """
-        Initialize sigma values randomly within specified ranges.
-        
-        Args:
-            rng: NumPy random generator (uses default if None)
-            
-        Returns:
-            Dictionary of initialized sigma values
-        """
+    def initialize_sigma(self, rng: Optional[np.random.Generator] = None) -> Dict[str, float]:
+        """Sample initial sigma values from prior - FIXED VERSION"""
         if rng is None:
             rng = np.random.default_rng()
         
         sigma = {}
-        for pair_type in self.pair_types:
-            low, high = self.sigma_ranges[pair_type]
-            # Initialize in log-space for better coverage
-            sigma[pair_type] = float(np.exp(rng.uniform(np.log(low), np.log(high))))
+        
+        if self.use_gmm:
+            # Sample from GMM
+            for pair_type in self.pair_types:
+                gmm = self.gmm_params[pair_type]
+                weights = np.array(gmm['weights'])
+                means = np.array(gmm['means']).flatten()
+                stds = np.sqrt(np.array(gmm['covariances']).flatten())
+                
+                component = rng.choice(len(weights), p=weights/np.sum(weights))
+                value = rng.normal(means[component], stds[component])
+                
+                low, high = self.sigma_ranges[pair_type]
+                sigma[pair_type] = float(np.clip(value, low, high))
+        
+        elif self.prior_type in ['uniform', 'jeffreys', 'log_uniform']:
+            # Sample in log-space for better coverage - FIXED!
+            for pair_type in self.pair_types:
+                low, high = self.sigma_ranges[pair_type]
+                log_val = rng.uniform(np.log(low), np.log(high))
+                sigma[pair_type] = float(np.exp(log_val))  # REMOVED hardcoded override!
+        
+        else:  # Parametric priors (gamma, half_cauchy)
+            for pair_type in self.pair_types:
+                low, high = self.sigma_ranges[pair_type]
+                hp = self.hyperparams.get(pair_type, None)
+                
+                dist = get_prior_distribution(self.prior_type, low, high, hp)
+                value = dist.rvs(random_state=rng)
+                sigma[pair_type] = float(np.clip(value, low, high))  # REMOVED hardcoded override!
         
         return sigma
     
     def log_prior(self, sigma: Dict[str, float]) -> float:
-        """
-        Calculate log prior probability for given sigma values.
-        
-        Args:
-            sigma: Dictionary of sigma values for each pair type
-            
-        Returns:
-            Log prior probability (NOT negative log prior)
-        """
+        """Calculate log prior probability for given sigma values."""
         if self.use_gmm:
             return self._gmm_log_prior(sigma)
         else:
-            return self._simple_log_prior(sigma)
+            return self._parametric_log_prior(sigma)
     
-    def _simple_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Calculate log prior using simple distributions."""
-        if self.prior_type not in self.PRIOR_DISTRIBUTIONS:
-            raise ValueError(f"Unknown prior type: {self.prior_type}")
-        
+    def _parametric_log_prior(self, sigma: Dict[str, float]) -> float:
+        """Calculate log prior using parametric distributions"""
         log_prob = 0.0
         
         for pair_type, value in sigma.items():
             low, high = self.sigma_ranges[pair_type]
             
-            # Check bounds
-            if not (low <= value <= high):
-                return -np.inf
+            # Hard boundary check for bounded priors
+            if self.prior_type not in ['half_cauchy', 'gamma']:
+                if not (low <= value <= high):
+                    return -np.inf
+            else:
+                # For unbounded priors, soft penalty
+                if value < low:
+                    return -np.inf
+                if value > high:
+                    log_prob -= 1000 * (value - high)
             
-            # Get distribution and evaluate
-            dist = self.PRIOR_DISTRIBUTIONS[self.prior_type](low, high)
+            # Evaluate log probability
+            hp = self.hyperparams.get(pair_type, None)
+            dist = get_prior_distribution(self.prior_type, low, high, hp)
             log_prob += dist.logpdf(value)
         
         return log_prob
-
-    @classmethod
-    def from_gmm_file(cls, gmm_file: str, 
-                    prior_type: str = "uniform",
-                    sigma_ranges: Optional[Dict[str, Tuple[float, float]]] = None) -> 'SigmaPrior':
-        """
-        Load SigmaPrior from GMM parameters file.
+    
+    def _gmm_log_prior(self, sigma: Dict[str, float]) -> float:
+        """Calculate log prior using GMM from previous sampler."""
+        log_prob = 0.0
         
-        Args:
-            gmm_file: Path to JSON file with GMM parameters
-            prior_type: Fallback prior type if GMM fails
-            sigma_ranges: Bounds for each pair type
+        for pair_type, value in sigma.items():
+            low, high = self.sigma_ranges[pair_type]
+            if not (low <= value <= high):
+                return -np.inf
             
-        Returns:
-            SigmaPrior configured with GMM
-        """
-        import json
+            gmm = self.gmm_params[pair_type]
+            weights = np.array(gmm['weights'])
+            means = np.array(gmm['means']).flatten()
+            covs = np.array(gmm['covariances']).flatten()
+            
+            covs = np.maximum(covs, 1e-10)
+            weights = weights / np.sum(weights)
+            
+            stds = np.sqrt(covs)
+            component_logprobs = (
+                np.log(weights) 
+                - 0.5 * np.log(2 * np.pi * covs)
+                - 0.5 * ((value - means) / stds) ** 2
+            )
+            
+            max_logprob = np.max(component_logprobs)
+            log_prob += max_logprob + np.log(np.sum(np.exp(component_logprobs - max_logprob)))
         
+        return log_prob
+    
+    @classmethod
+    def from_gmm_file(cls, 
+                     gmm_file: str, 
+                     prior_type: str = "uniform",
+                     sigma_ranges: Optional[Dict[str, Tuple[float, float]]] = None) -> 'SigmaPrior':
+        """Load SigmaPrior from GMM parameters JSON file."""
         try:
             with open(gmm_file, 'r') as f:
                 gmm_params = json.load(f)
             
             pair_types = list(gmm_params.keys())
             
-            # Use provided ranges or extract from GMM means
             if sigma_ranges is None:
                 sigma_ranges = {}
                 for pt in pair_types:
@@ -179,122 +250,86 @@ class SigmaPrior:
             print(f"Warning: Failed to load GMM from {gmm_file}: {e}")
             print(f"Falling back to simple {prior_type} prior")
             
-            # Fallback to simple prior
-            pair_types = list(sigma_ranges.keys()) if sigma_ranges else ['AA', 'AB', 'BC']
-            default_ranges = {
-                'AA': (1.0, 5.0),
-                'AB': (1.5, 8.0),
-                'BC': (2.0, 12.0)
-            }
             if sigma_ranges is None:
-                sigma_ranges = default_ranges
+                sigma_ranges = DEFAULT_SIGMA_RANGES.copy()
+            
+            pair_types = list(sigma_ranges.keys())
             
             return cls(
                 pair_types=pair_types,
                 sigma_ranges=sigma_ranges,
                 prior_type=prior_type,
                 use_gmm=False
-            )    
-    def _gmm_log_prior(self, sigma: Dict[str, float]) -> float:
-        """Calculate log prior using GMM from previous sampler."""
-        log_prob = 0.0
-        
-        for pair_type, value in sigma.items():
-            # Check bounds
-            low, high = self.sigma_ranges[pair_type]
-            if not (low <= value <= high):
-                return -np.inf
-            
-            # Get GMM parameters
-            gmm = self.gmm_params[pair_type]
-            weights = np.array(gmm['weights'])
-            means = np.array(gmm['means']).flatten()
-            covs = np.array(gmm['covariances']).flatten()
-            
-            # Ensure numerical stability
-            covs = np.maximum(covs, 1e-10)
-            weights = weights / np.sum(weights)
-            
-            # Calculate log probability for each component
-            stds = np.sqrt(covs)
-            component_logprobs = (
-                np.log(weights) 
-                - 0.5 * np.log(2 * np.pi * covs)
-                - 0.5 * ((value - means) / stds) ** 2
             )
-            
-            # Log-sum-exp for numerical stability
-            max_logprob = np.max(component_logprobs)
-            log_prob += max_logprob + np.log(np.sum(np.exp(component_logprobs - max_logprob)))
-        
-        return log_prob
 
+#==================================================================================
+# Factory Functions
+#==================================================================================
+def get_default_sigma_ranges(pair_types: Optional[List[str]] = None) -> Dict[str, Tuple[float, float]]:
+    """Get default sigma ranges for specified pair types."""
+    if pair_types is None:
+        return DEFAULT_SIGMA_RANGES.copy()
+    
+    return {pt: DEFAULT_SIGMA_RANGES.get(pt, (1.0, 10.0)) for pt in pair_types}
 
-def create_sigma_prior(state: SystemState, 
+def get_default_hyperparams(prior_type: str, 
+                            pair_types: Optional[List[str]] = None) -> Dict[str, Dict[str, float]]:
+    """Get default hyperparameters for parametric priors."""
+    if prior_type == 'gamma':
+        base = DEFAULT_GAMMA_PARAMS
+    elif prior_type == 'half_cauchy':
+        base = DEFAULT_HALF_CAUCHY_PARAMS
+    else:
+        return {}
+    
+    if pair_types is None:
+        return base.copy()
+    
+    return {pt: base.get(pt, base['AA']) for pt in pair_types}
+
+def initialize_sigma_dict(pair_types: Optional[List[str]] = None,
+                         sigma_ranges: Optional[Dict[str, Tuple[float, float]]] = None,
+                         rng: Optional[np.random.Generator] = None,
+                         prior_type: str = "uniform",
+                         hyperparams: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, float]:
+    """Initialize sigma dictionary with random values."""
+    if pair_types is None:
+        pair_types = list(DEFAULT_SIGMA_RANGES.keys())
+    
+    if sigma_ranges is None:
+        sigma_ranges = get_default_sigma_ranges(pair_types)
+    
+    if hyperparams is None and prior_type in ['gamma', 'half_cauchy']:
+        hyperparams = get_default_hyperparams(prior_type, pair_types)
+    
+    prior = SigmaPrior(
+        pair_types=pair_types,
+        sigma_ranges=sigma_ranges,
+        prior_type=prior_type,
+        hyperparams=hyperparams
+    )
+    
+    return prior.initialize_sigma(rng)
+
+def create_sigma_prior(pair_types: List[str],
+                      sigma_ranges: Optional[Dict[str, Tuple[float, float]]] = None,
                       gmm_file: Optional[str] = None,
-                      prior_type: str = "uniform") -> SigmaPrior:
-    """
-    Factory function to create a SigmaPrior from state or GMM file.
+                      prior_type: str = "uniform",
+                      hyperparams: Optional[Dict[str, Dict[str, float]]] = None) -> SigmaPrior:
+    """Factory function to create a SigmaPrior (used by pipeline)."""
+    if sigma_ranges is None:
+        sigma_ranges = get_default_sigma_ranges(pair_types)
     
-    Args:
-        state: SystemState containing sigma dict with pair types
-        gmm_file: Optional path to GMM parameters JSON file
-        prior_type: Type of prior distribution ("uniform", "jeffreys", "log_uniform")
-        
-    Returns:
-        Configured SigmaPrior object
-    """
-    # Extract pair types from state
-    pair_types = list(state.sigma.keys())
+    if hyperparams is None and prior_type in ['gamma', 'half_cauchy']:
+        hyperparams = get_default_hyperparams(prior_type, pair_types)
     
-    # Define default sigma ranges if not in state
-    default_ranges = {
-        'AA': (1.0, 5.0),
-        'AB': (1.5, 8.0),
-        'BC': (2.0, 12.0)
-    }
+    if gmm_file is not None and os.path.exists(gmm_file):
+        return SigmaPrior.from_gmm_file(gmm_file, prior_type, sigma_ranges)
     
-    # Get ranges from state or use defaults
-    if hasattr(state, 'sigma_range') and state.sigma_range:
-        sigma_ranges = state.sigma_range
-    else:
-        sigma_ranges = {pt: default_ranges.get(pt, (1.0, 10.0)) for pt in pair_types}
-    
-    if gmm_file is None:
-        # Use simple prior (uniform, jeffreys, etc.)
-        return SigmaPrior(
-            pair_types=pair_types,
-            sigma_ranges=sigma_ranges,  # ← FIX: Pass sigma_ranges
-            prior_type=prior_type,
-            use_gmm=False
-        )
-    else:
-        # Load GMM from file for subsequent stages
-        return SigmaPrior.from_gmm_file(
-            gmm_file, 
-            prior_type,
-            sigma_ranges=sigma_ranges  # ← FIX: Pass sigma_ranges
-        )
-
-
-# Example usage
-if __name__ == "__main__":
-    # First sampler in sequence (no GMM)
-    pair_types = ['AA', 'AB', 'BC']
-    sigma_ranges = {'AA': (1.0, 5.0), 'AB': (1.5, 8.0), 'BC': (2.0, 12.0)}
-
-    prior = SigmaPrior(pair_types, sigma_ranges, gmm_file=None, prior_type='uniform')
-
-    # Initialize sigma
-    sigma = prior.initialize_sigma()
-    print("Initialized sigma:", sigma)
-    
-    # Calculate log prior
-    log_p = prior.log_prior(sigma)
-    print(f"Log prior: {log_p:.4f}")
-    print(f"Negative log prior: {-log_p:.4f}")
-    
-    # Subsequent sampler (with GMM)
-    # prior2 = SigmaPrior(pair_types, sigma_ranges, 
-    #                     gmm_file='output_analysis/pairsampler_results/gmm_all_chains.json',
-    #                     prior_type='uniform')
+    return SigmaPrior(
+        pair_types=pair_types,
+        sigma_ranges=sigma_ranges,
+        prior_type=prior_type,
+        use_gmm=False,
+        hyperparams=hyperparams
+    )

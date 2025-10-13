@@ -1,25 +1,27 @@
 # pipeline.py - Pipeline to run multiple samplers in sequence with analysis
-from typing import List, Dict, Any, Optional
-from core.state import SystemState
-from core.sigma import SigmaPrior, create_sigma_prior
-from core.system import SystemBuilder
+from typing import List, Dict, Any, Optional, Tuple
 import os
 import json
 import time
 import numpy as np
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
-from analysis.mcmc_diagnostics import run_mcmc_diagnostics
 import random
+import h5py
+from sklearn.mixture import GaussianMixture
+import warnings
+
+from analysis.mcmc_diagnostics import run_mcmc_diagnostics
+from core.state import SystemState
+from core.sigma import create_sigma_prior, get_default_sigma_ranges, initialize_sigma_dict, DEFAULT_SIGMA_RANGES
+from core.system import SystemBuilder
 from core.parameters import SystemParameters
 
 class SamplerPipeline:
     """Run a sequence of samplers in a pipeline with analysis between stages"""
     
-    def __init__(self, initial_state: SystemState, 
-                 base_seed: int = 1234, 
-                 init_mode: str = "random",
-                 prior_type: str = "uniform"):
+    def __init__(self, initial_state: SystemState, base_seed: int = 1234, 
+                 init_mode: str = "random", prior_type: str = "uniform"):
         self.initial_state = initial_state
         self.stages = []
         self.base_seed = int(base_seed)
@@ -40,41 +42,6 @@ class SamplerPipeline:
         })
         return self
     
-    def _run_single_chain(self, args):
-        """Run a single MCMC chain - used for multiprocessing"""
-        state, stage, chain_id, stage_output, n_steps, chain_seed = args
-        self._seed_everything(chain_seed)
-
-        chain_output = os.path.join(stage_output, f"chain_{chain_id}")
-        os.makedirs(chain_output, exist_ok=True)
-
-        final_state, trajectory_file = stage['function'](
-            state=state,  # keep the prepared state (sigma & prior stay attached)
-            n_steps=n_steps,
-            output_dir=chain_output,
-            **stage['kwargs']
-        )
-
-        return {
-            'chain_id': chain_id,
-            'final_state': final_state,
-            'trajectory_file': trajectory_file,
-            'final_sigma': {k: float(v) for k, v in final_state.sigma.items()}
-        }
-    def _run_parallel_chains(self, states, stage, stage_output, n_chains):
-        """Run multiple MCMC chains in parallel for a stage"""
-        print(f"  Running {n_chains} parallel chains...")
-        
-        args_list = [
-            (states[i], stage, i+1, stage_output, stage['n_steps'], 
-            self.base_seed + 1000 * len(self.stages) + i + 1)
-            for i in range(n_chains)
-        ]
-        
-        max_workers = min(n_chains, mp.cpu_count())
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            return list(executor.map(self._run_single_chain, args_list))
-
     def _seed_everything(self, seed: int) -> None:
         """Seed all RNGs for reproducibility"""
         np.random.seed(seed)
@@ -86,86 +53,106 @@ class SamplerPipeline:
                 torch.cuda.manual_seed_all(seed)
         except:
             pass
-    
+
+    def _load_from_h5_last_frame(self, h5_file: str) -> Tuple[Dict[str, float], bool]:
+        """
+        Load sigma dict from the last frame of trajectory.h5.
+        Returns (sigma_dict, success).
+        """
+        result = {}
+        if not h5_file or not os.path.exists(h5_file):
+            return result, False
+        
+        try:
+            with h5py.File(h5_file, 'r') as f:
+                if 'trajectory' not in f:
+                    return result, False
+                traj = f['trajectory']
+                state_names = sorted([k for k in traj.keys() if k.startswith('state_')])
+                if not state_names:
+                    return result, False
+                
+                last_state = traj[state_names[-1]]
+                if 'sigma' not in last_state:
+                    return result, False
+                
+                sigma_grp = last_state['sigma']
+                for key in sigma_grp.attrs.keys():
+                    result[str(key)] = float(sigma_grp.attrs[key])
+                
+                return result, True
+        except Exception:
+            return {}, False
+
+    def _extract_sigma_samples(self, h5_file: str, burn_in: float = 0.5) -> Dict[str, np.ndarray]:
+        """Extract all sigma samples from H5 trajectory after burn-in"""
+        sigma_samples = {}
+        
+        try:
+            with h5py.File(h5_file, 'r') as f:
+                if 'trajectory' not in f:
+                    return sigma_samples
+                
+                traj = f['trajectory']
+                state_names = sorted([k for k in traj.keys() if k.startswith('state_')])
+                
+                # Apply burn-in
+                start_idx = int(len(state_names) * burn_in)
+                state_names = state_names[start_idx:]
+                
+                for state_name in state_names:
+                    state = traj[state_name]
+                    if 'sigma' in state:
+                        sigma_grp = state['sigma']
+                        for key in sigma_grp.attrs.keys():
+                            if key not in sigma_samples:
+                                sigma_samples[key] = []
+                            sigma_samples[key].append(float(sigma_grp.attrs[key]))
+            
+            return {k: np.array(v) for k, v in sigma_samples.items()}
+        except Exception:
+            return {}
+
     def _create_initial_states(self, stage_idx: int, n_chains: int, 
-                            prev_stage_output: str = None) -> List[SystemState]:
+                               prev_stage_output: str = None) -> List[SystemState]:
         """Create initial states for a stage using SystemBuilder"""
         states = []
+        params = SystemParameters()
+        params.box_size = self.initial_state.box_size
         
         for chain_id in range(n_chains):
             if stage_idx == 0:
-                # First stage: use ideal or random based on init_mode
+                # First stage: random or ideal initialization
                 source = self.init_mode if self.init_mode in ["ideal", "random"] else "random"
                 builder = SystemBuilder(
-                    params=self._extract_params_from_state(self.initial_state),
+                    params=params,
                     sampler_sequence=self.initial_state.sampler_sequence,
                     current_sampler=self.stages[stage_idx]['name'],
                     source=source
                 )
+                traj_file = None
             else:
-                # Subsequent stages: load from random trajectory frames
+                # Later stages: pick random chain from previous stage
                 chain_dirs = [d for d in os.listdir(prev_stage_output) 
-                            if d.startswith('chain_') and os.path.isdir(os.path.join(prev_stage_output, d))]
+                              if d.startswith('chain_') and 
+                              os.path.isdir(os.path.join(prev_stage_output, d))]
                 selected_chain = np.random.choice(chain_dirs)
                 traj_file = os.path.join(prev_stage_output, selected_chain, "trajectory.h5")
                 
                 builder = SystemBuilder(
-                    params=self._extract_params_from_state(self.initial_state),
+                    params=params,
                     sampler_sequence=self.initial_state.sampler_sequence,
                     current_sampler=self.stages[stage_idx]['name'],
                     source="trajectory",
                     trajectory_file=traj_file,
-                    frame=-1  # Last frame
+                    frame=-1
                 )
             
             state = builder.build()
-            
-            # Ensure sigma dict exists (may be empty from builder)
-            if not hasattr(state, 'sigma') or state.sigma is None:
-                state.sigma = {}
-            
+            state._init_traj_file = traj_file  # Remember source for sigma loading
             states.append(state)
         
         return states
-    
-    def _extract_params_from_state(self, state: SystemState) -> 'SystemParameters':
-        """Extract SystemParameters from SystemState (simplified)"""
-        from core.parameters import SystemParameters
-        params = SystemParameters()
-        params.box_size = state.box_size
-        # Add other parameter extraction as needed
-        return params
-    
-    def _find_gmm_file(self, stage_idx: int, output_base: str) -> Optional[str]:
-        """
-        Find GMM file from previous stage for initializing sigma prior.
-        
-        Args:
-            stage_idx: Current stage index
-            output_base: Base output directory
-            
-        Returns:
-            Path to GMM file or None if not found (first stage or missing file)
-        """
-        if stage_idx == 0:
-            return None
-        
-        # Look for GMM file from previous stage
-        prev_stage_name = self.stages[stage_idx - 1]['name']
-        prev_stage_dir = os.path.join(output_base, f"stage_{stage_idx}_{prev_stage_name}")
-        
-        # Check for consolidated GMM file
-        gmm_file = os.path.join(prev_stage_dir, "gmm_all_chains.json")
-        if os.path.exists(gmm_file):
-            return gmm_file
-        
-        # If not found, look in analysis subdirectory
-        gmm_file_alt = os.path.join(prev_stage_dir, "analysis", "gmm_all_chains.json")
-        if os.path.exists(gmm_file_alt):
-            return gmm_file_alt
-        
-        print(f"  Warning: GMM file not found for stage {stage_idx}. Will use simple prior.")
-        return None
 
     def _initialize_sigma_for_stage(
         self,
@@ -173,61 +160,259 @@ class SamplerPipeline:
         stage_idx: int,
         prev_stage_output: Optional[str] = None
     ) -> None:
-        """Initialize sigma values and attach sigma_prior to each state"""
+        """Initialize sigma values and attach sigma_prior to each state."""
         print(f"  Initializing sigma for stage {stage_idx+1}...")
 
-        default_ranges = {
-            'AA': (1.0, 5.0),
-            'AB': (1.5, 8.0),
-            'BC': (2.0, 12.0),
-        }
-        pair_types = list(default_ranges.keys())
+        pair_types = list(get_default_sigma_ranges().keys())
+        sigma_ranges = get_default_sigma_ranges()
 
         for chain_id, state in enumerate(states):
-            # make sure sigma dict and ranges exist
-            if not state.sigma:
-                state.sigma = {pt: 1.0 for pt in pair_types}
-            if not state.sigma_range:
-                state.sigma_range = default_ranges.copy()
-
-            # choose prior source
+            state.sigma_range = sigma_ranges
             gmm_file = None
-            if stage_idx > 0 and prev_stage_output:
-                chain_dirs = [
-                    d for d in os.listdir(prev_stage_output)
-                    if d.startswith("chain_") and os.path.isdir(os.path.join(prev_stage_output, d))
-                ]
-                if chain_dirs:
-                    selected = np.random.choice(chain_dirs)
-                    candidate = os.path.join(prev_stage_output, selected, "gmm_posterior.json")
-                    if os.path.exists(candidate):
-                        gmm_file = candidate
+            loaded_from_last_frame = False
 
-            # attach prior and draw sigma
-            state.sigma_prior = create_sigma_prior(state=state, gmm_file=gmm_file, prior_type=self.prior_type)
+            # Stage > 0: try to load sigma from the same trajectory that provided positions
+            if stage_idx > 0 and getattr(state, "_init_traj_file", None):
+                chain_dir = os.path.dirname(state._init_traj_file)
+                candidate_gmm = os.path.join(chain_dir, "gmm_posterior.json")
+                if os.path.exists(candidate_gmm):
+                    gmm_file = candidate_gmm
 
-            rng = np.random.default_rng(self.base_seed + stage_idx * 1000 + chain_id)
-            state.sigma.update(state.sigma_prior.initialize_sigma(rng=rng))
+                # Load sigma from last frame
+                last_sigma, success = self._load_from_h5_last_frame(state._init_traj_file)
+                if success:
+                    # Validate and clip
+                    cleaned = {}
+                    for pt in pair_types:
+                        if pt in last_sigma and np.isfinite(last_sigma[pt]):
+                            low, high = sigma_ranges[pt]
+                            cleaned[pt] = float(np.clip(last_sigma[pt], low, high))
+                    if len(cleaned) == len(pair_types):
+                        state.sigma = cleaned
+                        loaded_from_last_frame = True
 
+            # Create prior
+            state.sigma_prior = create_sigma_prior(
+                pair_types=pair_types,
+                sigma_ranges=sigma_ranges,
+                gmm_file=gmm_file,
+                prior_type=self.prior_type
+            )
+
+            # Fallback: sample from prior if not loaded
+            if not loaded_from_last_frame:
+                rng = np.random.default_rng(self.base_seed + stage_idx * 1000 + chain_id)
+                try:
+                    state.sigma = state.sigma_prior.initialize_sigma(rng)
+                except Exception:
+                    state.sigma = initialize_sigma_dict(
+                        pair_types=pair_types,
+                        sigma_ranges=sigma_ranges,
+                        rng=rng,
+                        prior_type=self.prior_type
+                    )
+
+            # Print summary
             if chain_id < 3:
-                sigma_str = ", ".join(f"{k}={v:.3f}" for k, v in state.sigma.items())
-                prior_str = "GMM" if gmm_file else self.prior_type
-                print(f"    Chain {chain_id+1}: {sigma_str} (prior: {prior_str})")
+                sigma_str = ", ".join(f"{k}={state.sigma[k]:.3f}" for k in pair_types)
+                source_str = "last_frame" if loaded_from_last_frame else ("GMM" if gmm_file else self.prior_type)
+                print(f"    Chain {chain_id+1}: {sigma_str} (source: {source_str})")
 
         if len(states) > 3:
             print(f"    ... and {len(states)-3} more chains")
-    
-    def run(self, output_base: str = "output/pipeline", 
-            n_chains: int = 4) -> Dict[str, Any]:
-        """Run the pipeline with parallel chains and analysis between stages"""
+
+    def _run_single_chain(self, args):
+        """Run a single MCMC chain"""
+        state, stage, chain_id, stage_output, n_steps, chain_seed = args
+        self._seed_everything(chain_seed)
+
+        chain_output = os.path.join(stage_output, f"chain_{chain_id}")
+        os.makedirs(chain_output, exist_ok=True)
+
+        final_state, trajectory_file = stage['function'](
+            state=state,
+            n_steps=n_steps,
+            output_dir=chain_output,
+            **stage['kwargs']
+        )
+
+        return {
+            'chain_id': chain_id,
+            'final_state': final_state,
+            'trajectory_file': trajectory_file,
+            'final_sigma': {k: float(v) for k, v in final_state.sigma.items()}
+        }
+
+    def _run_parallel_chains(self, states, stage, stage_output, n_chains):
+        """Run multiple MCMC chains in parallel"""
+        print(f"  Running {n_chains} parallel chains...")
+        
+        args_list = [
+            (states[i], stage, i+1, stage_output, stage['n_steps'], 
+             self.base_seed + 1000 * len(self.stages) + i + 1)
+            for i in range(n_chains)
+        ]
+        
+        max_workers = min(n_chains, mp.cpu_count())
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            return list(executor.map(self._run_single_chain, args_list))
+
+    def _fit_robust_gmm(self, samples: np.ndarray) -> Dict:
+        """Fit GMM with 1-3 components using BIC, handling low-variance cases"""
+        samples = samples.reshape(-1, 1)
+        n_samples = len(samples)
+        
+        # Check for sufficient variation
+        unique_samples = np.unique(samples)
+        sample_std = np.std(samples)
+        
+        if len(unique_samples) < 3 or sample_std < 1e-6:
+            # Insufficient variation: single Gaussian
+            mean_val = float(np.mean(samples))
+            std_val = max(0.1, float(sample_std))
+            return {
+                'n_components': 1,
+                'weights': [1.0],
+                'means': [[mean_val]],
+                'covariances': [[std_val**2]]
+            }
+        
+        # Fit with adaptive component count
+        max_components = min(3, max(1, n_samples // 10))
+        best_gmm = None
+        best_bic = np.inf
+        
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            
+            for n_comp in range(1, max_components + 1):
+                try:
+                    gmm = GaussianMixture(n_components=n_comp, random_state=42, 
+                                         max_iter=100, tol=1e-4)
+                    gmm.fit(samples)
+                    
+                    if len(np.unique(gmm.predict(samples))) >= n_comp:
+                        bic = gmm.bic(samples)
+                        if bic < best_bic:
+                            best_bic = bic
+                            best_gmm = gmm
+                except Exception:
+                    continue
+        
+        if best_gmm is None:
+            mean_val = float(np.mean(samples))
+            std_val = max(0.1, float(np.std(samples)))
+            return {
+                'n_components': 1,
+                'weights': [1.0],
+                'means': [[mean_val]],
+                'covariances': [[std_val**2]]
+            }
+        
+        return {
+            'n_components': best_gmm.n_components,
+            'weights': best_gmm.weights_.tolist(),
+            'means': best_gmm.means_.tolist(),
+            'covariances': best_gmm.covariances_.tolist()
+        }
+
+    def _save_chain_gmms(self, stage_output: str, chain_dirs: List[str]):
+        """Save robust GMM parameters for each chain"""
+        print(f"  Saving chain-specific GMMs...")
+        
+        for chain_dir in chain_dirs:
+            h5_file = os.path.join(stage_output, chain_dir, "trajectory.h5")
+            gmm_file = os.path.join(stage_output, chain_dir, "gmm_posterior.json")
+            
+            if not os.path.exists(h5_file):
+                continue
+            
+            try:
+                sigma_samples = self._extract_sigma_samples(h5_file, burn_in=0.5)
+                gmm_params = {}
+                
+                for pair_type, samples in sigma_samples.items():
+                    if len(samples) >= 5:
+                        gmm_params[pair_type] = self._fit_robust_gmm(samples)
+                
+                # Fallback: ensure all pair types have entries
+                for pair_type in ['AA', 'AB', 'BC']:
+                    if pair_type not in gmm_params:
+                        low, high = DEFAULT_SIGMA_RANGES.get(pair_type, (0.5, 5.0))
+                        mid = (low + high) / 2
+                        spread = (high - low) / 6
+                        gmm_params[pair_type] = {
+                            'n_components': 1,
+                            'weights': [1.0],
+                            'means': [[mid]],
+                            'covariances': [[spread**2]]
+                        }
+                
+                with open(gmm_file, 'w') as f:
+                    json.dump(gmm_params, f, indent=2)
+                
+                print(f"    Saved GMM for {chain_dir}")
+                
+            except Exception as e:
+                print(f"    Warning: Failed to save GMM for {chain_dir}: {e}")
+
+    def _run_analysis(self, stage_output, stage_name):
+        """Run MCMC convergence analysis and save GMMs"""
+        print(f"  Running convergence analysis for {stage_name}...")
+        
+        try:
+            chain_dirs = sorted([d for d in os.listdir(stage_output) 
+                               if d.startswith('chain_') and 
+                               os.path.isdir(os.path.join(stage_output, d))])
+            
+            print(f"  Found {len(chain_dirs)} chains to analyze")
+            
+            # Convert H5 to RMF3
+            rmf_files = []
+            for chain_dir in chain_dirs:
+                h5_file = os.path.join(stage_output, chain_dir, "trajectory.h5")
+                rmf_file = os.path.join(stage_output, chain_dir, "trajectory.rmf3")
+                
+                if os.path.exists(h5_file):
+                    try:
+                        from analysis import h5_to_rmf3
+                        h5_to_rmf3.convert_hdf5_to_rmf3(h5_file, rmf_file)
+                        rmf_files.append(rmf_file)
+                    except Exception as e:
+                        print(f"      Warning: RMF3 conversion failed for {chain_dir}: {e}")
+            
+            # Save GMMs for next stage
+            self._save_chain_gmms(stage_output, chain_dirs)
+            
+            # Run diagnostics
+            analysis_results = run_mcmc_diagnostics(stage_output, stage_name, 
+                                                   chain_dirs, rmf_files)
+            
+            # Save results
+            with open(os.path.join(stage_output, "analysis_results.json"), 'w') as f:
+                json.dump(analysis_results, f, indent=2)
+            
+            # Print R-hat
+            if 'rhat' in analysis_results:
+                print(f"\n  R-hat values for {stage_name}:")
+                for param, rhat_value in analysis_results['rhat'].items():
+                    status = "✓" if rhat_value < 1.1 else "✗"
+                    print(f"    {status} {param}: {rhat_value:.3f}")
+            
+            return analysis_results
+            
+        except Exception as e:
+            print(f"  Warning: Analysis failed: {e}")
+            return {}
+
+    def run(self, output_base: str = "output", n_chains: int = 4) -> Dict[str, Any]:
+        """Run the full pipeline"""
         os.makedirs(output_base, exist_ok=True)
         
         # Save config
         config = {
-            'stages': [{'name': s['name'], 'n_steps': s['n_steps'], 
-                       'kwargs': {k: str(v) for k, v in s['kwargs'].items()}} for s in self.stages],
+            'stages': [{'name': s['name'], 'n_steps': s['n_steps']} for s in self.stages],
             'n_chains': n_chains,
-            'sampler_sequence': self.initial_state.sampler_sequence,
             'prior_type': self.prior_type,
             'base_seed': self.base_seed
         }
@@ -247,20 +432,18 @@ class SamplerPipeline:
             
             start_time = time.time()
             
-            # Create initial states using unified SystemBuilder
+            # Create states, initialize sigma, run chains
             starting_states = self._create_initial_states(i, n_chains, prev_stage_output)
-            
-            # Initialize sigma and get GMM file paths
             self._initialize_sigma_for_stage(starting_states, i, prev_stage_output)
-            stage_results = self._run_parallel_chains(starting_states, stage, stage_output, n_chains)
-                      
+            stage_results = self._run_parallel_chains(starting_states, stage, 
+                                                     stage_output, n_chains)
+            
             elapsed = time.time() - start_time
             print(f"  Parallel sampling completed in {elapsed:.1f} seconds")
             
-            # Run analysis
+            # Analyze
             analysis_results = self._run_analysis(stage_output, stage_name)
             
-            # Store results
             all_results[f"stage_{i+1}_{stage_name}"] = {
                 'chain_results': stage_results,
                 'analysis': analysis_results,
@@ -270,158 +453,14 @@ class SamplerPipeline:
             prev_stage_output = stage_output
             
             # Print summary
-            print(f"  Stage {i+1} complete. Final sigma ranges:")
-            for chain_result in stage_results[:3]:
-                chain_id = chain_result['chain_id']
-                sigma_vals = chain_result['final_sigma']
-                print(f"    Chain {chain_id}: {', '.join([f'{k}={v:.3f}' for k, v in list(sigma_vals.items())[:3]])}")
+            print(f"  Stage {i+1} complete. Final sigma values:")
+            for res in stage_results[:3]:
+                sigma_str = ", ".join(f"{k}={v:.3f}" for k, v in res['final_sigma'].items())
+                print(f"    Chain {res['chain_id']}: {sigma_str}")
             if len(stage_results) > 3:
                 print(f"    ... and {len(stage_results)-3} more chains")
-        
-        # Save summary (without final_state objects for JSON serialization)
-        with open(os.path.join(output_base, "results_summary.json"), 'w') as f:
-            json_results = {
-                stage_key: {
-                    'chain_results': [{k: v for k, v in result.items() if k != 'final_state'} 
-                                    for result in stage_data['chain_results']],
-                    'analysis': stage_data['analysis'],
-                    'elapsed_time': stage_data['elapsed_time']
-                }
-                for stage_key, stage_data in all_results.items()
-            }
-            json.dump(json_results, f, indent=2)
         
         print(f"\n=== Pipeline Complete ===")
         print(f"Results saved to: {output_base}")
         
         return all_results
-    
-    def _run_analysis(self, stage_output, stage_name):
-        """Run MCMC analysis"""
-        print(f"  Running convergence analysis for {stage_name}...")
-        
-        try:
-            chain_dirs = sorted([d for d in os.listdir(stage_output) 
-                               if d.startswith('chain_') and os.path.isdir(os.path.join(stage_output, d))])
-            
-            print(f"  Found {len(chain_dirs)} chains to analyze")
-            
-            # Convert H5 to RMF3
-            rmf_files = []
-            for chain_dir in chain_dirs:
-                h5_file = os.path.join(stage_output, chain_dir, "trajectory.h5")
-                rmf_file = os.path.join(stage_output, chain_dir, "trajectory.rmf3")
-                
-                if os.path.exists(h5_file):
-                    print(f"    Converting {chain_dir}/trajectory.h5 to RMF3...")
-                    try:
-                        from analysis import h5_to_rmf3
-                        h5_to_rmf3.convert_hdf5_to_rmf3(h5_file, rmf_file)
-                        rmf_files.append(rmf_file)
-                        print(f"      Converted to {os.path.basename(rmf_file)}")
-                    except Exception as e:
-                        print(f"      Warning: RMF3 conversion failed: {e}")
-                        
-            # Save chain-specific GMMs for next stage
-            self._save_chain_gmms(stage_output, chain_dirs)
-                        
-            # Run diagnostics
-            analysis_results = run_mcmc_diagnostics(stage_output, stage_name, chain_dirs, rmf_files)
-            
-            # Save and print results
-            analysis_file = os.path.join(stage_output, "analysis_results.json")
-            with open(analysis_file, 'w') as f:
-                json.dump(analysis_results, f, indent=2)
-            
-            if 'rhat' in analysis_results:
-                print(f"\n  R-hat values for {stage_name}:")
-                for param, rhat_value in analysis_results['rhat'].items():
-                    status = "✓" if rhat_value < 1.1 else "✗"
-                    print(f"    {status} {param}: {rhat_value:.3f}")
-            
-            return analysis_results
-            
-        except Exception as e:
-            print(f"  Warning: Analysis failed with error: {e}")
-            return {}
-
-    def _save_chain_gmms(self, stage_output: str, chain_dirs: List[str]):
-        """Save GMM parameters for each chain for use in next stage"""
-        print(f"  Saving chain-specific GMMs...")
-        
-        for chain_dir in chain_dirs:
-            h5_file = os.path.join(stage_output, chain_dir, "trajectory.h5")
-            gmm_file = os.path.join(stage_output, chain_dir, "gmm_posterior.json")
-            
-            if not os.path.exists(h5_file):
-                continue
-            
-            try:
-                # Extract sigma values from this chain's trajectory
-                sigma_samples = self._extract_sigma_from_h5(h5_file, burn_in=0.5)
-                
-                # Fit GMM to each pair type
-                from sklearn.mixture import GaussianMixture
-                gmm_params = {}
-                
-                for pair_type, samples in sigma_samples.items():
-                    if len(samples) < 10:
-                        continue
-                    
-                    # Fit GMM (1-3 components)
-                    best_gmm = None
-                    best_bic = np.inf
-                    
-                    for n_comp in range(1, min(4, len(samples)//3)):
-                        gmm = GaussianMixture(n_components=n_comp, random_state=42)
-                        gmm.fit(samples.reshape(-1, 1))
-                        bic = gmm.bic(samples.reshape(-1, 1))
-                        
-                        if bic < best_bic:
-                            best_bic = bic
-                            best_gmm = gmm
-                    
-                    if best_gmm:
-                        gmm_params[pair_type] = {
-                            'n_components': best_gmm.n_components,
-                            'weights': best_gmm.weights_.tolist(),
-                            'means': best_gmm.means_.tolist(),
-                            'covariances': best_gmm.covariances_.tolist()
-                        }
-                
-                # Save to JSON
-                with open(gmm_file, 'w') as f:
-                    json.dump(gmm_params, f, indent=2)
-                
-                print(f"    Saved GMM for {chain_dir}")
-                
-            except Exception as e:
-                print(f"    Warning: Failed to save GMM for {chain_dir}: {e}")
-
-    def _extract_sigma_from_h5(self, h5_file: str, burn_in: float = 0.5) -> Dict[str, np.ndarray]:
-        """Extract sigma samples from H5 trajectory after burn-in"""
-        sigma_samples = {}
-        import h5py
-        
-        with h5py.File(h5_file, 'r') as f:
-            if 'trajectory' not in f:
-                return sigma_samples
-            
-            traj = f['trajectory']
-            state_names = sorted([k for k in traj.keys() if k.startswith('state_')])
-            
-            # Apply burn-in
-            start_idx = int(len(state_names) * burn_in)
-            state_names = state_names[start_idx:]
-            
-            for state_name in state_names:
-                state = traj[state_name]
-                if 'sigma' in state:
-                    sigma_grp = state['sigma']
-                    for key in sigma_grp.attrs.keys():
-                        if key not in sigma_samples:
-                            sigma_samples[key] = []
-                        sigma_samples[key].append(float(sigma_grp.attrs[key]))
-        
-        # Convert to numpy arrays
-        return {k: np.array(v) for k, v in sigma_samples.items()}

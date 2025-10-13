@@ -21,12 +21,12 @@ def main():
     )
     
     # Create and run pipeline
-    pipeline = SamplerPipeline(system_state)
+    pipeline = SamplerPipeline(system_state, prior_type="inv_gamma")
     
     # Add sampling stages (automatically uses sequence for initialization)
     pipeline.add_stage(
         run_pair_sampling,
-        n_steps=100000,
+        n_steps=50000,
         save_freq=100,
         temp_start=10.0,
         temp_end=1.0
@@ -35,8 +35,8 @@ def main():
     # Uncomment for additional stages
     pipeline.add_stage(
         run_tetramer_sampling,
-        n_steps=20000,
-        save_freq=20,
+        n_steps=40000,
+        save_freq=100,
         temp_start=10.0,
         temp_end=1.0
     )

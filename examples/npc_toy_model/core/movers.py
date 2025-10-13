@@ -1,268 +1,300 @@
 # core/movers.py
-#==================================================================================
-# Particle move proposals for MCMC sampling
-#==================================================================================
+import random
 import numpy as np
 from scipy.spatial.distance import cdist
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from core.parameters import SystemParameters
 
-def propose_particle_move(state, use_pbc: bool = False):
+# --------------------------
+# Helpers
+# --------------------------
+def _reflect_scalar(x: float, a: float, b: float) -> float:
+    """Exact reflective boundary on [a, b] (preserves symmetry)."""
+    if not np.isfinite(x):
+        return float(np.clip(x, a, b))
+    w = b - a
+    if w <= 0.0:
+        return float(np.clip(x, a, b))
+    # Reflect repeatedly until within bounds
+    while x < a or x > b:
+        if x < a:
+            x = a + (a - x)
+        if x > b:
+            x = b - (x - b)
+    return float(x)
+
+def _flat_index_choice(positions: Dict[str, np.ndarray]) -> Tuple[str, int]:
+    """Choose a single particle uniformly over all particles across types."""
+    types = list(positions.keys())
+    counts = [positions[t].shape[0] for t in types]
+    total = sum(counts)
+    if total == 0:
+        raise ValueError("No particles to move: positions are empty")
+    # Draw a flat index then map to (type, local_idx)
+    k = np.random.randint(total)
+    acc = 0
+    for t, c in zip(types, counts):
+        if k < acc + c:
+            return t, k - acc
+        acc += c
+    # Fallback (should not happen)
+    return types[-1], counts[-1] - 1
+
+# --------------------------
+# Position proposal (additive Gaussian, reflective walls)
+# --------------------------
+def propose_particle_move(state, accept_rate: float = 0.5):
     """
-    Propose a random displacement for one randomly selected particle.
-    
-    Standard MCMC particle move (single-particle Metropolis):
-    1. Pick ONE particle uniformly from ALL particles (not per-type sampling)
-    2. Propose displacement uniformly in [-δ, +δ]³ where δ is step size
-    3. Apply periodic boundary conditions (PBC) or reflective walls
-    
-    Args:
-        state: SystemState object (modified in-place)
-        use_pbc: If True, use periodic boundaries; else use reflective walls
-        
-    Returns:
-        bool: True if move applied, False if rejected (only for hard violations)
+    Single-particle Gaussian move with reflective walls on [0, box_size]^3.
+
+    - Select one particle uniformly across all types.
+    - Use type-dependent step scale based on radii (larger particles move less).
+    - Reflect at the walls to preserve proposal symmetry.
     """
     params = SystemParameters()
-    
-    # Select ONE particle uniformly across ALL types
-    types = list(state.positions.keys())
-    counts = [state.positions[t].shape[0] for t in types]
-    total_particles = sum(counts)
-    
-    # Weighted random choice by particle count
-    type_weights = np.array(counts, dtype=float) / total_particles
-    particle_type = np.random.choice(types, p=type_weights)
-    particle_idx = np.random.randint(state.positions[particle_type].shape[0])
-    
-    # Get particle radius for boundary check
-    radius = params.radii.get(particle_type, 0.0)
-    
-    # Choose step size randomly from a range for adaptive exploration
-    # Larger particles get smaller base step (inverse scaling with radius)
-    base_step_min = 1.5
-    base_step_max = 6.0
-    # Reference radius for scaling (e.g., radius of type 'A' or default)
-    ref_radius = params.radii.get('A', 24.0)
-    scale_factor = radius / ref_radius
-    
-    # Random step size in range, scaled by particle size
-    step_size = np.random.uniform(base_step_min, base_step_max) / scale_factor
-    
-    # Propose displacement: uniform in cube [-step, +step]³
-    displacement = np.random.uniform(-step_size, step_size, size=3)
-    
-    # Calculate new position
-    old_pos = state.positions[particle_type][particle_idx]
-    new_pos = old_pos + displacement
-    
-    # Handle boundary conditions
-    box_size = state.box_size
-    
-    if use_pbc:
-        # Periodic boundary conditions: wrap around
-        new_pos = new_pos % box_size
-        state.positions[particle_type][particle_idx] = new_pos
-        return True
-    else:
-        # Reflective walls with soft constraint
-        # Instead of hard rejection, reflect particles back into box
-        for dim in range(3):
-            # Lower boundary
-            if new_pos[dim] < radius:
-                new_pos[dim] = 2 * radius - new_pos[dim]  # Reflect
-            # Upper boundary
-            if new_pos[dim] > box_size - radius:
-                new_pos[dim] = 2 * (box_size - radius) - new_pos[dim]  # Reflect
-        
-        # Final sanity check: still reject if completely outside after reflection
-        if (np.any(new_pos < 0) or np.any(new_pos > box_size)):
-            return False
-        
-        # Accept the move
-        state.positions[particle_type][particle_idx] = new_pos
-        return True
+    box_size = getattr(state, "box_size", getattr(params, "box_size", 600.0))
 
-def propose_sigma_move(state): 
-    """
-    Propose a change to the interaction range (sigma) for one randomly selected pair type.
-    
-    Standard approach for scale parameters (common in Bayesian MCMC):
-    - Log-normal random walk: propose in log-space, convert back
-    - Symmetric in log-space → satisfies detailed balance
-    - Step size chosen from range for adaptive exploration
-    
-    Args:
-        state: SystemState object (modified in-place)
-        
-    Returns:
-        None (modifies state.sigma in-place)
-    """
-    if len(state.sigma) == 0:
-        return
-    
-    # Choose which sigma parameter to update
-    pair_type = np.random.choice(list(state.sigma.keys()))
-    
-    # Current value in log-space
-    current_sigma = state.sigma[pair_type]
-    log_sigma_current = np.log(current_sigma)
-    
-    # Random step size for this move (adaptive exploration)
-    log_step_size = np.random.uniform(0.01, 0.1)  # Tunable parameter
-    
-    # Symmetric proposal: log(σ') = log(σ) + N(0, δ²)
-    # This is symmetric in log-space: q(σ'|σ) = q(σ|σ')
-    log_sigma_proposed = log_sigma_current + np.random.normal(0.0, log_step_size)
-    
-    # Convert back to linear space
-    proposed_sigma = np.exp(log_sigma_proposed)
-    
-    # Optional: enforce bounds if state has sigma_range defined
-    if hasattr(state, 'sigma_range') and pair_type in state.sigma_range:
-        lower, upper = state.sigma_range[pair_type]
-        if proposed_sigma < lower or proposed_sigma > upper:
-            # Out of bounds - reject by not modifying state
-            return
-    
-    # Apply move in-place
-    state.sigma[pair_type] = proposed_sigma
+    # Select particle uniformly across all types
+    ptype, local_idx = _flat_index_choice(state.positions)
 
+    # Step size heuristic using radii
+    radii = getattr(params, "radii", {})
+    radius = radii.get(ptype, 1.0)
+    max_radius = max(radii.values()) if len(radii) > 0 else 1.0
+    # Larger radius -> smaller step. Gaussian proposal.
+    step_sigma = 2.0 * (max_radius / max(radius, 1e-6))
+
+    current = state.positions[ptype][local_idx]
+    proposal = current + np.random.normal(0.0, step_sigma, size=3)
+
+    # Reflective walls on [0, box_size]
+    for d in range(3):
+        proposal[d] = _reflect_scalar(float(proposal[d]), 0.0, float(box_size))
+
+    state.positions[ptype][local_idx] = proposal
+    return True
+
+# --------------------------
+# Sigma proposal (additive Gaussian in linear sigma, reflective)
+# --------------------------
+def propose_sigma_move(
+    state,
+    accept_rate: Optional[float] = None
+):
+    """
+    Non-adaptive Metropolis proposal that preserves detailed balance.
+
+    - Selects a single pair_type uniformly at random.
+    - Uses an additive Gaussian step in linear sigma with constant scale
+      per parameter (independent of the current value/state).
+    - Applies exact reflective boundary conditions on [low, high].
+
+    Modifies state.sigma in-place.
+    """
+    if not hasattr(state, "sigma") or not isinstance(state.sigma, dict) or len(state.sigma) == 0:
+        return False
+
+    # Choose parameter uniformly
+    pair_type = random.choice(list(state.sigma.keys()))
+    current_val = float(state.sigma[pair_type])
+
+    # Bounds: from prior if present, else from state.sigma_range, else defaults
+    low, high = 1e-6, 20.0
+    if hasattr(state, "sigma_prior") and getattr(state.sigma_prior, "sigma_ranges", None):
+        low, high = state.sigma_prior.sigma_ranges.get(pair_type, (low, high))
+    elif hasattr(state, "sigma_range") and isinstance(state.sigma_range, dict):
+        low, high = state.sigma_range.get(pair_type, (low, high))
+
+    if not np.isfinite(current_val) or current_val <= 0.0:
+        # Snap invalid current value inside the bounds
+        current_val = float(np.clip(0.5 * (low + high), low, high))
+
+    # Constant, state-independent proposal width for symmetry
+    width = max(high - low, 1e-9)
+    step_sd = 0.15 * width  # tune globally if needed
+
+    # Symmetric additive Gaussian proposal in sigma-space
+    proposed = current_val + np.random.normal(0.0, step_sd)
+
+    # Reflect to [low, high]
+    proposed_val = _reflect_scalar(proposed, float(low), float(high))
+
+    # Apply
+    state.sigma[pair_type] = float(proposed_val)
+    return True
+
+# --------------------------
+# Tetramer helpers and moves (tetramer move matches your previous method)
+# --------------------------
 def get_tetramers(state) -> List[Tuple[int, ...]]:
     """Use Hungarian algorithm for optimal A-B matching, then greedy C selection."""
     try:
         from scipy.optimize import linear_sum_assignment
-        
+
         positions = state.positions
         params = SystemParameters()
-        
-        # Validate input
+
         if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
             return []
-            
+
         a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
-        
-        # Get target distances
+
         ab_target = params.pair_distances['AB']
         bc_target = params.pair_distances['BC']
-        
-        # Calculate AB cost matrix (deviation from target distance)
+
         dist_AB = cdist(a_pos, b_pos)
         cost_matrix = np.abs(dist_AB - ab_target)
-        
-        # Solve optimal assignment problem
+
         a_indices, b_indices = linear_sum_assignment(cost_matrix)
-        
-        # Pre-calculate BC distances
+
         dist_BC = cdist(b_pos, c_pos)
-        
-        # Now assign C particles greedily based on B assignments
+
         c_used = set()
         tetramers = []
-        
-        # Sort A-B pairs by their cost (best matches first)
+
         pair_costs = cost_matrix[a_indices, b_indices]
         sorted_pairs = np.argsort(pair_costs)
-        
+
         for pair_idx in sorted_pairs:
             a_idx = a_indices[pair_idx]
             b_idx = b_indices[pair_idx]
-            
-            # Find available C particles
+
             available_c = [i for i in range(len(c_pos)) if i not in c_used]
             if len(available_c) < 2:
                 break
-            
-            # Get best C pair for this B
+
             bc_dists = dist_BC[b_idx, available_c]
             c_scores = np.abs(bc_dists - bc_target)
-            
+
             best_c_local = np.argsort(c_scores)[:2]
             best_c_indices = [available_c[i] for i in best_c_local]
-            
-            # Form tetramer
+
             tetramers.append((a_idx, b_idx, best_c_indices[0], best_c_indices[1]))
             c_used.update(best_c_indices)
-            
+
             if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
                 break
-        
+
         return tetramers
-        
+
     except Exception as e:
         print(f"Error in Hungarian tetramer generation: {e}")
         return []
 
-def propose_tetramer_move(state):
+def propose_tetramer_move(state, acceptance_rate: float = 0.5):
     """
-    Tetramer move proposal with translation or rotation.
-    60% probability for translation, 40% for rotation.
-    Applies move in-place if particles stay within box boundaries.
-    
-    Args:
-        state: SystemState object (modified in-place)
+    Optimized tetramer move proposal with decoupled translation/rotation.
+    60% probability for translation, 30% for rotation, 10% for mixed moves.
+    Clips coordinates to stay within box boundaries minus particle radius.
+
+    Modifies state.positions in-place.
     """
     tetramers = get_tetramers(state)
-    
     if not tetramers:
-        return
-    
-    # Get box boundaries
-    box_size = state.box_size
-    
-    # Select random tetramer
+        return False
+
+    params = SystemParameters()
+    box_size = getattr(params, 'box_size', 800.0)
+    half_box = box_size / 2.0
+
+    # Choose random tetramer
     tetramer = tetramers[np.random.randint(len(tetramers))]
     a_idx, b_idx, c_idx1, c_idx2 = tetramer
-    
-    # Extract tetramer particle information
+
+    # Pre-extract
     particles = [('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)]
-    
-    # Get current coordinates
     coords = np.array([state.positions[part][idx] for part, idx in particles])
     centroid = np.mean(coords, axis=0)
-    
+
+    # Compute buffer based on particle radii (fallback to 5.0)
+    radii = getattr(params, 'radii', {})
+    tet_radii = [radii.get(p, getattr(params, 'particle_radius', 5.0)) for p, _ in particles]
+    buffer_radius = max(tet_radii) if len(tet_radii) else getattr(params, 'particle_radius', 5.0)
+
+    max_coord = half_box - 2.0 * buffer_radius
+    min_coord = -max_coord
+
+    # Adaptive size factor (bounded)
+    distances_from_center = np.linalg.norm(coords - centroid, axis=1)
+    tetramer_radius = float(np.max(distances_from_center)) if distances_from_center.size else 1.0
+    size_factor = max(0.5, min(2.0, tetramer_radius))
+
     # Fixed step sizes
-    trans_step = 2.0
-    rot_step = 0.15
-    
-    # Choose move type: 60% translation, 40% rotation
-    if np.random.random() < 0.6:
-        # --- TRANSLATION MOVE ---
-        displacement = np.random.normal(0.0, trans_step, 3)
-        new_coords = coords + displacement
-        
-    else:
-        # --- ROTATION MOVE ---
-        # Generate random rotation axis using Marsaglia method
+    trans_step = 0.25
+    rot_step = 0.2
+
+    # Choose move type: 60% translation, 30% rotation, 10% mixed
+    r = np.random.random()
+
+    if r < 0.6:
+        # Translation
+        displacement = np.random.normal(0.0, trans_step * size_factor, 3)
+        for i, (part, idx) in enumerate(particles):
+            final_pos = coords[i] + displacement
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[part][idx] = final_pos.astype(float)
+
+    elif r < 0.9:
+        # Rotation (Marsaglia)
         while True:
             x1, x2 = np.random.uniform(-1, 1, 2)
-            if x1*x1 + x2*x2 < 1:
+            if x1 * x1 + x2 * x2 < 1:
                 break
-        
-        sqrt_term = np.sqrt(1 - x1*x1 - x2*x2)
-        rotation_axis = np.array([2*x1*sqrt_term, 2*x2*sqrt_term, 1 - 2*(x1*x1 + x2*x2)])
-        
-        # Generate rotation angle
+        sqrt_term = np.sqrt(1 - x1 * x1 - x2 * x2)
+        rotation_axis = np.array([2 * x1 * sqrt_term, 2 * x2 * sqrt_term, 1 - 2 * (x1 * x1 + x2 * x2)])
+        rotation_axis /= max(np.linalg.norm(rotation_axis), 1e-12)
+
         rotation_angle = np.random.normal(0.0, rot_step)
-        
-        # Build rotation matrix using quaternion
         half_angle = rotation_angle / 2.0
         qw = np.cos(half_angle)
-        qx = rotation_axis[0] * np.sin(half_angle)
-        qy = rotation_axis[1] * np.sin(half_angle)
-        qz = rotation_axis[2] * np.sin(half_angle)
-        
+        sin_half = np.sin(half_angle)
+        qx, qy, qz = rotation_axis * sin_half
+
         rot_matrix = np.array([
-            [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qw*qz), 2*(qx*qz + qw*qy)],
-            [2*(qx*qy + qw*qz), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qw*qx)],
-            [2*(qx*qz - qw*qy), 2*(qy*qz + qw*qx), 1 - 2*(qx**2 + qy**2)]
+            [1 - 2 * (qy ** 2 + qz ** 2), 2 * (qx * qy - qw * qz), 2 * (qx * qz + qw * qy)],
+            [2 * (qx * qy + qw * qz), 1 - 2 * (qx ** 2 + qz ** 2), 2 * (qy * qz - qw * qx)],
+            [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx ** 2 + qy ** 2)]
         ])
-        
-        # Apply rotation around centroid
-        new_coords = centroid + (rot_matrix @ (coords - centroid).T).T
-    
-    # Check if all particles stay within box bounds
-    if np.all(new_coords >= 0) and np.all(new_coords <= box_size):
-        # Apply move in-place
+
         for i, (part, idx) in enumerate(particles):
-            state.positions[part][idx] = new_coords[i]
+            vec = coords[i] - centroid
+            rotated = rot_matrix @ vec
+            final_pos = centroid + rotated
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[part][idx] = final_pos.astype(float)
+
+    else:
+        # Mixed (translation + rotation) with reduced steps
+        trans_scale = 0.7
+        rot_scale = 0.7
+
+        displacement = np.random.normal(0.0, trans_step * size_factor * trans_scale, 3)
+
+        while True:
+            x1, x2 = np.random.uniform(-1, 1, 2)
+            if x1 * x1 + x2 * x2 < 1:
+                break
+        sqrt_term = np.sqrt(1 - x1 * x1 - x2 * x2)
+        rotation_axis = np.array([2 * x1 * sqrt_term, 2 * x2 * sqrt_term, 1 - 2 * (x1 * x1 + x2 * x2)])
+        rotation_axis /= max(np.linalg.norm(rotation_axis), 1e-12)
+
+        rotation_angle = np.random.normal(0.0, rot_step * rot_scale)
+        half_angle = rotation_angle / 2.0
+        qw = np.cos(half_angle)
+        sin_half = np.sin(half_angle)
+        qx, qy, qz = rotation_axis * sin_half
+
+        rot_matrix = np.array([
+            [1 - 2 * (qy ** 2 + qz ** 2), 2 * (qx * qy - qw * qz), 2 * (qx * qz + qw * qy)],
+            [2 * (qx * qy + qw * qz), 1 - 2 * (qx ** 2 + qz ** 2), 2 * (qy * qz - qw * qx)],
+            [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx ** 2 + qy ** 2)]
+        ])
+
+        for i, (part, idx) in enumerate(particles):
+            vec = coords[i] - centroid
+            rotated = rot_matrix @ vec
+            final_pos = centroid + rotated + displacement
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[part][idx] = final_pos.astype(float)
+
+    return True

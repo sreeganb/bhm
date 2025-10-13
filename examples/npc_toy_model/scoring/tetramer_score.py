@@ -1,9 +1,10 @@
 #============================================================================
-# Tetrameric scoring function
+# Tetrameric scoring function (matches previous batch scorer)
 #============================================================================
 import numpy as np
 from core.parameters import SystemParameters
 from core.movers import get_tetramers
+from typing import Dict, List, Tuple
 
 class TetramerNLL:
     def __init__(self, state):
@@ -19,7 +20,7 @@ class TetramerNLL:
         self.params = SystemParameters()
 
     def calculate_tetramer_scores_batch(self, positions, tetramers, sig, debug_logging=False):
-        """Calculate scores for all tetramers using vectorized operations."""
+        """Calculate scores for all tetramers (AB + BC1 + BC2) with 0.5*log(2πσ²)."""
         if not tetramers:
             return np.array([], dtype=np.float32)
         
@@ -35,22 +36,20 @@ class TetramerNLL:
         pos_c1 = positions['C'][c1_indices]
         pos_c2 = positions['C'][c2_indices]
         
-        # Calculate distances
-        ab_dists = np.linalg.norm(pos_a - pos_b, axis=1)
-        bc1_dists = np.linalg.norm(pos_b - pos_c1, axis=1)
-        bc2_dists = np.linalg.norm(pos_b - pos_c2, axis=1)
+        # Distances (explicit sqrt of squared sums)
+        ab_dists = np.sqrt(np.sum((pos_a - pos_b)**2, axis=1))
+        bc1_dists = np.sqrt(np.sum((pos_b - pos_c1)**2, axis=1))
+        bc2_dists = np.sqrt(np.sum((pos_b - pos_c2)**2, axis=1))
         
-        # Target distances
+        # Targets
         ab_target = self.params.pair_distances['AB']
         bc_target = self.params.pair_distances['BC']
         
-        # Calculate negative log-likelihood scores
-        # NLL = (d - d0)²/(2σ²) + 0.5 * log(2πσ²)
+        # NLL components with normalization
         ab_scores = ((ab_dists - ab_target)**2) / (2 * sig['AB']**2) + 0.5 * np.log(2 * np.pi * sig['AB']**2)
         bc1_scores = ((bc1_dists - bc_target)**2) / (2 * sig['BC']**2) + 0.5 * np.log(2 * np.pi * sig['BC']**2)
         bc2_scores = ((bc2_dists - bc_target)**2) / (2 * sig['BC']**2) + 0.5 * np.log(2 * np.pi * sig['BC']**2)
         
-        # Total score per tetramer (AB + BC1 + BC2)
         scores = ab_scores + bc1_scores + bc2_scores
         
         if debug_logging:
@@ -60,32 +59,17 @@ class TetramerNLL:
 
     def compute_score(self) -> float:
         """
-        Tetrameric scoring function. A tetramer is ABCC, so 
-        score will be sum of pair scores for AB, BC1 and BC2.
-        This has to be added to the pair score for the whole system to 
-        obtain the total negative log likelihood and then adding the 
-        prior score to get the posterior, which is done in the tetramer_sampler
-        code.
-        
-        Returns:
-            float: Total negative log-likelihood score for all tetramers
+        Sum of tetramer scores over current ABCC assignments.
         """
-        # Get tetramers from the current state
         tetramers = get_tetramers(self.state)
-        
         if not tetramers:
             return 0.0
         
-        # Calculate scores for all tetramers using batch method
         tetramer_scores = self.calculate_tetramer_scores_batch(
             positions=self.coordinates,
             tetramers=tetramers,
             sig=self.nuisance_parameters,
             debug_logging=False
         )
-        
-        # Sum all tetramer scores
-        total_score = np.sum(tetramer_scores)
-        
-        return float(total_score)
+        return float(np.sum(tetramer_scores))
 #============================================================================
