@@ -1,5 +1,4 @@
 import numpy as np
-import scipy.stats as stats
 from core.parameters import SystemParameters
 
 #==============================================================================

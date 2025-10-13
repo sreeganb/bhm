@@ -1,6 +1,5 @@
 # samplers/pair.py
-import numpy as np
-from typing import Dict, Any, Optional, Callable, Tuple
+from typing import Optional, Tuple
 from core.state import SystemState
 from samplers.base import run_mcmc_sampling
 from scoring.pair_score import PairNLL
@@ -20,10 +19,9 @@ def neg_log_posterior(
     # Calculate pairwise score, excluding specified pairs
     ps = PairNLL(state.positions, state.sigma)
     pair_score = ps.compute_score()
-    
+
     # Total score
     total_score = exclusion_score + pair_score + prior_penalty
-    
     return total_score, exclusion_score, pair_score, prior_penalty
 
 def run_pair_sampling(

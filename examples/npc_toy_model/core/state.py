@@ -13,8 +13,11 @@ class SystemState:
     ):
         # Core data
         self.positions: Dict[str, np.ndarray] = {}
-        self.sigma: Dict[str, float] = {}
         self.sigma_range: Dict[str, Tuple[float, float]] = {}
+        self.sigma_range = {'AA': (0.2, 12.0), 'AB': (0.1, 10.0), 'BC': (0.15, 11.0)}  # Default sigma ranges
+        self.sigma: Dict[str, float] = {}
+        # choose a random number within the range as default
+        self.sigma = {k: np.random.uniform(v[0], v[1]) for k, v in self.sigma_range.items()}
         self.box_size: float = 0.0
 
         # Sampler sequencing
@@ -32,7 +35,22 @@ class SystemState:
 
         # Additional metadata
         self.metadata: Dict[str, Any] = {}
-
+        
+    def __getstate__(self):
+        """Custom pickle support - explicitly save all attributes"""
+        state = self.__dict__.copy()
+        # Explicitly include sigma and sigma_range
+        return state
+    
+    def __setstate__(self, state):
+        """Custom unpickle support - restore all attributes"""
+        self.__dict__.update(state)
+        # Ensure sigma exists
+        if not hasattr(self, 'sigma') or self.sigma is None:
+            self.sigma = {}
+        if not hasattr(self, 'sigma_range') or self.sigma_range is None:
+            self.sigma_range = {}
+            
     def update_positions(self, new_positions: Dict[str, np.ndarray]) -> None:
         """Update positions and clear cached structures"""
         self.positions = {k: v.copy() for k, v in new_positions.items()}
@@ -53,6 +71,11 @@ class SystemState:
         state_copy.box_size = self.box_size
         state_copy.use_sigma_distribution = self.use_sigma_distribution
         state_copy.metadata = dict(self.metadata)
+        
+        # Copy sigma_prior if it exists
+        if hasattr(self, 'sigma_prior'):
+            state_copy.sigma_prior = self.sigma_prior
+        
         return state_copy
 
     @property

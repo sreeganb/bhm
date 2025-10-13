@@ -3,6 +3,8 @@
 # Particle move proposals for MCMC sampling
 #==================================================================================
 import numpy as np
+from scipy.spatial.distance import cdist
+from typing import Dict, List, Tuple
 from core.parameters import SystemParameters
 
 def propose_particle_move(state, use_pbc: bool = False):
@@ -38,8 +40,9 @@ def propose_particle_move(state, use_pbc: bool = False):
     
     # Choose step size randomly from a range for adaptive exploration
     # Larger particles get smaller base step (inverse scaling with radius)
-    base_step_min = 1.0
-    base_step_max = 5.0
+    base_step_min = 1.5
+    base_step_max = 6.0
+    # Reference radius for scaling (e.g., radius of type 'A' or default)
     ref_radius = params.radii.get('A', 24.0)
     scale_factor = radius / ref_radius
     
@@ -106,7 +109,7 @@ def propose_sigma_move(state):
     log_sigma_current = np.log(current_sigma)
     
     # Random step size for this move (adaptive exploration)
-    log_step_size = np.random.uniform(0.05, 0.2)  # Tunable parameter
+    log_step_size = np.random.uniform(0.01, 0.1)  # Tunable parameter
     
     # Symmetric proposal: log(σ') = log(σ) + N(0, δ²)
     # This is symmetric in log-space: q(σ'|σ) = q(σ|σ')
@@ -124,3 +127,142 @@ def propose_sigma_move(state):
     
     # Apply move in-place
     state.sigma[pair_type] = proposed_sigma
+
+def get_tetramers(state) -> List[Tuple[int, ...]]:
+    """Use Hungarian algorithm for optimal A-B matching, then greedy C selection."""
+    try:
+        from scipy.optimize import linear_sum_assignment
+        
+        positions = state.positions
+        params = SystemParameters()
+        
+        # Validate input
+        if not all(k in positions and len(positions[k]) > 0 for k in ['A', 'B', 'C']) or len(positions['C']) < 2:
+            return []
+            
+        a_pos, b_pos, c_pos = positions['A'], positions['B'], positions['C']
+        
+        # Get target distances
+        ab_target = params.pair_distances['AB']
+        bc_target = params.pair_distances['BC']
+        
+        # Calculate AB cost matrix (deviation from target distance)
+        dist_AB = cdist(a_pos, b_pos)
+        cost_matrix = np.abs(dist_AB - ab_target)
+        
+        # Solve optimal assignment problem
+        a_indices, b_indices = linear_sum_assignment(cost_matrix)
+        
+        # Pre-calculate BC distances
+        dist_BC = cdist(b_pos, c_pos)
+        
+        # Now assign C particles greedily based on B assignments
+        c_used = set()
+        tetramers = []
+        
+        # Sort A-B pairs by their cost (best matches first)
+        pair_costs = cost_matrix[a_indices, b_indices]
+        sorted_pairs = np.argsort(pair_costs)
+        
+        for pair_idx in sorted_pairs:
+            a_idx = a_indices[pair_idx]
+            b_idx = b_indices[pair_idx]
+            
+            # Find available C particles
+            available_c = [i for i in range(len(c_pos)) if i not in c_used]
+            if len(available_c) < 2:
+                break
+            
+            # Get best C pair for this B
+            bc_dists = dist_BC[b_idx, available_c]
+            c_scores = np.abs(bc_dists - bc_target)
+            
+            best_c_local = np.argsort(c_scores)[:2]
+            best_c_indices = [available_c[i] for i in best_c_local]
+            
+            # Form tetramer
+            tetramers.append((a_idx, b_idx, best_c_indices[0], best_c_indices[1]))
+            c_used.update(best_c_indices)
+            
+            if len(tetramers) >= min(len(a_pos), len(b_pos), len(c_pos) // 2):
+                break
+        
+        return tetramers
+        
+    except Exception as e:
+        print(f"Error in Hungarian tetramer generation: {e}")
+        return []
+
+def propose_tetramer_move(state):
+    """
+    Tetramer move proposal with translation or rotation.
+    60% probability for translation, 40% for rotation.
+    Applies move in-place if particles stay within box boundaries.
+    
+    Args:
+        state: SystemState object (modified in-place)
+    """
+    tetramers = get_tetramers(state)
+    
+    if not tetramers:
+        return
+    
+    # Get box boundaries
+    box_size = state.box_size
+    
+    # Select random tetramer
+    tetramer = tetramers[np.random.randint(len(tetramers))]
+    a_idx, b_idx, c_idx1, c_idx2 = tetramer
+    
+    # Extract tetramer particle information
+    particles = [('A', a_idx), ('B', b_idx), ('C', c_idx1), ('C', c_idx2)]
+    
+    # Get current coordinates
+    coords = np.array([state.positions[part][idx] for part, idx in particles])
+    centroid = np.mean(coords, axis=0)
+    
+    # Fixed step sizes
+    trans_step = 2.0
+    rot_step = 0.15
+    
+    # Choose move type: 60% translation, 40% rotation
+    if np.random.random() < 0.6:
+        # --- TRANSLATION MOVE ---
+        displacement = np.random.normal(0.0, trans_step, 3)
+        new_coords = coords + displacement
+        
+    else:
+        # --- ROTATION MOVE ---
+        # Generate random rotation axis using Marsaglia method
+        while True:
+            x1, x2 = np.random.uniform(-1, 1, 2)
+            if x1*x1 + x2*x2 < 1:
+                break
+        
+        sqrt_term = np.sqrt(1 - x1*x1 - x2*x2)
+        rotation_axis = np.array([2*x1*sqrt_term, 2*x2*sqrt_term, 1 - 2*(x1*x1 + x2*x2)])
+        
+        # Generate rotation angle
+        rotation_angle = np.random.normal(0.0, rot_step)
+        
+        # Build rotation matrix using quaternion
+        half_angle = rotation_angle / 2.0
+        qw = np.cos(half_angle)
+        qx = rotation_axis[0] * np.sin(half_angle)
+        qy = rotation_axis[1] * np.sin(half_angle)
+        qz = rotation_axis[2] * np.sin(half_angle)
+        
+        rot_matrix = np.array([
+            [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qw*qz), 2*(qx*qz + qw*qy)],
+            [2*(qx*qy + qw*qz), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qw*qx)],
+            [2*(qx*qz - qw*qy), 2*(qy*qz + qw*qx), 1 - 2*(qx**2 + qy**2)]
+        ])
+        
+        # Apply rotation around centroid
+        new_coords = centroid + (rot_matrix @ (coords - centroid).T).T
+    
+    # Check if all particles stay within box bounds
+    if np.all(new_coords >= 0) and np.all(new_coords <= box_size):
+        # Apply move in-place
+        for i, (part, idx) in enumerate(particles):
+            state.positions[part][idx] = new_coords[i]

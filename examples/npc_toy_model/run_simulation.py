@@ -2,6 +2,7 @@
 from core.parameters import SystemParameters
 from core.system import setup_system
 from samplers.pair import run_pair_sampling
+from samplers.tetramer import run_tetramer_sampling
 from pipeline import SamplerPipeline
 
 def main():
@@ -25,20 +26,20 @@ def main():
     # Add sampling stages (automatically uses sequence for initialization)
     pipeline.add_stage(
         run_pair_sampling,
-        n_steps=40000,
-        save_freq=40,
+        n_steps=100000,
+        save_freq=100,
         temp_start=10.0,
         temp_end=1.0
     )
     
     # Uncomment for additional stages
-    # pipeline.add_stage(
-    #     run_tetramer_sampling,
-    #     n_steps=2000,
-    #     save_freq=100,
-    #     temp_start=5.0,
-    #     temp_end=1.0
-    # )
+    pipeline.add_stage(
+        run_tetramer_sampling,
+        n_steps=20000,
+        save_freq=20,
+        temp_start=10.0,
+        temp_end=1.0
+    )
     
     # pipeline.add_stage(
     #     run_octet_sampling,
