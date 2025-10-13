@@ -2,6 +2,7 @@
 import random
 import numpy as np
 from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
 from typing import Dict, List, Optional, Tuple
 from core.parameters import SystemParameters
 
@@ -124,7 +125,7 @@ def propose_sigma_move(
     return True
 
 # --------------------------
-# Tetramer helpers and moves (tetramer move matches your previous method)
+# Tetramer helpers and moves
 # --------------------------
 def get_tetramers(state) -> List[Tuple[int, ...]]:
     """Use Hungarian algorithm for optimal A-B matching, then greedy C selection."""
@@ -297,4 +298,211 @@ def propose_tetramer_move(state, acceptance_rate: float = 0.5):
             final_pos = np.clip(final_pos, min_coord, max_coord)
             state.positions[part][idx] = final_pos.astype(float)
 
+    return True
+
+# --------------------------
+# Octet helpers and moves
+# --------------------------
+def _compute_tetramer_centers_vectorized(tetramers: List[Tuple[int, ...]], 
+                                        positions: Dict[str, np.ndarray]) -> np.ndarray:
+    """Efficiently compute tetramer centers using vectorization."""
+    if not tetramers:
+        return np.array([]).reshape(0, 3)
+    
+    n_tetramers = len(tetramers)
+    centers = np.zeros((n_tetramers, 3))
+    
+    # Vectorized computation
+    for i, (a_idx, b_idx, c_idx1, c_idx2) in enumerate(tetramers):
+        # Stack all coordinates and compute mean
+        coords = np.array([
+            positions['A'][a_idx],
+            positions['B'][b_idx],
+            positions['C'][c_idx1],
+            positions['C'][c_idx2]
+        ])
+        centers[i] = np.mean(coords, axis=0)
+    
+    return centers
+
+def get_octets(state) -> Tuple[List[Tuple[Tuple[int, ...], Tuple[int, ...]]], List[Tuple[int, ...]]]:
+    """
+    Hungarian algorithm for optimal tetramer pairing into octets - O(n³).
+    
+    Returns:
+        (octets, tetramers) where:
+        - octets: List of (tetramer1, tetramer2) pairs
+        - tetramers: All tetramers found (for fallback)
+    """
+    tetramers = get_tetramers(state)
+    
+    if len(tetramers) < 2:
+        return [], tetramers
+    
+    # For odd number of tetramers, we can't pair all of them
+    n_pairs = len(tetramers) // 2
+    if n_pairs == 0:
+        return [], tetramers
+    
+    # Compute centers efficiently
+    centers = _compute_tetramer_centers_vectorized(tetramers, state.positions)
+    
+    # Create cost matrix - only for the tetramers we can actually pair
+    n_tetramers = 2 * n_pairs  # Use only even number
+    cost_matrix = cdist(centers[:n_tetramers], centers[:n_tetramers])
+    
+    # Make diagonal infinite to prevent self-pairing
+    np.fill_diagonal(cost_matrix, np.inf)
+    
+    # Solve assignment problem
+    row_indices, col_indices = linear_sum_assignment(cost_matrix)
+    
+    # Convert assignment to octets (avoid double counting)
+    used = set()
+    octets = []
+    
+    for i, j in zip(row_indices, col_indices):
+        if i not in used and j not in used:
+            octets.append((tetramers[i], tetramers[j]))
+            used.add(i)
+            used.add(j)
+    
+    return octets, tetramers
+
+def propose_octet_move(state, acceptance_rate: float = 0.5):
+    """
+    Optimized octet move proposal with decoupled translation/rotation.
+    60% probability for translation, 30% for rotation, 10% for mixed moves.
+    Clips coordinates to stay within box boundaries minus particle radius.
+    
+    Modifies state.positions in-place.
+    """
+    octets, _ = get_octets(state)
+    if not octets:
+        return False
+    
+    params = SystemParameters()
+    box_size = getattr(params, 'box_size', 800.0)
+    half_box = box_size / 2.0
+    
+    # Select a random octet
+    octet_idx = np.random.randint(len(octets))
+    tetramer1, tetramer2 = octets[octet_idx]
+    
+    # Pre-extract octet particle information efficiently
+    octet_particles = [
+        ('A', tetramer1[0]), ('B', tetramer1[1]), ('C', tetramer1[2]), ('C', tetramer1[3]),
+        ('A', tetramer2[0]), ('B', tetramer2[1]), ('C', tetramer2[2]), ('C', tetramer2[3])
+    ]
+    
+    # Extract coordinates
+    coords = np.array([state.positions[ptype][idx] for ptype, idx in octet_particles])
+    centroid = np.mean(coords, axis=0)
+    
+    # Compute buffer based on particle radii
+    radii = getattr(params, 'radii', {})
+    oct_radii = [radii.get(p, getattr(params, 'particle_radius', 5.0)) 
+                 for p, _ in octet_particles]
+    buffer_radius = max(oct_radii) if oct_radii else getattr(params, 'particle_radius', 5.0)
+    
+    max_coord = half_box - 2.0 * buffer_radius
+    min_coord = -max_coord
+    
+    # Calculate octet size for adaptive scaling
+    distances_from_center = np.linalg.norm(coords - centroid, axis=1)
+    octet_radius = float(np.max(distances_from_center)) if distances_from_center.size else 1.0
+    size_factor = max(0.5, min(2.0, octet_radius))
+    
+    # Fixed step sizes
+    trans_step = 0.25
+    rot_step = 0.2
+    
+    # Choose move type: 60% translation, 30% rotation, 10% mixed
+    rand_val = np.random.random()
+    
+    if rand_val < 0.6:
+        # --- TRANSLATION MOVE ---
+        displacement = np.random.normal(0, trans_step * size_factor, 3)
+        
+        # Apply translation to all particles in the octet
+        for i, (ptype, idx) in enumerate(octet_particles):
+            final_pos = coords[i] + displacement
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[ptype][idx] = final_pos.astype(float)
+    
+    elif rand_val < 0.9:  # 0.6 to 0.9 = 30% probability
+        # --- ROTATION MOVE ---
+        # Generate random rotation using Marsaglia method
+        while True:
+            x1, x2 = np.random.uniform(-1, 1, 2)
+            if x1*x1 + x2*x2 < 1:
+                break
+        
+        sqrt_term = np.sqrt(1 - x1*x1 - x2*x2)
+        axis = np.array([2*x1*sqrt_term, 2*x2*sqrt_term, 1 - 2*(x1*x1 + x2*x2)])
+        axis = axis / max(np.linalg.norm(axis), 1e-12)  # Ensure unit vector
+        
+        # Generate rotation angle
+        angle = np.random.normal(0, rot_step)
+        
+        # Create rotation matrix using Rodrigues' formula
+        cos_angle = np.cos(angle)
+        sin_angle = np.sin(angle)
+        one_minus_cos = 1 - cos_angle
+        
+        ux, uy, uz = axis
+        rotation_matrix = np.array([
+            [cos_angle + ux*ux*one_minus_cos, ux*uy*one_minus_cos - uz*sin_angle, ux*uz*one_minus_cos + uy*sin_angle],
+            [uy*ux*one_minus_cos + uz*sin_angle, cos_angle + uy*uy*one_minus_cos, uy*uz*one_minus_cos - ux*sin_angle],
+            [uz*ux*one_minus_cos - uy*sin_angle, uz*uy*one_minus_cos + ux*sin_angle, cos_angle + uz*uz*one_minus_cos]
+        ])
+        
+        # Apply rotation around centroid
+        for i, (ptype, idx) in enumerate(octet_particles):
+            centered = coords[i] - centroid
+            rotated = rotation_matrix @ centered
+            final_pos = centroid + rotated
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[ptype][idx] = final_pos.astype(float)
+    
+    else:  # 0.9 to 1.0 = 10% probability
+        # --- MIXED MOVE (Translation + Rotation) ---
+        trans_scale = 0.7
+        rot_scale = 0.7
+        
+        # Generate displacement with reduced step size
+        displacement = np.random.normal(0, trans_step * size_factor * trans_scale, 3)
+        
+        # Generate rotation with reduced step size
+        while True:
+            x1, x2 = np.random.uniform(-1, 1, 2)
+            if x1*x1 + x2*x2 < 1:
+                break
+        
+        sqrt_term = np.sqrt(1 - x1*x1 - x2*x2)
+        axis = np.array([2*x1*sqrt_term, 2*x2*sqrt_term, 1 - 2*(x1*x1 + x2*x2)])
+        axis = axis / max(np.linalg.norm(axis), 1e-12)
+        
+        angle = np.random.normal(0, rot_step * rot_scale)
+        
+        # Create rotation matrix
+        cos_angle = np.cos(angle)
+        sin_angle = np.sin(angle)
+        one_minus_cos = 1 - cos_angle
+        
+        ux, uy, uz = axis
+        rotation_matrix = np.array([
+            [cos_angle + ux*ux*one_minus_cos, ux*uy*one_minus_cos - uz*sin_angle, ux*uz*one_minus_cos + uy*sin_angle],
+            [uy*ux*one_minus_cos + uz*sin_angle, cos_angle + uy*uy*one_minus_cos, uy*uz*one_minus_cos - ux*sin_angle],
+            [uz*ux*one_minus_cos - uy*sin_angle, uz*uy*one_minus_cos + ux*sin_angle, cos_angle + uz*uz*one_minus_cos]
+        ])
+        
+        # Apply combined transformation: rotate around centroid, then translate
+        for i, (ptype, idx) in enumerate(octet_particles):
+            centered = coords[i] - centroid
+            rotated = rotation_matrix @ centered
+            final_pos = centroid + rotated + displacement
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[ptype][idx] = final_pos.astype(float)
+    
     return True

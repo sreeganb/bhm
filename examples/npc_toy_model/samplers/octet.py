@@ -1,95 +1,127 @@
-# samplers/pair.py
-import numpy as np
-from typing import Dict, Any, Optional, Callable, Tuple
+from typing import Optional, Tuple
 from core.state import SystemState
-from core.scoring import calculate_excluded_volume, calculate_pair_scores
 from samplers.base import run_mcmc_sampling
-
-def propose_position_move(state: SystemState, acceptance_rate: float = 0.5) -> None:
-    """Propose position move and update state in-place"""
-    # Adaptive step size based on acceptance rate
-    step_size = 0.1 * min(2.0, max(0.1, acceptance_rate))
-    
-    # Choose particle type and index
-    particle_type = np.random.choice(list(state.positions.keys()))
-    if len(state.positions[particle_type]) > 0:
-        idx = np.random.randint(len(state.positions[particle_type]))
-        
-        # Apply small displacement
-        displacement = np.random.normal(0, step_size, 3)
-        state.positions[particle_type][idx] += displacement
-        
-        # Apply periodic boundary conditions
-        state.positions[particle_type][idx] %= state.box_size
-
-def propose_sigma_move(state: SystemState, acceptance_rate: float = 0.5) -> None:
-    """Propose sigma move and update state in-place"""
-    # Adaptive step size based on acceptance rate
-    step_factor = 1.0 + 0.1 * min(1.0, max(0.1, acceptance_rate))
-    
-    # Choose a sigma key to modify
-    sigma_key = np.random.choice(list(state.sigma.keys()))
-    
-    # Apply log-normal perturbation
-    if np.random.random() < 0.5:
-        state.sigma[sigma_key] *= step_factor
-    else:
-        state.sigma[sigma_key] /= step_factor
-    
-    # Enforce bounds if sigma_range is defined
-    if sigma_key in state.sigma_range:
-        min_val, max_val = state.sigma_range[sigma_key]
-        state.sigma[sigma_key] = max(min_val, min(max_val, state.sigma[sigma_key]))
+from scoring.pair_score import PairNLL
+from scoring.tetramer_score import TetramerNLL
+from scoring.octet_score import OctetNLL
+from scoring.exvol_score import ExvolNLL
+from core.movers import (
+    propose_particle_move, 
+    propose_sigma_move, 
+    propose_tetramer_move,
+    propose_octet_move
+)
 
 def neg_log_posterior(
-    state: SystemState, 
-    prior_penalty: float = 0.0,
+    state: SystemState,
+    prior_penalty: float = 0.0,   # Ignored input; prior is computed here
     excluded_pairs: Optional[set] = None
-) -> Tuple[float, float, float, float]:
-    """Calculate negative log posterior for pair sampler"""
-    # Calculate excluded volume contribution
-    exclusion_score = calculate_excluded_volume(state.positions)
-    
-    # Calculate pairwise score, excluding specified pairs
-    pair_score = calculate_pair_scores(
-        state.positions, 
-        state.sigma,
-        excluded_pairs=excluded_pairs or set()
-    )
-    
-    # Total score
-    total_score = exclusion_score + pair_score + prior_penalty
-    
-    return total_score, exclusion_score, pair_score, prior_penalty
+) -> Tuple[float, float, float, float, float, float]:
+    """
+    -log posterior = ExVol NLL + Pair NLL + Tetramer NLL + Octet NLL + (-log prior).
 
-def run_pair_sampling(
+    The posterior includes:
+    - Excluded volume constraints (soft repulsion)
+    - Pairwise distance likelihoods (AA, AB, BC)
+    - Tetramer formation scores (AB + 2×BC bonds)
+    - Octet formation scores (inter-tetramer AA distances)
+    - Prior on sigma parameters
+
+    Returns:
+        (total_score, exclusion_score, pair_score, tetramer_score, octet_score, prior_penalty)
+    """
+    # Excluded volume score
+    exs = ExvolNLL(state.positions, kappa=100.0)
+    exclusion_score = exs.compute_score()
+
+    # Pair score (pairwise distance likelihood)
+    ps = PairNLL(state.positions, state.sigma)
+    pair_score = ps.compute_score()
+
+    # Tetramer score (ABCC unit formation)
+    ts = TetramerNLL(state)
+    tetramer_score = ts.compute_score()
+
+    # Octet score (tetramer pairing via A-A distances)
+    os = OctetNLL(state)
+    octet_score = os.compute_score()
+
+    # Prior on sigma
+    if hasattr(state, "sigma_prior") and state.sigma_prior is not None:
+        prior_penalty = -state.sigma_prior.log_prior(state.sigma)
+    else:
+        prior_penalty = 0.0
+
+    total_score = exclusion_score + pair_score + tetramer_score + octet_score + prior_penalty
+    
+    return total_score, exclusion_score, pair_score, tetramer_score, octet_score, prior_penalty
+
+def run_octet_sampling(
     state: SystemState,
     n_steps: int = 1000,
-    output_dir: str = "output/pair_sampler",
+    output_dir: str = "output/octet_sampler",
     **kwargs
 ) -> Tuple[SystemState, str]:
-    """Run pair-level MCMC sampling"""
-    # Define proposal functions
+    """
+    Run octet-level MCMC sampling with hierarchical move mix:
+      - 40% octet rigid-body moves (translation/rotation of 8-particle units)
+      - 30% tetramer rigid-body moves (translation/rotation of 4-particle units)
+      - 20% single-particle moves (local adjustments)
+      - 10% sigma parameter moves (likelihood width updates)
+
+    This sampler is designed for systems where octets (pairs of adjacent tetramers)
+    are the primary structural units. The move hierarchy allows:
+    1. Large-scale rearrangements via octet moves
+    2. Mid-scale adjustments via tetramer moves
+    3. Fine-tuning via particle moves
+    4. Uncertainty quantification via sigma moves
+
+    Args:
+        state: Initial SystemState with positions and sigma values
+        n_steps: Number of MCMC steps to run
+        output_dir: Directory for trajectory and diagnostics
+        **kwargs: Additional arguments passed to run_mcmc_sampling
+
+    Returns:
+        (final_state, trajectory_file_path)
+    """
     propose_fns = {
-        'position': propose_position_move,
-        'sigma': propose_sigma_move
+        "octet": propose_octet_move,
+        "tetramer": propose_tetramer_move,
+        "position": propose_particle_move,
+        "sigma": propose_sigma_move,
     }
     
-    # Define move probabilities
     move_probs = {
-        'position': 0.7,
-        'sigma': 0.3
+        "octet": 0.40,      # Largest structural units
+        "tetramer": 0.30,   # Mid-level structural units
+        "position": 0.20,   # Local fine-tuning
+        "sigma": 0.10       # Parameter updates
     }
-    
-    # Run MCMC
-    score_fn = lambda s, p: neg_log_posterior(s, p)
-    
+
     return run_mcmc_sampling(
         state=state,
-        score_fn=score_fn,
+        score_fn=neg_log_posterior,
         propose_fn_dict=propose_fns,
         move_probs=move_probs,
         n_steps=n_steps,
         output_dir=output_dir,
-        **kwargs
+        **kwargs,
     )
+
+def get_octets(state) -> Tuple[list, list]:
+    """
+    Convenience passthrough to the octet finder in core.movers.
+    
+    Returns:
+        (octets, tetramers) where:
+        - octets: List of (tetramer1, tetramer2) pairs
+        - tetramers: All tetramers found
+    """
+    from core.movers import get_octets as _get_octets
+    return _get_octets(state)
+
+def get_tetramers(state) -> list:
+    """Convenience passthrough to the tetramer finder in core.movers."""
+    from core.movers import get_tetramers as _get_tetramers
+    return _get_tetramers(state)
