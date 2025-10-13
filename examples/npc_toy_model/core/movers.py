@@ -506,3 +506,91 @@ def propose_octet_move(state, acceptance_rate: float = 0.5):
             state.positions[ptype][idx] = final_pos.astype(float)
     
     return True
+
+def propose_full_move(state, acceptance_rate: float = 0.5):
+    """
+    Propose a move that takes the coordinates of all the particles in the system
+    applies either a random translation or a random rotation to the entire system
+    with probability 0.6 and 0.4, respectively. the amount that the system is 
+    translated and rotates is obtained randomly from a very fine move to a very drastic
+    move from a normal distribution"""
+    params = SystemParameters()
+    box_size = getattr(params, 'box_size', 600.0)
+    half_box = box_size / 2.0
+
+    # Extract all particle information efficiently
+    all_particles = []
+    for ptype, indices in state.positions.items():
+        for idx in range(len(indices)):
+            all_particles.append((ptype, idx))
+    
+    if not all_particles:
+        return False
+    
+    # Extract coordinates
+    coords = np.array([state.positions[ptype][idx] for ptype, idx in all_particles])
+    centroid = np.mean(coords, axis=0)
+    
+    # Compute buffer based on particle radii
+    radii = getattr(params, 'radii', {})
+    all_radii = [radii.get(p, getattr(params, 'particle_radius', 5.0)) 
+                 for p, _ in all_particles]
+    buffer_radius = max(all_radii) if all_radii else getattr(params, 'particle_radius', 5.0)
+    
+    max_coord = half_box - 2.0 * buffer_radius
+    min_coord = -max_coord
+    
+    # Calculate system size for adaptive scaling
+    distances_from_center = np.linalg.norm(coords - centroid, axis=1)
+    system_radius = float(np.max(distances_from_center)) if distances_from_center.size else 1.0
+    size_factor = max(0.5, min(2.0, system_radius))
+    
+    # Fixed step sizes
+    trans_step = 10.0 * size_factor
+    rot_step = 10.0 * size_factor
+    # Choose move type: 60% translation, 40% rotation
+    rand_val = np.random.random()
+    if rand_val < 0.6:
+        # --- TRANSLATION MOVE ---
+        displacement = np.random.normal(0, trans_step, 3)
+        # Apply translation to all particles in the system
+        for i, (ptype, idx) in enumerate(all_particles):
+            final_pos = coords[i] + displacement
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[ptype][idx] = final_pos.astype(float)
+    else:  # 0.6 to 1.0 = 40% probability
+        # --- ROTATION MOVE ---
+        # Generate random rotation using Marsaglia method
+        while True:
+            x1, x2 = np.random.uniform(-1, 1, 2)
+            if x1*x1 + x2*x2 < 1:
+                break
+        
+        sqrt_term = np.sqrt(1 - x1*x1 - x2*x2)
+        axis = np.array([2*x1*sqrt_term, 2*x2*sqrt_term, 1 - 2*(x1*x1 + x2*x2)])
+        axis = axis / max(np.linalg.norm(axis), 1e-12)  # Ensure unit vector
+        
+        # Generate rotation angle
+        angle = np.random.normal(0, rot_step)
+        
+        # Create rotation matrix using Rodrigues' formula
+        cos_angle = np.cos(angle)
+        sin_angle = np.sin(angle)
+        one_minus_cos = 1 - cos_angle
+        
+        ux, uy, uz = axis
+        rotation_matrix = np.array([
+            [cos_angle + ux*ux*one_minus_cos, ux*uy*one_minus_cos - uz*sin_angle, ux*uz*one_minus_cos + uy*sin_angle],
+            [uy*ux*one_minus_cos + uz*sin_angle, cos_angle + uy*uy*one_minus_cos, uy*uz*one_minus_cos - ux*sin_angle],
+            [uz*ux*one_minus_cos - uy*sin_angle, uz*uy*one_minus_cos + ux*sin_angle, cos_angle + uz*uz*one_minus_cos]
+        ])
+        
+        # Apply rotation around centroid
+        for i, (ptype, idx) in enumerate(all_particles):
+            centered = coords[i] - centroid
+            rotated = rotation_matrix @ centered
+            final_pos = centroid + rotated
+            final_pos = np.clip(final_pos, min_coord, max_coord)
+            state.positions[ptype][idx] = final_pos.astype(float)
+    return True
+# --------------------------

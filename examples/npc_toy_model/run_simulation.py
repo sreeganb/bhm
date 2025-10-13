@@ -4,15 +4,20 @@ from core.system import setup_system
 from samplers.pair import run_pair_sampling
 from samplers.tetramer import run_tetramer_sampling
 from samplers.octet import run_octet_sampling
+from samplers.full import run_full_sampling
 from pipeline import SamplerPipeline
+from samplers.full import run_full_sampling, set_em_map
+
+# Set EM map ONCE before pipeline
+set_em_map("target_map.mrc", resolution=50.0, backend='cpu')
 
 def main():
     # Initialize system parameters
     params = SystemParameters()
     
     # Define sampler sequence
-    sampler_sequence = ["pair_sampling", "tetramer_sampling", "octet_sampling"]
-    
+    sampler_sequence = ["pair_sampling", "tetramer_sampling", "octet_sampling", "full_sampling"]
+
     # Setup initial system state with sequence
     system_state = setup_system(
         params=params,
@@ -50,7 +55,16 @@ def main():
         temp_start=10.0,
         temp_end=1.0
     )    
-    
+    # Uncomment for additional stages
+    pipeline.add_stage(
+        run_full_sampling,
+        n_steps=300,
+        save_freq=1,
+        temp_start=10.0,
+        temp_end=1.0,
+        name="full",
+        center_to_density=True
+    )        
     # pipeline.add_stage(
     #     run_octet_sampling,
     #     n_steps=3000,
