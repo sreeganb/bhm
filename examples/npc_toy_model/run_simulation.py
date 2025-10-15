@@ -9,7 +9,7 @@ from pipeline import SamplerPipeline
 from samplers.full import run_full_sampling, set_em_map
 
 # Set EM map ONCE before pipeline
-set_em_map("target_map.mrc", resolution=50.0, backend='cpu')
+set_em_map("simulated_target_density.mrc", resolution=50.0, backend='cpu')
 
 def main():
     # Initialize system parameters
@@ -32,8 +32,8 @@ def main():
     # Add sampling stages (automatically uses sequence for initialization)
     pipeline.add_stage(
         run_pair_sampling,
-        n_steps=50000,
-        save_freq=50,
+        n_steps=30000,
+        save_freq=100,
         temp_start=10.0,
         temp_end=1.0
     )
@@ -41,30 +41,30 @@ def main():
     # Uncomment for additional stages
     pipeline.add_stage(
         run_tetramer_sampling,
-        n_steps=40000,
-        save_freq=40,
+        n_steps=30000,
+        save_freq=100,
         temp_start=10.0,
         temp_end=1.0
     )
     
     # Uncomment for additional stages
-    pipeline.add_stage(
-        run_octet_sampling,
-        n_steps=20000,
-        save_freq=40,
-        temp_start=10.0,
-        temp_end=1.0
-    )    
+#    pipeline.add_stage(
+#        run_octet_sampling,
+#        n_steps=20000,
+#        save_freq=40,
+#        temp_start=10.0,
+#        temp_end=1.0
+#    )    
     # Uncomment for additional stages
-    pipeline.add_stage(
-        run_full_sampling,
-        n_steps=300,
-        save_freq=1,
-        temp_start=10.0,
-        temp_end=1.0,
-        name="full",
-        center_to_density=True
-    )        
+#    pipeline.add_stage(
+#        run_full_sampling,
+#        n_steps=2000,
+#        save_freq=2,
+#        temp_start=10.0,
+#        temp_end=1.0,
+#        name="full",
+#        center_to_density=True
+#    )        
     # pipeline.add_stage(
     #     run_octet_sampling,
     #     n_steps=3000,
@@ -76,7 +76,8 @@ def main():
     # Run the pipeline with multiple chains
     results = pipeline.run(
         output_base="output",
-        n_chains=8  # Run 8 parallel chains for each stage
+        n_chains=8,  # Run 8 parallel chains for each stage
+        use_replica_exchange=True
     )
     
     print("Simulation complete!")

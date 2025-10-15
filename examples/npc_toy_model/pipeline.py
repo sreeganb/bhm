@@ -1,4 +1,4 @@
-# pipeline.py - Pipeline to run multiple samplers in sequence with analysis
+# pipeline.py - Integrated with replica exchange support
 from typing import List, Dict, Any, Optional, Tuple
 import os
 import json
@@ -37,19 +37,63 @@ class SamplerPipeline:
         self.init_mode = init_mode
         self.prior_type = prior_type
                     
-    def add_stage(self, sampler_function, n_steps: int = 1000, 
-                  name: str = None, **sampler_kwargs):
-        """Add a sampler stage to the pipeline"""
-        if name is None:
-            name = sampler_function.__name__.replace('run_', '')
+    def add_stage(self, sampler_fn, n_steps, save_freq=100, **kwargs):
+        """Add a sampling stage - extract components for replica exchange"""
+        
+        # Extract module and function info
+        sampler_name = sampler_fn.__name__
+        sampler_module = sampler_fn.__module__
+        
+        # Import the sampler module to get its components
+        import importlib
+        module = importlib.import_module(sampler_module)
+        
+        # Get the neg_log_posterior function from the module
+        score_fn = getattr(module, 'neg_log_posterior', None)
+        
+        # Get proposal functions and move probabilities based on sampler type
+        if 'pair' in sampler_name.lower():
+            from core.movers import propose_particle_move, propose_sigma_move
+            propose_fns = {
+                'position': propose_particle_move,
+                'sigma': propose_sigma_move
+            }
+            move_probs = {'position': 0.7, 'sigma': 0.3}
+            
+        elif 'tetramer' in sampler_name.lower():
+            from core.movers import propose_particle_move, propose_sigma_move, propose_tetramer_move
+            propose_fns = {
+                'tetramer': propose_tetramer_move,
+                'position': propose_particle_move,
+                'sigma': propose_sigma_move
+            }
+            move_probs = {'tetramer': 0.60, 'position': 0.25, 'sigma': 0.15}
+            
+        elif 'octet' in sampler_name.lower():
+            from core.movers import propose_particle_move, propose_sigma_move, propose_tetramer_move, propose_octet_move
+            propose_fns = {
+                'octet': propose_octet_move,
+                'tetramer': propose_tetramer_move,
+                'position': propose_particle_move,
+                'sigma': propose_sigma_move
+            }
+            move_probs = {'octet': 0.50, 'tetramer': 0.20, 'position': 0.20, 'sigma': 0.10}
+            
+        else:
+            raise ValueError(f"Unknown sampler type: {sampler_name}")
+        
+        if score_fn is None:
+            raise ValueError(f"Could not find neg_log_posterior in {sampler_module}")
         
         self.stages.append({
-            'function': sampler_function,
+            'name': sampler_name.replace('run_', ''),
+            'function': sampler_fn,
+            'score_fn': score_fn,  # Direct reference to neg_log_posterior
+            'propose_fns': propose_fns,
+            'move_probs': move_probs,
             'n_steps': n_steps,
-            'name': name,
-            'kwargs': sampler_kwargs
+            'kwargs': {'save_freq': save_freq, **kwargs}
         })
-        return self
     
     # =========================================================================
     # UTILITIES
@@ -475,6 +519,25 @@ class SamplerPipeline:
             except Exception as e:
                 print(f"    Warning: Failed to save GMM for {chain_dir}: {e}")
 
+    def _fit_gmm_posterior(self, stage_output: str, stage_results: List[Dict]):
+        """
+        Fit GMM posterior - wrapper for compatibility.
+        Handles both replica exchange and parallel chains.
+        """
+        # Find chain directories
+        chain_dirs = sorted([
+            d for d in os.listdir(stage_output) 
+            if d.startswith('chain_') and 
+            os.path.isdir(os.path.join(stage_output, d))
+        ])
+        
+        if chain_dirs:
+            self._save_chain_gmms(stage_output, chain_dirs)
+
+    def _run_stage_diagnostics(self, stage_output: str, stage_results: List[Dict]):
+        """Run convergence diagnostics - wrapper for compatibility"""
+        self._run_analysis(stage_output, os.path.basename(stage_output))
+
     def _run_analysis(self, stage_output, stage_name):
         """
         Run post-stage analysis:
@@ -508,29 +571,27 @@ class SamplerPipeline:
                     except Exception as e:
                         print(f"      Warning: RMF3 conversion failed for {chain_dir}: {e}")
             
-            # Fit and save GMMs (for next stage's prior)
-            self._save_chain_gmms(stage_output, chain_dirs)
-            
             # Run convergence diagnostics (R-hat, effective sample size, etc.)
-            analysis_results = run_mcmc_diagnostics(
-                stage_output, 
-                stage_name, 
-                chain_dirs, 
-                rmf_files
-            )
-            
-            # Save analysis results
-            with open(os.path.join(stage_output, "analysis_results.json"), 'w') as f:
-                json.dump(analysis_results, f, indent=2)
-            
-            # Print R-hat summary
-            if 'rhat' in analysis_results:
-                print(f"\n  R-hat values for {stage_name}:")
-                for param, rhat_value in analysis_results['rhat'].items():
-                    status = "✓" if rhat_value < 1.1 else "✗"
-                    print(f"    {status} {param}: {rhat_value:.3f}")
-            
-            return analysis_results
+            if len(chain_dirs) > 1:
+                analysis_results = run_mcmc_diagnostics(
+                    stage_output, 
+                    stage_name, 
+                    chain_dirs, 
+                    rmf_files
+                )
+                
+                # Save analysis results
+                with open(os.path.join(stage_output, "analysis_results.json"), 'w') as f:
+                    json.dump(analysis_results, f, indent=2)
+                
+                # Print R-hat summary
+                if 'rhat' in analysis_results:
+                    print(f"\n  R-hat values for {stage_name}:")
+                    for param, rhat_value in analysis_results['rhat'].items():
+                        status = "✓" if rhat_value < 1.1 else "✗"
+                        print(f"    {status} {param}: {rhat_value:.3f}")
+                
+                return analysis_results
             
         except Exception as e:
             print(f"  Warning: Analysis failed: {e}")
@@ -540,106 +601,110 @@ class SamplerPipeline:
     # MAIN PIPELINE EXECUTION
     # =========================================================================
     
-    def run(self, output_base: str = "output", n_chains: int = 4) -> Dict[str, Any]:
+    def run(
+        self,
+        output_base: str = "output/pipeline",
+        n_chains: int = 4,
+        use_replica_exchange: bool = False
+    ) -> Dict[str, Any]:
         """
-        Run the full pipeline.
+        Run multi-stage pipeline with parallel chains OR replica exchange.
         
-        Pipeline Flow:
-        -------------
-        For each stage:
-            1. Create initial states (inherit from previous stage if N>0)
-            2. Initialize sigma (inherit from parent chain if N>0)
-            3. Run parallel MCMC chains
-            4. Analyze results & fit GMMs for next stage
-        
-        Returns:
-            Dictionary with results from all stages
+        Args:
+            output_base: Base directory for outputs
+            n_chains: Number of parallel chains (or replicas if use_replica_exchange=True)
+            use_replica_exchange: If True, use replica exchange instead of independent chains
         """
         os.makedirs(output_base, exist_ok=True)
-        
-        # Save pipeline configuration
-        config = {
-            'stages': [{'name': s['name'], 'n_steps': s['n_steps']} 
-                      for s in self.stages],
-            'n_chains': n_chains,
-            'prior_type': self.prior_type,
-            'base_seed': self.base_seed,
-            'init_mode': self.init_mode
-        }
-        with open(os.path.join(output_base, "pipeline_config.json"), 'w') as f:
-            json.dump(config, f, indent=2)
-        
-        all_results = {}
+        all_results = []
         prev_stage_output = None
         
-        # =====================================================================
-        # MAIN STAGE LOOP
-        # =====================================================================
-        for stage_idx, stage in enumerate(self.stages):
-            stage_name = stage['name']
-            stage_output = os.path.join(output_base, f"stage_{stage_idx+1}_{stage_name}")
+        for i, stage in enumerate(self.stages):
+            print(f"\n{'='*70}")
+            print(f"=== Stage {i+1}/{len(self.stages)}: {stage['name']} ===")
+            print(f"{'='*70}")
+            
+            stage_output = os.path.join(output_base, f"stage_{i+1}_{stage['name']}")
             os.makedirs(stage_output, exist_ok=True)
             
-            print(f"\n{'='*70}")
-            print(f"Stage {stage_idx+1}/{len(self.stages)}: {stage_name}")
-            print(f"{'='*70}")
-            print(f"Running {stage['n_steps']} steps with {n_chains} parallel chains")
+            # Create initial states for this stage
+            starting_states = self._create_initial_states(i, n_chains, prev_stage_output)
             
-            start_time = time.time()
+            # Initialize sigma and sigma_prior for all states
+            self._initialize_sigma_for_stage(starting_states, i, prev_stage_output)
             
-            # Step 1: Create initial states (positions from previous stage if N>0)
-            starting_states = self._create_initial_states(
-                stage_idx, 
-                n_chains, 
-                prev_stage_output
-            )
+            # ============================================================
+            # KEY DECISION: Replica Exchange vs Parallel Chains
+            # ============================================================
+            if use_replica_exchange:
+                print(f"  Running REPLICA EXCHANGE with {n_chains} temperature replicas")
+                
+                # Use first state as template (all start from same config)
+                template_state = starting_states[0]
+                
+                # Import the replica exchange function
+                from samplers.base import run_replica_exchange_mcmc
+                
+                # Extract temperature range from stage kwargs
+                temp_min = stage['kwargs'].get('temp_end', 1.0)
+                temp_max = stage['kwargs'].get('temp_start', 10.0)
+                
+                # Run replica exchange (returns best state + all trajectories)
+                best_state, traj_files = run_replica_exchange_mcmc(
+                    state=template_state,
+                    score_fn=stage['score_fn'],
+                    propose_fn_dict=stage['propose_fns'],
+                    move_probs=stage['move_probs'],
+                    n_steps=stage['n_steps'],
+                    save_freq=stage['kwargs'].get('save_freq', 100),
+                    output_dir=stage_output,
+                    n_replicas=n_chains,
+                    temp_min=temp_min,
+                    temp_max=temp_max,
+                    swap_freq=10,
+                    equilibration_steps=stage['kwargs'].get('equilibration_steps', 500),
+                    debug=False
+                )
+                
+                # Create chain_0 directory with best replica for next stage
+                chain_0_dir = os.path.join(stage_output, "chain_0")
+                os.makedirs(chain_0_dir, exist_ok=True)
+                
+                # Copy lowest-T trajectory to chain_0
+                import shutil
+                if os.path.exists(traj_files[0]):
+                    shutil.copy2(traj_files[0], os.path.join(chain_0_dir, "trajectory.h5"))
+                
+                # Convert to results format
+                stage_results = [{
+                    'chain_id': 0,
+                    'final_state': best_state,
+                    'trajectory_file': os.path.join(chain_0_dir, "trajectory.h5"),
+                    'final_sigma': {k: float(v) for k, v in best_state.sigma.items()},
+                    'all_trajectories': traj_files
+                }]
+                
+            else:
+                # Original parallel chain approach
+                stage_results = self._run_parallel_chains(
+                    starting_states, stage, stage_output, n_chains
+                )
             
-            # Step 2: Initialize sigma (inherit from parent chain if N>0)
-            self._initialize_sigma_for_stage(
-                starting_states, 
-                stage_idx, 
-                prev_stage_output
-            )
+            # ============================================================
+            # Post-stage analysis (same for both methods)
+            # ============================================================
+            all_results.append({
+                'stage_name': stage['name'],
+                'stage_output': stage_output,
+                'results': stage_results
+            })
             
-            # Step 3: Run parallel MCMC chains
-            stage_results = self._run_parallel_chains(
-                starting_states, 
-                stage, 
-                stage_output, 
-                n_chains
-            )
+            # Fit GMM to sigma posterior (for next stage prior)
+            self._fit_gmm_posterior(stage_output, stage_results)
             
-            elapsed = time.time() - start_time
-            print(f"  Parallel sampling completed in {elapsed:.1f} seconds")
+            # Run convergence diagnostics
+            self._run_stage_diagnostics(stage_output, stage_results)
             
-            # Step 4: Analysis & GMM fitting
-            analysis_results = self._run_analysis(stage_output, stage_name)
-            
-            # Store results
-            all_results[f"stage_{stage_idx+1}_{stage_name}"] = {
-                'chain_results': stage_results,
-                'analysis': analysis_results,
-                'elapsed_time': elapsed
-            }
-            
-            # Update for next iteration
             prev_stage_output = stage_output
-            
-            # Print summary
-            print(f"\n  Stage {stage_idx+1} complete. Final sigma values:")
-            for res in stage_results[:3]:
-                sigma_str = ", ".join(f"{k}={v:.3f}" 
-                                     for k, v in res['final_sigma'].items())
-                print(f"    Chain {res['chain_id']}: {sigma_str}")
-            if len(stage_results) > 3:
-                print(f"    ... and {len(stage_results)-3} more chains")
         
-        # =====================================================================
-        # PIPELINE COMPLETE
-        # =====================================================================
-        print(f"\n{'='*70}")
-        print(f"Pipeline Complete")
-        print(f"{'='*70}")
-        print(f"Results saved to: {output_base}")
-        
-        return all_results
+        return {'stages': all_results}
