@@ -48,23 +48,23 @@ def main():
     )
     
     # Uncomment for additional stages
-#    pipeline.add_stage(
-#        run_octet_sampling,
-#        n_steps=20000,
-#        save_freq=40,
-#        temp_start=10.0,
-#        temp_end=1.0
-#    )    
+    pipeline.add_stage(
+        run_octet_sampling,
+        n_steps=20000,
+        save_freq=100,
+        temp_start=10.0,
+        temp_end=1.0
+    )    
     # Uncomment for additional stages
-#    pipeline.add_stage(
-#        run_full_sampling,
-#        n_steps=2000,
-#        save_freq=2,
-#        temp_start=10.0,
-#        temp_end=1.0,
-#        name="full",
-#        center_to_density=True
-#    )        
+    pipeline.add_stage(
+        run_full_sampling,
+        n_steps=200,
+        save_freq=2,
+        temp_start=10.0,
+        temp_end=1.0,
+        name="full",
+        center_to_density=True
+    )        
     # pipeline.add_stage(
     #     run_octet_sampling,
     #     n_steps=3000,
