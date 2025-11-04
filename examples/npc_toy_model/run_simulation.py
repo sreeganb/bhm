@@ -38,23 +38,23 @@ def main():
         temp_end=1.0
     )
     
-    # Uncomment for additional stages
-    pipeline.add_stage(
-        run_tetramer_sampling,
-        n_steps=30000,
-        save_freq=100,
-        temp_start=10.0,
-        temp_end=1.0
-    )
-    
-    # Uncomment for additional stages
-    pipeline.add_stage(
-        run_octet_sampling,
-        n_steps=20000,
-        save_freq=100,
-        temp_start=10.0,
-        temp_end=1.0
-    )    
+#    # Uncomment for additional stages
+#    pipeline.add_stage(
+#        run_tetramer_sampling,
+#        n_steps=30000,
+#        save_freq=100,
+#        temp_start=10.0,
+#        temp_end=1.0
+#    )
+#    
+#    # Uncomment for additional stages
+#    pipeline.add_stage(
+#        run_octet_sampling,
+#        n_steps=20000,
+#        save_freq=100,
+#        temp_start=10.0,
+#        temp_end=1.0
+#    )    
     # Uncomment for additional stages
     pipeline.add_stage(
         run_full_sampling,

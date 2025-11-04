@@ -328,7 +328,7 @@ if __name__ == "__main__":
         monte_carlo_sample_objects=dof.get_movers(),
         output_objects=sf.output_objects,
         monte_carlo_steps=1,
-        number_of_frames=20,
+        number_of_frames=2000,
         global_output_directory="output/"
     )
 

@@ -586,7 +586,7 @@ class FullSampler(BaseMCSampler):
         )
         
         # Convert to minimization problem
-        score = 1000 * (1 - ccc)
+        score = 100 * (1 - ccc)
         
         # Add excluded volume
         ex_score = self.excluded_volume_nll(positions)
